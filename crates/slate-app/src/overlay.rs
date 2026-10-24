@@ -278,7 +278,7 @@ impl ContactSheet {
                     .child(
                         ui_text(theme::TEXT_META + 0.5, theme::muted())
                             .line_height(px(16.0))
-                            .child("MIT License."),
+                            .child("GPLv3 License."),
                     ),
             )
             .child(

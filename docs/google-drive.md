@@ -1,7 +1,8 @@
 # Google Drive
 
 Drive import and PDF export are optional. Slate uses a Google Cloud **Desktop
-OAuth client**; no client secret ships in the repository.
+OAuth client**. OAuth credentials are runtime configuration: no client secret is
+committed to the repository or compiled into release builds.
 
 ## Create the OAuth client
 
@@ -47,8 +48,8 @@ Default locations:
 If `SLATE_DATA_DIR` is set, Slate uses `$SLATE_DATA_DIR/google-oauth.json`.
 
 For development, you can set `SLATE_GOOGLE_CLIENT_ID` and
-`SLATE_GOOGLE_CLIENT_SECRET` instead. Release builds may bake the same values in
-at build time; the local file still wins.
+`SLATE_GOOGLE_CLIENT_SECRET` instead. Slate never compiles these values into a
+release binary; each installation reads its own local client.
 
 Save the file, then choose **Drive → Link Google Drive**. The browser opens, and
 the callback returns to the app. Drive → Unlink removes the stored refresh token;

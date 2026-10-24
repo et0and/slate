@@ -2,6 +2,8 @@
 //!
 //! `google-drive` owns OAuth and folder listing. Transfers use a streaming
 //! request so a 10,000-photo export never has to hold a whole PDF in memory.
+//!
+//! OAuth credentials are read at runtime and are never compiled into the binary.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -128,19 +130,6 @@ pub fn oauth_config() -> Result<OAuthConfig> {
                 redirect_uri: REDIRECT_URI.to_string(),
             });
         }
-    }
-
-    if let (Some(client_id), Some(client_secret)) = (
-        option_env!("SLATE_GOOGLE_CLIENT_ID"),
-        option_env!("SLATE_GOOGLE_CLIENT_SECRET"),
-    ) && !client_id.trim().is_empty()
-        && !client_secret.trim().is_empty()
-    {
-        return Ok(OAuthConfig {
-            client_id: client_id.trim().to_string(),
-            client_secret: client_secret.trim().to_string(),
-            redirect_uri: REDIRECT_URI.to_string(),
-        });
     }
 
     bail!(

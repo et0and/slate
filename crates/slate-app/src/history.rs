@@ -1,6 +1,7 @@
 //! Bounded project snapshots for undo and redo.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use slate_core::model::{PhotoId, Project};
 
@@ -9,7 +10,7 @@ const LIMIT: usize = 40;
 #[derive(Clone)]
 pub(crate) struct Snapshot {
     pub project: Project,
-    pub selected: HashSet<PhotoId>,
+    pub selected: Arc<HashSet<PhotoId>>,
     pub dirty: bool,
 }
 
@@ -73,7 +74,7 @@ mod tests {
     fn snapshot(name: &str) -> Snapshot {
         Snapshot {
             project: Project::new(name),
-            selected: HashSet::new(),
+            selected: Arc::new(HashSet::new()),
             dirty: false,
         }
     }

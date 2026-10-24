@@ -25,38 +25,30 @@ const STANDARD_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "tif", "tiff", "web
 
 #[derive(Debug, Clone)]
 pub struct PreviewImage {
-    pub rgba: Vec<u8>,
-    pub width: u32,
-    pub height: u32,
+    image: RgbaImage,
 }
 
 impl PreviewImage {
-    pub fn aspect(&self) -> f32 {
-        if self.height == 0 {
-            1.0
-        } else {
-            self.width as f32 / self.height as f32
-        }
+    pub fn width(&self) -> u32 {
+        self.image.width()
+    }
+
+    pub fn height(&self) -> u32 {
+        self.image.height()
     }
 
     /// GPUI expects BGRA pixels.
-    pub fn to_bgra(&self) -> Vec<u8> {
-        let mut bgra = self.rgba.clone();
+    pub fn into_bgra(self) -> Vec<u8> {
+        let mut bgra = self.image.into_raw();
         for pixel in bgra.as_chunks_mut::<4>().0 {
             pixel.swap(0, 2);
         }
         bgra
     }
 
-    pub fn rotated_clockwise(&self) -> Self {
-        let Some(buffer) = RgbaImage::from_raw(self.width, self.height, self.rgba.clone()) else {
-            return self.clone();
-        };
-        let rotated = imageops::rotate90(&buffer);
+    fn from_dynamic_image(image: DynamicImage) -> Self {
         Self {
-            width: rotated.width(),
-            height: rotated.height(),
-            rgba: rotated.into_raw(),
+            image: composite_on_white(image.to_rgba8()),
         }
     }
 }
@@ -73,15 +65,21 @@ pub struct Probe {
 pub fn is_supported(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .map(|extension| EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
+        .is_some_and(|extension| {
+            EXTENSIONS
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
 }
 
 fn is_standard(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .map(|extension| STANDARD_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
+        .is_some_and(|extension| {
+            STANDARD_EXTENSIONS
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
 }
 
 /// Expand files and directories into a deterministic, deduplicated list.
@@ -95,18 +93,13 @@ pub fn discover_images(inputs: &[PathBuf]) -> Vec<PathBuf> {
         }
     }
 
-    found.sort_by(|left, right| {
-        let left_name = left
-            .file_name()
-            .map(|name| name.to_string_lossy().to_ascii_lowercase())
-            .unwrap_or_default();
-        let right_name = right
-            .file_name()
-            .map(|name| name.to_string_lossy().to_ascii_lowercase())
-            .unwrap_or_default();
-        left_name
-            .cmp(&right_name)
-            .then_with(|| left.to_string_lossy().cmp(&right.to_string_lossy()))
+    found.sort_by_cached_key(|path| {
+        (
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default(),
+            path.to_string_lossy().into_owned(),
+        )
     });
     found.dedup();
     found
@@ -120,7 +113,7 @@ fn walk(directory: &Path, found: &mut Vec<PathBuf>, depth: usize) {
         return;
     };
     let mut entries: Vec<_> = entries.flatten().collect();
-    entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_ascii_lowercase());
+    entries.sort_by_cached_key(|entry| entry.file_name().to_string_lossy().to_ascii_lowercase());
     for entry in entries {
         let path = entry.path();
         let name = entry.file_name();
@@ -148,7 +141,7 @@ pub fn probe(path: &Path, max_edge: u32) -> Result<Probe> {
     let image = load_oriented(path, Some(max_edge))
         .with_context(|| format!("could not decode {}", path.display()))?;
     let (width, height) = original_dimensions(path).unwrap_or((image.width(), image.height()));
-    let preview = to_preview(&image);
+    let preview = PreviewImage::from_dynamic_image(image);
     Ok(Probe {
         width,
         height,
@@ -159,7 +152,7 @@ pub fn probe(path: &Path, max_edge: u32) -> Result<Probe> {
 
 pub fn preview(path: &Path, max_edge: u32) -> Result<PreviewImage> {
     load_oriented(path, Some(max_edge))
-        .map(|image| to_preview(&image))
+        .map(PreviewImage::from_dynamic_image)
         .with_context(|| format!("could not decode {}", path.display()))
 }
 
@@ -195,15 +188,6 @@ pub fn load_oriented(path: &Path, max_edge: Option<u32>) -> Result<DynamicImage>
     }
 
     Ok(image)
-}
-
-fn to_preview(image: &DynamicImage) -> PreviewImage {
-    let rgba = composite_on_white(image.to_rgba8());
-    PreviewImage {
-        width: rgba.width(),
-        height: rgba.height(),
-        rgba: rgba.into_raw(),
-    }
 }
 
 fn composite_on_white(mut rgba: RgbaImage) -> RgbaImage {
@@ -373,25 +357,10 @@ mod tests {
 
         let probe = probe(&path, 64).unwrap();
         assert_eq!((probe.width, probe.height), (400, 200));
-        assert_eq!(probe.preview.width, 64);
-        assert_eq!(probe.preview.height, 32);
-        assert_eq!(probe.preview.rgba.len(), 64 * 32 * 4);
+        assert_eq!(probe.preview.width(), 64);
+        assert_eq!(probe.preview.height(), 32);
+        assert_eq!(probe.preview.image.as_raw().len(), 64 * 32 * 4);
         assert!(probe.bytes > 0);
-    }
-
-    #[test]
-    fn rotates_previews() {
-        let preview = PreviewImage {
-            width: 2,
-            height: 1,
-            rgba: vec![
-                255, 0, 0, 255, 0, 255, 0, 255, // red, green
-            ],
-        };
-        let rotated = preview.rotated_clockwise();
-        assert_eq!((rotated.width, rotated.height), (1, 2));
-        assert_eq!(&rotated.rgba[0..4], &[255, 0, 0, 255]);
-        assert_eq!(&rotated.rgba[4..8], &[0, 255, 0, 255]);
     }
 
     #[test]

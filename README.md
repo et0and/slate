@@ -35,18 +35,19 @@ Contact sheets for photographers. Rust + GPUI.
 | Metric | Result |
 | --- | ---: |
 | Project file | 2.2 MB |
-| Launch to loaded project | 0.18 s warm / 0.77 s cold |
+| Launch to loaded project | 0.2 s warm / 0.8 s cold |
 | Resident memory, project loaded | ~137 MB |
-| Metadata load | 4 ms |
+| Metadata load | 5 ms |
 | Plan 834 pages | 3 ms |
+| Batch rename plan, 10,000 files | 20 ms |
 | Thumbnail cache | 256 images |
 
 The grid is virtualised: only visible rows render and only visible thumbnails
 load. PDF export is on demand and pixel-bound; those 10,000 photos become 834 A4
 pages at 12 up.
 
-The stress example writes the 10,000-photo project used for the metadata and
-planning rows.
+The stress example writes the 10,000-photo project used for the metadata,
+planning and rename rows.
 
 Reproduce the core side with:
 

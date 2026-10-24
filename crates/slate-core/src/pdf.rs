@@ -11,7 +11,7 @@ use printpdf::*;
 
 use crate::import::load_oriented;
 use crate::layout::{MM_TO_PT, Placement, SheetLayout, plan_sheet};
-use crate::model::{Photo, PhotoId, SheetSettings};
+use crate::model::{Photo, SheetSettings};
 
 const DPI: f32 = 300.0;
 const TEXT_BLACK: (f32, f32, f32) = (0.04, 0.04, 0.04);
@@ -324,7 +324,7 @@ fn draw_photo(
     };
 
     let mut image = image;
-    for _ in 0..photo.rotation() {
+    for _ in 0..photo.rotation().turns() {
         image = image.rotate90();
     }
     if placement.rotated {
@@ -505,18 +505,10 @@ pub fn export_saved_sheet(
     export_pdf(&project.name, &sheet.settings, &photos, output)
 }
 
-pub fn missing_ids(photos: &[Photo]) -> Vec<PhotoId> {
-    photos
-        .iter()
-        .filter(|photo| !photo.path.exists())
-        .map(|photo| photo.id)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Paper, PhotoId, Project};
+    use crate::model::{Paper, PhotoId, PhotoSize, Project};
     use ::image::{ImageBuffer, Rgb};
 
     fn image_path(directory: &Path, name: &str, width: u32, height: u32) -> PathBuf {
@@ -529,15 +521,7 @@ mod tests {
     }
 
     fn photo(id: u64, path: PathBuf, width: u32, height: u32) -> Photo {
-        Photo {
-            id: PhotoId(id),
-            path,
-            width,
-            height,
-            bytes: 1,
-            tags: vec![],
-            rotation: 0,
-        }
+        Photo::new(PhotoId(id), path, PhotoSize::new(width, height), 1)
     }
 
     #[test]

@@ -12,6 +12,7 @@ mod panels;
 mod sidebar;
 mod text_field;
 mod theme;
+mod view;
 mod widgets;
 
 use gpui::{

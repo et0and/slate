@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, App, Context, CursorStyle, ExternalPaths, FocusHandle, Focusable, MouseButton,
@@ -15,7 +16,7 @@ use image::{Frame, RgbaImage};
 use slate_core::PreviewImage;
 use slate_core::batch::{self, RenameOptions, RenamePlan};
 use slate_core::import::{self, Probe};
-use slate_core::model::{Filter, Photo, PhotoId, Project, SheetId, SheetSettings};
+use slate_core::model::{Filter, Photo, PhotoId, Project, QuarterTurns, SheetId, SheetSettings};
 use slate_core::pdf::{self, ExportSummary};
 use slate_core::store::{LocalStore, RecentProject};
 
@@ -23,6 +24,7 @@ use crate::history::{History, Snapshot};
 use crate::panels::{DIVIDER_W, PanelLayout, ResizeTarget};
 use crate::text_field::TextField;
 use crate::theme;
+use crate::view::ViewState;
 
 actions!(
     contact_sheet_actions,
@@ -43,6 +45,7 @@ actions!(
 );
 
 const THUMB_CACHE: usize = 256;
+const THUMB_QUEUE_LIMIT: usize = 512;
 
 #[derive(Debug, Clone)]
 pub enum ThumbState {
@@ -63,25 +66,28 @@ pub struct ContactSheet {
     pub(crate) dirty: bool,
     pub(crate) generation: u64,
 
-    pub(crate) selected: HashSet<PhotoId>,
+    pub(crate) selected: Arc<HashSet<PhotoId>>,
     pub(crate) filter: Filter,
     pub(crate) search: String,
+    pub(crate) view: ViewState,
 
     pub(crate) thumbs: HashMap<PhotoId, ThumbState>,
     pub(crate) thumb_queue: VecDeque<(PhotoId, PathBuf)>,
     pub(crate) thumbs_in_flight: usize,
     pub(crate) thumbs_queued: HashSet<PhotoId>,
     pub(crate) thumb_order: VecDeque<PhotoId>,
-    pub(crate) rotated_thumbs: HashMap<(PhotoId, u8), Arc<RenderImage>>,
+    pub(crate) rotated_thumbs: HashMap<(PhotoId, QuarterTurns), Arc<RenderImage>>,
     pub(crate) grid_scroll: UniformListScrollHandle,
+    pub(crate) rename_scroll: UniformListScrollHandle,
 
     pub(crate) import_queue: VecDeque<PathBuf>,
     pub(crate) importing_paths: HashSet<PathBuf>,
     pub(crate) imports_in_flight: usize,
     pub(crate) import_state: Option<ImportState>,
+    pub(crate) last_import_render: Instant,
 
     pub(crate) preview_page: usize,
-    pub(crate) rename_pending: Option<RenamePlan>,
+    pub(crate) rename_pending: Option<Arc<RenamePlan>>,
     pub(crate) rename_options: RenameOptions,
     pub(crate) exporting: Option<String>,
 
@@ -115,6 +121,7 @@ impl ContactSheet {
                 let _ = weak.update(app, |this, cx| {
                     this.search = value.to_string();
                     this.preview_page = 0;
+                    this.filter_changed();
                     this.refresh_preview();
                     cx.notify();
                 });
@@ -175,9 +182,10 @@ impl ContactSheet {
             project_path: None,
             dirty: false,
             generation: 1,
-            selected: HashSet::new(),
+            selected: Arc::new(HashSet::new()),
             filter: Filter::All,
             search: String::new(),
+            view: ViewState::new(),
             thumbs: HashMap::new(),
             thumb_queue: VecDeque::new(),
             thumbs_in_flight: 0,
@@ -185,10 +193,12 @@ impl ContactSheet {
             thumb_order: VecDeque::new(),
             rotated_thumbs: HashMap::new(),
             grid_scroll: UniformListScrollHandle::default(),
+            rename_scroll: UniformListScrollHandle::default(),
             import_queue: VecDeque::new(),
             importing_paths: HashSet::new(),
             imports_in_flight: 0,
             import_state: None,
+            last_import_render: Instant::now(),
             preview_page: 0,
             rename_pending: None,
             rename_options: RenameOptions::default(),
@@ -215,49 +225,63 @@ impl ContactSheet {
 
     // ----- queries -------------------------------------------------------
 
-    pub(crate) fn visible_indices(&self) -> Vec<usize> {
-        self.project.filter_indices(&self.filter, &self.search)
+    fn ensure_view(&mut self) {
+        let view = &mut self.view;
+        view.ensure(&self.project, &self.filter, &self.search, &self.selected);
     }
 
-    pub(crate) fn working_count(&self) -> usize {
+    pub(crate) fn project_changed(&mut self) {
+        self.view.invalidate_project();
+    }
+
+    pub(crate) fn selection_changed(&mut self) {
+        self.view.invalidate_selection();
+    }
+
+    pub(crate) fn filter_changed(&mut self) {
+        self.view.invalidate_filter();
+    }
+
+    pub(crate) fn visible_indices(&mut self) -> Arc<Vec<usize>> {
+        self.ensure_view();
+        self.view.visible()
+    }
+
+    pub(crate) fn working_count(&mut self) -> usize {
         self.scope_ids().len()
     }
 
-    pub(crate) fn page_count(&self) -> usize {
+    pub(crate) fn page_count(&mut self) -> usize {
         self.working_count()
             .div_ceil(self.project.sheet.per_page())
             .max(1)
     }
 
-    pub(crate) fn current_page(&self) -> usize {
+    pub(crate) fn current_page(&mut self) -> usize {
         self.preview_page.min(self.page_count().saturating_sub(1))
+    }
+
+    pub(crate) fn tag_counts(&mut self) -> Arc<std::collections::BTreeMap<String, usize>> {
+        self.ensure_view();
+        self.view.tags()
+    }
+
+    pub(crate) fn untagged_count(&mut self) -> usize {
+        self.ensure_view();
+        self.view.untagged()
     }
 
     /// Explicit selection wins. With no selection, every visible photo is the
     /// working set, so import -> export needs no extra step.
-    pub(crate) fn scope_ids(&self) -> Vec<PhotoId> {
-        if self.selected.is_empty() {
-            self.visible_indices()
-                .into_iter()
-                .map(|index| self.project.photos[index].id)
-                .collect()
-        } else {
-            self.project
-                .photos
-                .iter()
-                .filter(|photo| self.selected.contains(&photo.id))
-                .map(|photo| photo.id)
-                .collect()
-        }
+    pub(crate) fn scope_ids(&mut self) -> Arc<Vec<PhotoId>> {
+        self.ensure_view();
+        self.view.scope()
     }
 
-    pub(crate) fn export_photos(&self) -> Vec<Photo> {
-        let scope: HashSet<_> = self.scope_ids().into_iter().collect();
-        self.project
-            .photos
+    pub(crate) fn export_photos(&mut self) -> Vec<Photo> {
+        self.scope_ids()
             .iter()
-            .filter(|photo| scope.contains(&photo.id))
-            .cloned()
+            .filter_map(|id| self.project.photo(*id).cloned())
             .collect()
     }
 
@@ -326,7 +350,7 @@ impl ContactSheet {
     fn snapshot(&self) -> Snapshot {
         Snapshot {
             project: self.project.clone(),
-            selected: self.selected.clone(),
+            selected: Arc::clone(&self.selected),
             dirty: self.dirty,
         }
     }
@@ -348,6 +372,10 @@ impl ContactSheet {
     }
 
     fn restore(&mut self, snapshot: Snapshot, cx: &mut Context<Self>) {
+        let photos_changed = !self
+            .project
+            .photos
+            .shares_data_with(&snapshot.project.photos);
         self.generation = self.generation.wrapping_add(1);
         self.import_queue.clear();
         self.importing_paths.clear();
@@ -363,6 +391,10 @@ impl ContactSheet {
         self.project = snapshot.project;
         self.selected = snapshot.selected;
         self.dirty = snapshot.dirty;
+        if photos_changed {
+            self.project_changed();
+        }
+        self.selection_changed();
         self.preview_page = 0;
         self.rename_pending = None;
         self.title_field.update(cx, |field, cx| {
@@ -418,16 +450,21 @@ impl ContactSheet {
     // ----- selection -----------------------------------------------------
 
     pub(crate) fn toggle_selected(&mut self, id: PhotoId, cx: &mut Context<Self>) {
-        if !self.selected.remove(&id) {
-            self.selected.insert(id);
+        let selected = Arc::make_mut(&mut self.selected);
+        if !selected.remove(&id) {
+            selected.insert(id);
         }
+        self.selection_changed();
         self.refresh_and_notify(cx);
     }
 
     pub(crate) fn select_all_visible(&mut self, cx: &mut Context<Self>) {
-        for index in self.visible_indices() {
-            self.selected.insert(self.project.photos[index].id);
+        let visible = self.visible_indices();
+        let selected = Arc::make_mut(&mut self.selected);
+        for index in visible.iter() {
+            selected.insert(self.project.photos[*index].id());
         }
+        self.selection_changed();
         self.refresh_and_notify(cx);
     }
 
@@ -436,21 +473,26 @@ impl ContactSheet {
         self.search.clear();
         self.search_field
             .update(cx, |field, cx| field.set_value("", cx));
+        self.filter_changed();
         self.refresh_and_notify(cx);
     }
 
     pub(crate) fn deselect_all(&mut self, cx: &mut Context<Self>) {
-        self.selected.clear();
+        self.selected = Arc::new(HashSet::new());
+        self.selection_changed();
         self.refresh_and_notify(cx);
     }
 
     pub(crate) fn invert_visible(&mut self, cx: &mut Context<Self>) {
-        for index in self.visible_indices() {
-            let id = self.project.photos[index].id;
-            if !self.selected.remove(&id) {
-                self.selected.insert(id);
+        let visible = self.visible_indices();
+        let selected = Arc::make_mut(&mut self.selected);
+        for index in visible.iter() {
+            let id = self.project.photos[*index].id();
+            if !selected.remove(&id) {
+                selected.insert(id);
             }
         }
+        self.selection_changed();
         self.refresh_and_notify(cx);
     }
 
@@ -468,14 +510,17 @@ impl ContactSheet {
         }
         self.checkpoint();
         let removed = self.project.remove_photos(&ids);
-        for id in &ids {
-            self.selected.remove(id);
+        let removed_ids: HashSet<PhotoId> = ids.iter().copied().collect();
+        let selected = Arc::make_mut(&mut self.selected);
+        for id in removed_ids.iter() {
+            selected.remove(id);
             self.thumbs.remove(id);
             self.thumbs_queued.remove(id);
         }
-        self.thumb_order.retain(|id| !ids.contains(id));
+        self.thumb_order.retain(|id| !removed_ids.contains(id));
         self.rotated_thumbs
-            .retain(|(photo_id, _), _| !ids.contains(photo_id));
+            .retain(|(photo_id, _), _| !removed_ids.contains(photo_id));
+        self.project_changed();
         self.dirty = true;
         self.log(format!("Removed {removed} photos from the project"));
         self.set_status(format!(
@@ -511,6 +556,7 @@ impl ContactSheet {
         }
         self.checkpoint();
         let changed = batch::add_tag(&mut self.project, &ids, &tag);
+        self.project_changed();
         if changed > 0 {
             self.dirty = true;
         } else {
@@ -535,6 +581,7 @@ impl ContactSheet {
         }
         self.checkpoint();
         let changed = batch::remove_tag(&mut self.project, &ids, &tag);
+        self.project_changed();
         if changed > 0 {
             self.dirty = true;
         } else {
@@ -551,6 +598,7 @@ impl ContactSheet {
         let ids = self.scope_ids();
         self.checkpoint();
         let changed = batch::clear_tags(&mut self.project, &ids);
+        self.project_changed();
         if changed > 0 {
             self.dirty = true;
         } else {
@@ -577,13 +625,14 @@ impl ContactSheet {
             cx.notify();
             return;
         }
-        let conflicts = plan.conflicts().count();
+        let conflicts = plan.conflicts;
         if conflicts > 0 {
             self.set_status(format!("{conflicts} rename conflict(s)"));
         } else {
             self.set_status(format!("Rename ready / {} files", plan.entries.len()));
         }
-        self.rename_pending = Some(plan);
+        self.rename_scroll = UniformListScrollHandle::default();
+        self.rename_pending = Some(Arc::new(plan));
         cx.notify();
     }
 
@@ -599,6 +648,7 @@ impl ContactSheet {
         }
         let report = batch::apply_rename(&mut self.project, &plan);
         if report.renamed_count() > 0 {
+            self.project_changed();
             self.dirty = true;
             self.history.clear();
             self.log("History cleared after rename");
@@ -726,8 +776,11 @@ impl ContactSheet {
         } else {
             self.project.sheet.title.trim().to_string()
         };
-        self.project
-            .upsert_saved_sheet(name.clone(), self.project.sheet.clone(), ids.clone());
+        self.project.upsert_saved_sheet(
+            name.clone(),
+            self.project.sheet.clone(),
+            ids.as_ref().clone(),
+        );
         self.dirty = true;
         self.set_status(format!("Layout written / {name} / {} photos", ids.len()));
         self.log(format!("Sheet saved / {name} / {} photo(s)", ids.len()));
@@ -763,13 +816,16 @@ impl ContactSheet {
         if self.project.sheet.title.trim().is_empty() {
             self.project.sheet.title = sheet.name.clone();
         }
-        self.selected = sheet
-            .photo_ids
-            .iter()
-            .copied()
-            .filter(|id| self.project.photo(*id).is_some())
-            .collect();
+        self.selected = Arc::new(
+            sheet
+                .photo_ids
+                .iter()
+                .copied()
+                .filter(|id| self.project.photo(*id).is_some())
+                .collect(),
+        );
         self.preview_page = 0;
+        self.selection_changed();
         self.title_field
             .update(cx, |field, cx| field.set_value(sheet.name.clone(), cx));
         self.dirty = true;
@@ -835,7 +891,7 @@ impl ContactSheet {
                 self.thumb_queue.clear();
                 self.thumbs_in_flight = 0;
                 self.grid_scroll = UniformListScrollHandle::default();
-                self.selected = project.photo_ids().into_iter().collect();
+                self.selected = Arc::new(project.photos.iter().map(|photo| photo.id()).collect());
                 self.filter = Filter::All;
                 self.search.clear();
                 self.search_field
@@ -843,28 +899,18 @@ impl ContactSheet {
                 self.title_field.update(cx, |field, cx| {
                     field.set_value(project.sheet.title.clone(), cx)
                 });
-                let missing = project
-                    .photos
-                    .iter()
-                    .filter(|photo| !photo.path.exists())
-                    .count();
                 self.project = project;
                 self.project_path = Some(path.clone());
                 self.dirty = false;
                 self.history.clear();
                 self.preview_page = 0;
                 self.rename_pending = None;
+                self.project_changed();
+                self.selection_changed();
+                self.filter_changed();
                 self.remember_current_project();
                 self.log("File loaded");
-                self.set_status(format!(
-                    "Opened {} photos{}",
-                    self.project.photos.len(),
-                    if missing > 0 {
-                        format!(" / {missing} missing")
-                    } else {
-                        String::new()
-                    }
-                ));
+                self.set_status(format!("Opened {} photos", self.project.photos.len()));
                 self.refresh_preview();
                 cx.notify();
             }
@@ -949,6 +995,7 @@ impl ContactSheet {
 
     pub(crate) fn begin_import(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         let generation = self.generation;
+        self.last_import_render = Instant::now();
         self.set_status("Scanning…");
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -1037,7 +1084,10 @@ impl ContactSheet {
                         this.finish_import(cx);
                     } else {
                         this.pump_import(cx);
-                        cx.notify();
+                        if this.last_import_render.elapsed() >= Duration::from_millis(100) {
+                            this.last_import_render = Instant::now();
+                            cx.notify();
+                        }
                     }
                 });
             })
@@ -1077,7 +1127,8 @@ impl ContactSheet {
             state.done += 1;
         }
         self.importing_paths.remove(&path);
-        self.selected.insert(id);
+        Arc::make_mut(&mut self.selected).insert(id);
+        self.project_changed();
         self.dirty = true;
     }
 
@@ -1129,7 +1180,7 @@ impl ContactSheet {
     ) {
         let ids: Vec<PhotoId> = indices
             .into_iter()
-            .filter_map(|index| self.project.photos.get(index).map(|photo| photo.id))
+            .filter_map(|index| self.project.photos.get(index).map(|photo| photo.id()))
             .collect();
         self.schedule_thumb_ids(ids, cx);
     }
@@ -1147,7 +1198,12 @@ impl ContactSheet {
                 continue;
             };
             self.thumbs_queued.insert(id);
-            self.thumb_queue.push_back((id, path));
+            self.thumb_queue.push_front((id, path));
+        }
+        while self.thumb_queue.len() > THUMB_QUEUE_LIMIT {
+            if let Some((stale, _)) = self.thumb_queue.pop_back() {
+                self.thumbs_queued.remove(&stale);
+            }
         }
         self.pump_thumbs(cx);
     }
@@ -1185,9 +1241,12 @@ impl ContactSheet {
         }
     }
 
-    pub(crate) fn thumb_image(&mut self, id: PhotoId, turns: u8) -> Option<Arc<RenderImage>> {
-        let turns = turns % 4;
-        if turns == 0 {
+    pub(crate) fn thumb_image(
+        &mut self,
+        id: PhotoId,
+        turns: QuarterTurns,
+    ) -> Option<Arc<RenderImage>> {
+        if turns == QuarterTurns::NONE {
             return match self.thumbs.get(&id) {
                 Some(ThumbState::Ready(image)) => Some(image.clone()),
                 _ => None,
@@ -1217,7 +1276,7 @@ impl ContactSheet {
             return;
         };
         photo.rotate_clockwise();
-        let degrees = i16::from(photo.rotation()) * 90;
+        let degrees = photo.rotation().degrees();
         self.dirty = true;
         self.log(format!("Rotate / {name} / {degrees}°"));
         self.refresh_and_notify(cx);
@@ -1233,10 +1292,15 @@ impl ContactSheet {
     pub(crate) fn preview_image(
         &mut self,
         id: PhotoId,
-        user_turns: u8,
+        user_turns: QuarterTurns,
         rotated: bool,
     ) -> Option<Arc<RenderImage>> {
-        self.thumb_image(id, (user_turns + u8::from(rotated)) % 4)
+        let turns = if rotated {
+            user_turns.clockwise()
+        } else {
+            user_turns
+        };
+        self.thumb_image(id, turns)
     }
 
     // ----- export --------------------------------------------------------
@@ -1495,22 +1559,23 @@ fn divider(id: &'static str, target: ResizeTarget, cx: &mut Context<ContactSheet
         .into_any_element()
 }
 
-fn rotate_render_image(image: &RenderImage, turns: u8) -> Option<Arc<RenderImage>> {
+fn rotate_render_image(image: &RenderImage, turns: QuarterTurns) -> Option<Arc<RenderImage>> {
     let size = image.size(0);
     let bytes = image.as_bytes(0)?;
     let mut buffer =
         RgbaImage::from_raw(size.width.0 as u32, size.height.0 as u32, bytes.to_vec())?;
-    for _ in 0..(turns % 4) {
+    for _ in 0..turns.turns() {
         buffer = image::imageops::rotate90(&buffer);
     }
     Some(Arc::new(RenderImage::new(vec![Frame::new(buffer)])))
 }
 
 fn render_image(preview: PreviewImage) -> Arc<RenderImage> {
-    let width = preview.width.max(1);
-    let height = preview.height.max(1);
-    let bgra = preview.to_bgra();
-    let buffer = RgbaImage::from_raw(width, height, bgra).unwrap_or_else(|| RgbaImage::new(1, 1));
+    let width = preview.width();
+    let height = preview.height();
+    let bgra = preview.into_bgra();
+    let buffer = RgbaImage::from_raw(width, height, bgra)
+        .expect("preview width and height match its pixel buffer");
     Arc::new(RenderImage::new(vec![Frame::new(buffer)]))
 }
 

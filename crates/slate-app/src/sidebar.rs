@@ -17,9 +17,9 @@ impl ContactSheet {
     ) -> AnyElement {
         let photo_count = self.project.photos.len();
         let selected_count = self.selected.len();
-        let tag_counts = self.project.tag_counts();
+        let tag_counts = self.tag_counts();
         let tag_count_total = tag_counts.len();
-        let untagged = self.project.untagged_count();
+        let untagged = self.untagged_count();
 
         let search_block = div()
             .px(px(16.0))
@@ -42,6 +42,7 @@ impl ContactSheet {
             filter_row("filter-all", "All images", photo_count, is_all)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.filter = Filter::All;
+                    this.filter_changed();
                     this.refresh_preview();
                     cx.notify();
                 }))
@@ -52,23 +53,25 @@ impl ContactSheet {
             filter_row("filter-untagged", "Untagged", untagged, is_untagged)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.filter = Filter::Untagged;
+                    this.filter_changed();
                     this.refresh_preview();
                     cx.notify();
                 }))
                 .into_any_element(),
         );
-        for (tag, count) in tag_counts {
-            let active = matches!(&self.filter, Filter::Tag(active) if active == &tag);
+        for (tag, count) in tag_counts.iter() {
+            let active = matches!(&self.filter, Filter::Tag(active) if active == tag);
             let click_tag = tag.clone();
             filter_rows.push(
                 filter_row(
                     ElementId::Name(SharedString::from(format!("filter-tag-{tag}"))),
                     &format!("#{tag}"),
-                    count,
+                    *count,
                     active,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.filter = Filter::Tag(click_tag.clone());
+                    this.filter_changed();
                     this.refresh_preview();
                     cx.notify();
                 }))

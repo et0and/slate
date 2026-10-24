@@ -169,6 +169,43 @@ pub fn plan_sheet(settings: &SheetSettings, photos: &[Photo]) -> SheetPlan {
 
 /// Lay out one page without touching the rest of a large library. The preview
 /// uses this so a 10k-photo project still renders quickly.
+fn placement(
+    settings: &SheetSettings,
+    layout: &SheetLayout,
+    photo: &Photo,
+    photo_index: usize,
+    global_index: usize,
+    slot: usize,
+) -> Placement {
+    let row = slot / layout.columns;
+    let column = slot % layout.columns;
+    let cell_x_mm = layout.margin_mm + column as f32 * (layout.cell_w_mm + settings.gutter_mm);
+    let cell_y_mm = layout.content_top_mm + row as f32 * (layout.cell_h_mm + settings.gutter_mm);
+
+    let (image_w_mm, image_h_mm, rotated) = fit(
+        photo.aspect().unwrap_or(1.0),
+        layout.image_w_mm,
+        layout.image_h_mm,
+        settings.rotate,
+    );
+    let image_x_mm = cell_x_mm + (layout.image_w_mm - image_w_mm) / 2.0;
+    let image_y_mm = cell_y_mm + (layout.image_h_mm - image_h_mm) / 2.0;
+
+    Placement {
+        photo_index,
+        global_index: global_index + 1,
+        slot,
+        cell_x_mm,
+        cell_y_mm,
+        image_x_mm,
+        image_y_mm,
+        image_w_mm,
+        image_h_mm,
+        rotated,
+        caption: caption_text(settings, global_index, photo),
+    }
+}
+
 pub fn plan_page(
     settings: &SheetSettings,
     layout: &SheetLayout,
@@ -181,38 +218,42 @@ pub fn plan_page(
     let mut placements = Vec::with_capacity(end.saturating_sub(start));
 
     for (slot, photo_index) in (start..end).enumerate() {
-        let photo = &photos[photo_index];
-        let row = slot / layout.columns;
-        let column = slot % layout.columns;
-        let cell_x_mm = layout.margin_mm + column as f32 * (layout.cell_w_mm + settings.gutter_mm);
-        let cell_y_mm =
-            layout.content_top_mm + row as f32 * (layout.cell_h_mm + settings.gutter_mm);
-
-        let (image_w_mm, image_h_mm, rotated) = fit(
-            photo.aspect(),
-            layout.image_w_mm,
-            layout.image_h_mm,
-            settings.rotate,
-        );
-        let image_x_mm = cell_x_mm + (layout.image_w_mm - image_w_mm) / 2.0;
-        let image_y_mm = cell_y_mm + (layout.image_h_mm - image_h_mm) / 2.0;
-
-        let caption = caption_text(settings, photo_index, photo);
-        placements.push(Placement {
+        placements.push(placement(
+            settings,
+            layout,
+            &photos[photo_index],
             photo_index,
-            global_index: photo_index + 1,
+            photo_index,
             slot,
-            cell_x_mm,
-            cell_y_mm,
-            image_x_mm,
-            image_y_mm,
-            image_w_mm,
-            image_h_mm,
-            rotated,
-            caption,
-        });
+        ));
     }
 
+    PagePlan {
+        number: page_index + 1,
+        placements,
+    }
+}
+
+/// Lay out one page from borrowed photos. The preview uses this so it does not clone
+/// the whole working set just to render twelve cells.
+pub fn plan_page_refs(
+    settings: &SheetSettings,
+    layout: &SheetLayout,
+    photos: &[&Photo],
+    first_index: usize,
+    page_index: usize,
+) -> PagePlan {
+    let mut placements = Vec::with_capacity(photos.len());
+    for (slot, photo) in photos.iter().enumerate() {
+        placements.push(placement(
+            settings,
+            layout,
+            photo,
+            slot,
+            first_index + slot,
+            slot,
+        ));
+    }
     PagePlan {
         number: page_index + 1,
         placements,
@@ -236,19 +277,16 @@ pub fn caption_text(settings: &SheetSettings, photo_index: usize, photo: &Photo)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Orientation, Paper, PhotoId};
+    use crate::model::{Orientation, Paper, PhotoId, PhotoSize};
     use std::path::PathBuf;
 
     fn photo(width: u32, height: u32) -> Photo {
-        Photo {
-            id: PhotoId(1),
-            path: PathBuf::from("/tmp/image.jpg"),
-            width,
-            height,
-            bytes: 0,
-            tags: vec![],
-            rotation: 0,
-        }
+        Photo::new(
+            PhotoId(1),
+            PathBuf::from("/tmp/image.jpg"),
+            PhotoSize::new(width, height),
+            0,
+        )
     }
 
     #[test]
@@ -314,6 +352,33 @@ mod tests {
                     .map(|placement| placement.photo_index)
             );
         }
+    }
+
+    #[test]
+    fn borrowed_page_plan_matches_the_full_plan() {
+        let settings = SheetSettings::default();
+        let photos: Vec<Photo> = (0..30).map(|_| photo(3000, 2000)).collect();
+        let full = plan_page(
+            &settings,
+            &SheetLayout::from_settings(&settings),
+            &photos,
+            1,
+        );
+        let refs: Vec<&Photo> = photos[12..24].iter().collect();
+        let borrowed = plan_page_refs(
+            &settings,
+            &SheetLayout::from_settings(&settings),
+            &refs,
+            12,
+            1,
+        );
+        assert_eq!(borrowed.number, full.number);
+        assert_eq!(borrowed.placements.len(), full.placements.len());
+        assert_eq!(
+            borrowed.placements[0].global_index,
+            full.placements[0].global_index
+        );
+        assert_eq!(borrowed.placements[0].caption, full.placements[0].caption);
     }
 
     #[test]

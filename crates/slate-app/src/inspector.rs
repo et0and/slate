@@ -21,19 +21,33 @@ impl ContactSheet {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let page_count = self.page_count();
-        let current = self.current_page();
-        let photos = self.export_photos();
-        let sheet_layout = layout::SheetLayout::from_settings(&self.project.sheet);
-        let page = layout::plan_page(&self.project.sheet, &sheet_layout, &photos, current);
-        let page_ids = page
-            .placements
+        let current = self.preview_page.min(page_count.saturating_sub(1));
+        let scope = self.scope_ids();
+        let per_page = self.project.sheet.per_page().max(1);
+        let first_index = current.saturating_mul(per_page);
+        let page_start = first_index.min(scope.len());
+        let page_end = page_start.saturating_add(per_page).min(scope.len());
+        let page_photos = scope[page_start..page_end]
             .iter()
-            .filter_map(|placement| photos.get(placement.photo_index).map(|photo| photo.id))
+            .filter_map(|id| self.project.photo(*id).cloned())
+            .collect::<Vec<_>>();
+        let sheet_layout = layout::SheetLayout::from_settings(&self.project.sheet);
+        let page_refs = page_photos.iter().collect::<Vec<_>>();
+        let page = layout::plan_page_refs(
+            &self.project.sheet,
+            &sheet_layout,
+            &page_refs,
+            first_index,
+            current,
+        );
+        let page_ids = page_photos
+            .iter()
+            .map(|photo| photo.id())
             .collect::<Vec<_>>();
         self.schedule_thumb_ids(page_ids, cx);
         let scale = PREVIEW_WIDTH / sheet_layout.page_w_mm;
         let preview_height = sheet_layout.page_h_mm * scale;
-        let empty = photos.is_empty();
+        let empty = page_photos.is_empty();
 
         let mut preview_children: Vec<AnyElement> = Vec::new();
 
@@ -64,9 +78,9 @@ impl ContactSheet {
             }
 
             for placement in &page.placements {
-                let photo = photos.get(placement.photo_index);
+                let photo = page_photos.get(placement.photo_index);
                 let image = photo.and_then(|photo| {
-                    self.preview_image(photo.id, photo.rotation(), placement.rotated)
+                    self.preview_image(photo.id(), photo.rotation(), placement.rotated)
                 });
                 let cell_x = placement.cell_x_mm * scale;
                 let cell_y = placement.cell_y_mm * scale;

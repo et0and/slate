@@ -1,6 +1,8 @@
 //! Modal confirmation for destructive batch operations.
 
-use gpui::{AnyElement, Context, div, prelude::*, px, rgba};
+use std::sync::Arc;
+
+use gpui::{AnyElement, Context, Window, div, prelude::*, px, rgba, uniform_list};
 
 use crate::app::ContactSheet;
 use crate::assets;
@@ -14,11 +16,9 @@ impl ContactSheet {
         if self.about_open {
             return Some(self.render_about(cx));
         }
-        self.rename_pending.as_ref()?;
-
-        let plan = self.rename_pending.as_ref()?;
+        let plan = self.rename_pending.clone()?;
         let entries = plan.entries.len();
-        let conflicts = plan.conflicts().count();
+        let conflicts = plan.conflicts;
         let can_apply = plan.can_apply();
         let file_label = if entries == 1 { "file" } else { "files" };
         let conflict_label = if conflicts == 1 {
@@ -27,74 +27,92 @@ impl ContactSheet {
             "conflicts"
         };
 
-        let mut rows: Vec<AnyElement> = Vec::with_capacity(entries);
-        for (index, entry) in plan.entries.iter().enumerate() {
-            let from = entry
-                .from
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let to = entry
-                .to
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            rows.push(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .px(px(20.0))
-                    .py(px(10.0))
-                    .border_b_1()
-                    .border_color(theme::rule())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(10.0))
-                            .child(
-                                mono_text(theme::TEXT_MICRO, theme::faint())
-                                    .w(px(26.0))
-                                    .child(format!("{:03}", index + 1)),
-                            )
-                            .child(
-                                mono_text(theme::TEXT_META, theme::muted())
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .truncate()
-                                    .child(from),
-                            )
-                            .child(icon(assets::ARROW_RIGHT, 12.0, theme::faint()))
-                            .child(
-                                mono_text(theme::TEXT_META, theme::ink())
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .font_weight(if entry.conflict.is_some() {
-                                        gpui::FontWeight::SEMIBOLD
-                                    } else {
-                                        gpui::FontWeight::NORMAL
-                                    })
-                                    .truncate()
-                                    .child(to),
-                            ),
-                    )
-                    .children(entry.conflict.as_ref().map(|conflict| {
-                        div()
-                            .pl(px(36.0))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.0))
-                            .child(icon(assets::ALERT, 11.0, theme::muted()))
-                            .child(
-                                ui_text(theme::TEXT_META, theme::muted())
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .child(conflict.clone()),
-                            )
-                    }))
-                    .into_any_element(),
-            );
-        }
+        const RENAME_ROW_H: f32 = 76.0;
+        let list_height = (entries as f32 * RENAME_ROW_H).clamp(1.0, 410.0);
+        let plan_for_list = Arc::clone(&plan);
+        let list = uniform_list(
+            "rename-list",
+            entries,
+            cx.processor(
+                move |_: &mut ContactSheet,
+                      range: std::ops::Range<usize>,
+                      _: &mut Window,
+                      _: &mut Context<ContactSheet>| {
+                    range
+                        .map(|index| {
+                            let entry = &plan_for_list.entries[index];
+                            let from = entry
+                                .from
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            let to = entry
+                                .to
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            div()
+                                .h(px(RENAME_ROW_H))
+                                .flex()
+                                .flex_col()
+                                .justify_center()
+                                .gap(px(4.0))
+                                .px(px(20.0))
+                                .py(px(10.0))
+                                .border_b_1()
+                                .border_color(theme::rule())
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(10.0))
+                                        .child(
+                                            mono_text(theme::TEXT_MICRO, theme::faint())
+                                                .w(px(26.0))
+                                                .child(format!("{:03}", index + 1)),
+                                        )
+                                        .child(
+                                            mono_text(theme::TEXT_META, theme::muted())
+                                                .flex_1()
+                                                .min_w(px(0.0))
+                                                .truncate()
+                                                .child(from),
+                                        )
+                                        .child(icon(assets::ARROW_RIGHT, 12.0, theme::faint()))
+                                        .child(
+                                            mono_text(theme::TEXT_META, theme::ink())
+                                                .flex_1()
+                                                .min_w(px(0.0))
+                                                .font_weight(if entry.conflict.is_some() {
+                                                    gpui::FontWeight::SEMIBOLD
+                                                } else {
+                                                    gpui::FontWeight::NORMAL
+                                                })
+                                                .truncate()
+                                                .child(to),
+                                        ),
+                                )
+                                .children(entry.conflict.as_ref().map(|conflict| {
+                                    div()
+                                        .pl(px(36.0))
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(6.0))
+                                        .child(icon(assets::ALERT, 11.0, theme::muted()))
+                                        .child(
+                                            ui_text(theme::TEXT_META, theme::muted())
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .child(conflict.clone()),
+                                        )
+                                }))
+                                .into_any_element()
+                        })
+                        .collect::<Vec<_>>()
+                },
+            ),
+        )
+        .track_scroll(self.rename_scroll.clone())
+        .h(px(list_height));
 
         let apply: AnyElement = if can_apply {
             primary_button("rename-apply", "Apply rename")
@@ -144,15 +162,7 @@ impl ContactSheet {
                             .on_click(cx.listener(|this, _, _, cx| this.cancel_rename(cx))),
                     ),
             )
-            .child(
-                div()
-                    .id("rename-list")
-                    .flex()
-                    .flex_col()
-                    .children(rows)
-                    .max_h(px(410.0))
-                    .overflow_y_scroll(),
-            )
+            .child(list)
             .child(
                 div()
                     .flex_shrink_0()

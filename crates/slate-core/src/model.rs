@@ -3,8 +3,11 @@
 //! Everything in this module serializes to the on-disk `.slate` file,
 //! so a project can always be reopened and exported later.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::num::NonZeroU32;
+use std::ops::{Deref, Index};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -24,22 +27,184 @@ impl std::fmt::Display for PhotoId {
 #[serde(transparent)]
 pub struct SheetId(pub u64);
 
+/// Clockwise quarter turns, always in `0..4`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct QuarterTurns(u8);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidQuarterTurns(pub u8);
+
+impl std::fmt::Display for InvalidQuarterTurns {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "rotation must be 0, 1, 2, or 3, got {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidQuarterTurns {}
+
+impl QuarterTurns {
+    pub const NONE: Self = Self(0);
+
+    pub const fn turns(self) -> u8 {
+        self.0
+    }
+
+    pub const fn degrees(self) -> u16 {
+        self.0 as u16 * 90
+    }
+
+    pub const fn is_odd(self) -> bool {
+        self.0 % 2 == 1
+    }
+
+    pub const fn clockwise(self) -> Self {
+        Self((self.0 + 1) % 4)
+    }
+}
+
+impl TryFrom<u8> for QuarterTurns {
+    type Error = InvalidQuarterTurns;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        if value < 4 {
+            Ok(Self(value))
+        } else {
+            Err(InvalidQuarterTurns(value))
+        }
+    }
+}
+
+impl From<QuarterTurns> for u8 {
+    fn from(value: QuarterTurns) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Dimensions {
+    width: NonZeroU32,
+    height: NonZeroU32,
+}
+
+impl Dimensions {
+    pub fn new(width: u32, height: u32) -> Option<Self> {
+        Some(Self {
+            width: NonZeroU32::new(width)?,
+            height: NonZeroU32::new(height)?,
+        })
+    }
+
+    pub const fn width(self) -> u32 {
+        self.width.get()
+    }
+
+    pub const fn height(self) -> u32 {
+        self.height.get()
+    }
+
+    pub fn aspect(self) -> f32 {
+        self.width.get() as f32 / self.height.get() as f32
+    }
+
+    pub fn oriented(self, turns: QuarterTurns) -> Self {
+        if turns.is_odd() {
+            Self {
+                width: self.height,
+                height: self.width,
+            }
+        } else {
+            self
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PhotoSize {
+    #[default]
+    Unknown,
+    Known(Dimensions),
+}
+
+impl PhotoSize {
+    pub fn new(width: u32, height: u32) -> Self {
+        Dimensions::new(width, height).map_or(Self::Unknown, Self::Known)
+    }
+
+    pub fn dimensions(self) -> Option<Dimensions> {
+        match self {
+            Self::Known(dimensions) => Some(dimensions),
+            Self::Unknown => None,
+        }
+    }
+}
+
+impl Serialize for PhotoSize {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct Wire {
+            width: u32,
+            height: u32,
+        }
+        let (width, height) = match self.dimensions() {
+            Some(dimensions) => (dimensions.width(), dimensions.height()),
+            None => (0, 0),
+        };
+        Wire { width, height }.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PhotoSize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default)]
+            width: u32,
+            #[serde(default)]
+            height: u32,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self::new(wire.width, wire.height))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Photo {
-    pub id: PhotoId,
+    id: PhotoId,
     pub path: PathBuf,
-    pub width: u32,
-    pub height: u32,
+    #[serde(flatten)]
+    pub size: PhotoSize,
     #[serde(default)]
     pub bytes: u64,
     #[serde(default)]
     pub tags: Vec<String>,
     /// User rotation in clockwise quarter turns.
     #[serde(default)]
-    pub rotation: u8,
+    pub rotation: QuarterTurns,
 }
 
 impl Photo {
+    pub fn new(id: PhotoId, path: PathBuf, size: PhotoSize, bytes: u64) -> Self {
+        Self {
+            id,
+            path,
+            size,
+            bytes,
+            tags: Vec::new(),
+            rotation: QuarterTurns::NONE,
+        }
+    }
+
+    pub fn id(&self) -> PhotoId {
+        self.id
+    }
+
     pub fn file_name(&self) -> String {
         self.path
             .file_name()
@@ -54,38 +219,171 @@ impl Photo {
             .unwrap_or_default()
     }
 
-    pub fn rotation(&self) -> u8 {
-        self.rotation % 4
+    pub fn rotation(&self) -> QuarterTurns {
+        self.rotation
     }
 
     pub fn rotate_clockwise(&mut self) {
-        self.rotation = (self.rotation + 1) % 4;
+        self.rotation = self.rotation.clockwise();
     }
 
-    pub fn oriented_size(&self) -> (u32, u32) {
-        if self.rotation().is_multiple_of(2) {
-            (self.width, self.height)
-        } else {
-            (self.height, self.width)
-        }
+    pub fn oriented_size(&self) -> Option<(u32, u32)> {
+        let dimensions = self.size.dimensions()?.oriented(self.rotation());
+        Some((dimensions.width(), dimensions.height()))
     }
 
-    pub fn aspect(&self) -> f32 {
-        let (width, height) = self.oriented_size();
-        if height == 0 {
-            1.0
-        } else {
-            width as f32 / height as f32
-        }
+    pub fn aspect(&self) -> Option<f32> {
+        Some(self.size.dimensions()?.oriented(self.rotation()).aspect())
     }
 
     pub fn has_tag(&self, tag: &str) -> bool {
         self.tags.iter().any(|existing| existing == tag)
     }
+}
 
-    pub fn is_portrait(&self) -> bool {
-        let (width, height) = self.oriented_size();
-        height > width
+#[derive(Debug, Clone, Default)]
+struct PhotoData {
+    photos: Vec<Photo>,
+    index: HashMap<PhotoId, usize>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PhotoSet {
+    data: Arc<PhotoData>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DuplicatePhotoId(pub PhotoId);
+
+impl std::fmt::Display for DuplicatePhotoId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "duplicate photo id {}", self.0.0)
+    }
+}
+
+impl std::error::Error for DuplicatePhotoId {}
+
+impl PhotoSet {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_vec(photos: Vec<Photo>) -> Result<Self, DuplicatePhotoId> {
+        let capacity = photos.len();
+        let mut data = PhotoData {
+            photos,
+            index: HashMap::with_capacity(capacity),
+        };
+        for (position, photo) in data.photos.iter().enumerate() {
+            if data.index.insert(photo.id, position).is_some() {
+                return Err(DuplicatePhotoId(photo.id));
+            }
+        }
+        Ok(Self {
+            data: Arc::new(data),
+        })
+    }
+
+    pub fn push(&mut self, photo: Photo) -> Result<(), DuplicatePhotoId> {
+        if self.data.index.contains_key(&photo.id) {
+            return Err(DuplicatePhotoId(photo.id));
+        }
+        let data = Arc::make_mut(&mut self.data);
+        data.index.insert(photo.id, data.photos.len());
+        data.photos.push(photo);
+        Ok(())
+    }
+
+    pub fn photo(&self, id: PhotoId) -> Option<&Photo> {
+        self.data
+            .index
+            .get(&id)
+            .and_then(|position| self.data.photos.get(*position))
+    }
+
+    pub fn photo_mut(&mut self, id: PhotoId) -> Option<&mut Photo> {
+        let position = *self.data.index.get(&id)?;
+        let data = Arc::make_mut(&mut self.data);
+        data.photos.get_mut(position)
+    }
+
+    pub fn position(&self, id: PhotoId) -> Option<usize> {
+        self.data.index.get(&id).copied()
+    }
+
+    pub fn shares_data_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.data, &other.data)
+    }
+
+    pub fn remove_ids(&mut self, ids: &HashSet<PhotoId>) -> usize {
+        let data = Arc::make_mut(&mut self.data);
+        let before = data.photos.len();
+        data.photos.retain(|photo| !ids.contains(&photo.id));
+        data.rebuild_index();
+        before - data.photos.len()
+    }
+}
+
+impl PhotoData {
+    fn rebuild_index(&mut self) {
+        self.index.clear();
+        self.index.reserve(self.photos.len());
+        for (position, photo) in self.photos.iter().enumerate() {
+            self.index.insert(photo.id, position);
+        }
+    }
+}
+
+impl Deref for PhotoSet {
+    type Target = [Photo];
+
+    fn deref(&self) -> &Self::Target {
+        &self.data.photos
+    }
+}
+
+impl Index<usize> for PhotoSet {
+    type Output = Photo;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.data.photos[index]
+    }
+}
+
+impl<'a> IntoIterator for &'a PhotoSet {
+    type Item = &'a Photo;
+    type IntoIter = std::slice::Iter<'a, Photo>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.photos.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut PhotoSet {
+    type Item = &'a mut Photo;
+    type IntoIter = std::slice::IterMut<'a, Photo>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Arc::make_mut(&mut self.data).photos.iter_mut()
+    }
+}
+
+impl Serialize for PhotoSet {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.data.photos.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PhotoSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let photos = Vec::<Photo>::deserialize(deserializer)?;
+        Self::from_vec(photos).map_err(serde::de::Error::custom)
     }
 }
 
@@ -239,7 +537,7 @@ pub struct SavedSheet {
 pub struct Project {
     pub schema: u32,
     pub name: String,
-    pub photos: Vec<Photo>,
+    pub photos: PhotoSet,
     pub sheet: SheetSettings,
     pub saved_sheets: Vec<SavedSheet>,
     pub next_photo_id: u64,
@@ -257,7 +555,7 @@ impl Project {
         Self {
             schema: SCHEMA_VERSION,
             name: name.into(),
-            photos: Vec::new(),
+            photos: PhotoSet::new(),
             sheet: SheetSettings::default(),
             saved_sheets: Vec::new(),
             next_photo_id: 1,
@@ -273,38 +571,27 @@ impl Project {
 
     pub fn add_photo(&mut self, path: PathBuf, width: u32, height: u32, bytes: u64) -> PhotoId {
         let id = self.allocate_photo_id();
-        self.photos.push(Photo {
-            id,
-            path,
-            width,
-            height,
-            bytes,
-            tags: Vec::new(),
-            rotation: 0,
-        });
+        self.photos
+            .push(Photo::new(id, path, PhotoSize::new(width, height), bytes))
+            .expect("allocated photo ids are unique");
         id
     }
 
-    pub fn find_by_path(&self, path: &Path) -> Option<&Photo> {
-        self.photos.iter().find(|photo| photo.path == path)
-    }
-
     pub fn photo(&self, id: PhotoId) -> Option<&Photo> {
-        self.photos.iter().find(|photo| photo.id == id)
+        self.photos.photo(id)
     }
 
     pub fn photo_mut(&mut self, id: PhotoId) -> Option<&mut Photo> {
-        self.photos.iter_mut().find(|photo| photo.id == id)
+        self.photos.photo_mut(id)
     }
 
     pub fn remove_photos(&mut self, ids: &[PhotoId]) -> usize {
-        let before = self.photos.len();
-        let ids: std::collections::HashSet<PhotoId> = ids.iter().copied().collect();
-        self.photos.retain(|photo| !ids.contains(&photo.id));
+        let ids: HashSet<PhotoId> = ids.iter().copied().collect();
+        let removed = self.photos.remove_ids(&ids);
         self.saved_sheets
             .iter_mut()
             .for_each(|sheet| sheet.photo_ids.retain(|id| !ids.contains(id)));
-        before - self.photos.len()
+        removed
     }
 
     pub fn tag_counts(&self) -> BTreeMap<String, usize> {
@@ -385,9 +672,6 @@ impl Project {
         for sheet in &mut self.saved_sheets {
             sheet.settings.normalize();
         }
-        for photo in &mut self.photos {
-            photo.rotation %= 4;
-        }
         self.next_photo_id = self.next_photo_id.max(
             self.photos
                 .iter()
@@ -467,6 +751,72 @@ mod tests {
     }
 
     #[test]
+    fn quarter_turns_reject_invalid_values() {
+        assert!(QuarterTurns::try_from(4).is_err());
+        assert!(serde_json::from_str::<QuarterTurns>("4").is_err());
+        assert_eq!(QuarterTurns::try_from(3).unwrap().clockwise().turns(), 0);
+        assert_eq!(QuarterTurns::try_from(2).unwrap().degrees(), 180);
+    }
+
+    #[test]
+    fn photo_size_keeps_unknown_distinct_from_zero_pixels() {
+        assert_eq!(PhotoSize::new(0, 10), PhotoSize::Unknown);
+        assert_eq!(PhotoSize::new(10, 0), PhotoSize::Unknown);
+        let dimensions = Dimensions::new(4000, 3000).unwrap();
+        assert_eq!(dimensions.width(), 4000);
+        assert_eq!(
+            dimensions
+                .oriented(QuarterTurns::try_from(1).unwrap())
+                .width(),
+            3000
+        );
+    }
+
+    #[test]
+    fn unknown_dimensions_survive_a_project_roundtrip() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("unknown.slate");
+        let mut project = Project::new("Test");
+        let id = project.add_photo(PathBuf::from("/tmp/missing.jpg"), 0, 0, 1);
+        project.save(&path).unwrap();
+        let loaded = Project::load(&path).unwrap();
+        assert_eq!(loaded.photo(id).unwrap().size, PhotoSize::Unknown);
+        assert_eq!(loaded.photo(id).unwrap().oriented_size(), None);
+    }
+
+    #[test]
+    fn photo_set_rejects_duplicate_ids() {
+        let photos = project_with_photos();
+        let duplicate = photos.photos[0].clone();
+        assert!(PhotoSet::from_vec(vec![duplicate.clone(), duplicate]).is_err());
+    }
+
+    #[test]
+    fn photo_set_lookup_survives_removal() {
+        let mut project = project_with_photos();
+        let first = project.photos[0].id;
+        let second = project.photos[1].id;
+        project.remove_photos(&[first]);
+        assert!(project.photo(first).is_none());
+        assert_eq!(project.photo(second).map(|photo| photo.id), Some(second));
+        assert_eq!(project.photos.position(second), Some(0));
+    }
+
+    #[test]
+    fn project_clone_shares_photo_data_until_a_mutation() {
+        let mut project = project_with_photos();
+        let clone = project.clone();
+        assert!(Arc::ptr_eq(&project.photos.data, &clone.photos.data));
+        project
+            .photo_mut(PhotoId(1))
+            .unwrap()
+            .tags
+            .push("new".into());
+        assert!(!Arc::ptr_eq(&project.photos.data, &clone.photos.data));
+        assert!(clone.photo(PhotoId(1)).unwrap().tags.is_empty());
+    }
+
+    #[test]
     fn ids_are_stable_and_monotonic() {
         let mut project = Project::new("Test");
         let first = project.add_photo(PathBuf::from("/tmp/a.jpg"), 1, 1, 0);
@@ -481,9 +831,17 @@ mod tests {
     fn project_roundtrips_with_tags_and_saved_sheets() {
         let mut project = project_with_photos();
         let id = project.photos[0].id;
-        project.photos[0].tags.push("street".into());
-        project.photos[1].tags.push("street".into());
-        project.photos[0].rotation = 1;
+        project
+            .photo_mut(PhotoId(1))
+            .unwrap()
+            .tags
+            .push("street".into());
+        project
+            .photo_mut(PhotoId(2))
+            .unwrap()
+            .tags
+            .push("street".into());
+        project.photo_mut(PhotoId(1)).unwrap().rotation = QuarterTurns::try_from(1).unwrap();
         project.sheet.columns = 5;
         project.upsert_saved_sheet("street".into(), project.sheet.clone(), vec![id]);
 
@@ -497,28 +855,28 @@ mod tests {
         assert_eq!(loaded.sheet.columns, 5);
         assert_eq!(loaded.saved_sheets.len(), 1);
         assert_eq!(loaded.saved_sheets[0].photo_ids, vec![id]);
-        assert_eq!(loaded.photos[0].rotation, 1);
+        assert_eq!(loaded.photos[0].rotation.turns(), 1);
     }
 
     #[test]
     fn rotation_swaps_the_display_aspect() {
         let mut project = project_with_photos();
-        let photo = &mut project.photos[0];
-        assert!(photo.aspect() > 1.0);
+        let photo = project.photo_mut(PhotoId(1)).unwrap();
+        assert!(photo.aspect().unwrap() > 1.0);
         photo.rotate_clockwise();
-        assert!(photo.aspect() < 1.0);
-        assert_eq!(photo.oriented_size(), (3000, 4000));
+        assert!(photo.aspect().unwrap() < 1.0);
+        assert_eq!(photo.oriented_size(), Some((3000, 4000)));
         for _ in 0..4 {
             photo.rotate_clockwise();
         }
-        assert_eq!(photo.rotation(), 1);
+        assert_eq!(photo.rotation().turns(), 1);
     }
 
     #[test]
     fn tag_counts_are_sorted() {
         let mut project = project_with_photos();
-        project.photos[0].tags = vec!["zebra".into(), "alpha".into()];
-        project.photos[1].tags = vec!["alpha".into()];
+        project.photo_mut(PhotoId(1)).unwrap().tags = vec!["zebra".into(), "alpha".into()];
+        project.photo_mut(PhotoId(2)).unwrap().tags = vec!["alpha".into()];
         let counts = project.tag_counts();
         assert_eq!(
             counts.keys().cloned().collect::<Vec<_>>(),
@@ -531,7 +889,11 @@ mod tests {
     #[test]
     fn filter_and_search_compose() {
         let mut project = project_with_photos();
-        project.photos[0].tags.push("street".into());
+        project
+            .photo_mut(PhotoId(1))
+            .unwrap()
+            .tags
+            .push("street".into());
         let indices = project.filter_indices(&Filter::Tag("street".into()), "");
         assert_eq!(indices, vec![0]);
         let indices = project.filter_indices(&Filter::All, "B.");

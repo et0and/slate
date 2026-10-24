@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use slate_core::Project;
+use slate_core::batch::{RenameOptions, plan_rename};
 use slate_core::layout::plan_sheet;
 
 fn main() -> anyhow::Result<()> {
@@ -31,6 +32,27 @@ fn main() -> anyhow::Result<()> {
     println!("pages: {}", plan.pages.len());
     println!("load: {:.1} ms", load.as_secs_f64() * 1000.0);
     println!("plan: {:.1} ms", plan_time.as_secs_f64() * 1000.0);
+
+    let started = Instant::now();
+    let clone = project.clone();
+    println!("clone: {:.2} ms", started.elapsed().as_secs_f64() * 1000.0);
+    drop(clone);
+
+    let ids = project.photo_ids();
+    let options = RenameOptions {
+        prefix: "bench-".into(),
+        suffix: String::new(),
+        start: 1,
+        padding: 5,
+    };
+    let started = Instant::now();
+    let rename = plan_rename(&project, &ids, &options);
+    println!(
+        "rename plan: {} entries / {} conflicts / {:.1} ms",
+        rename.entries.len(),
+        rename.conflicts,
+        started.elapsed().as_secs_f64() * 1000.0
+    );
     Ok(())
 }
 

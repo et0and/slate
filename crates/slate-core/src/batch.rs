@@ -1,6 +1,6 @@
 //! Batch operations: pattern renames on disk and tags in the project.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -38,15 +38,12 @@ pub struct RenameEntry {
 pub struct RenamePlan {
     pub entries: Vec<RenameEntry>,
     pub skipped: usize,
+    pub conflicts: usize,
 }
 
 impl RenamePlan {
     pub fn can_apply(&self) -> bool {
-        !self.entries.is_empty() && self.entries.iter().all(|entry| entry.conflict.is_none())
-    }
-
-    pub fn conflicts(&self) -> impl Iterator<Item = &RenameEntry> {
-        self.entries.iter().filter(|entry| entry.conflict.is_some())
+        !self.entries.is_empty() && self.conflicts == 0
     }
 }
 
@@ -76,13 +73,17 @@ pub fn sanitize_fragment(input: &str) -> String {
         .to_string()
 }
 
-fn target_name(photo: &Photo, number: u32, options: &RenameOptions) -> String {
-    let prefix = sanitize_fragment(&options.prefix);
-    let suffix = sanitize_fragment(&options.suffix);
+fn target_name_parts(
+    photo: &Photo,
+    number: u32,
+    prefix: &str,
+    suffix: &str,
+    padding: u8,
+) -> String {
     let padded = format!(
         "{:0width$}",
         number,
-        width = usize::from(options.padding.clamp(1, 8))
+        width = usize::from(padding.clamp(1, 8))
     );
     let extension = photo.extension();
     let stem = format!("{prefix}{padded}{suffix}");
@@ -93,6 +94,16 @@ fn target_name(photo: &Photo, number: u32, options: &RenameOptions) -> String {
     }
 }
 
+fn target_name(photo: &Photo, number: u32, options: &RenameOptions) -> String {
+    target_name_parts(
+        photo,
+        number,
+        &sanitize_fragment(&options.prefix),
+        &sanitize_fragment(&options.suffix),
+        options.padding,
+    )
+}
+
 /// Filename a single photo would receive; used for live previews in the UI.
 pub fn preview_name(photo: &Photo, number: u32, options: &RenameOptions) -> String {
     target_name(photo, number, options)
@@ -100,17 +111,34 @@ pub fn preview_name(photo: &Photo, number: u32, options: &RenameOptions) -> Stri
 
 pub fn plan_rename(project: &Project, selected: &[PhotoId], options: &RenameOptions) -> RenamePlan {
     let selected: HashSet<PhotoId> = selected.iter().copied().collect();
+    let prefix = sanitize_fragment(&options.prefix);
+    let suffix = sanitize_fragment(&options.suffix);
     let mut plan = RenamePlan::default();
+    let photos: Vec<&Photo> = if selected.len().saturating_mul(4) < project.photos.len() {
+        let mut positions: Vec<usize> = selected
+            .iter()
+            .filter_map(|id| project.photos.position(*id))
+            .collect();
+        positions.sort_unstable();
+        positions
+            .into_iter()
+            .filter_map(|position| project.photos.get(position))
+            .collect()
+    } else {
+        project
+            .photos
+            .iter()
+            .filter(|photo| selected.contains(&photo.id()))
+            .collect()
+    };
 
-    for photo in project
-        .photos
-        .iter()
-        .filter(|photo| selected.contains(&photo.id))
-    {
-        let name = target_name(
+    for photo in photos {
+        let name = target_name_parts(
             photo,
             options.start.saturating_add(plan.entries.len() as u32),
-            options,
+            &prefix,
+            &suffix,
+            options.padding,
         );
         let to = photo
             .path
@@ -124,7 +152,7 @@ pub fn plan_rename(project: &Project, selected: &[PhotoId], options: &RenameOpti
         }
 
         plan.entries.push(RenameEntry {
-            photo_id: photo.id,
+            photo_id: photo.id(),
             from: photo.path.clone(),
             to,
             conflict: None,
@@ -136,19 +164,21 @@ pub fn plan_rename(project: &Project, selected: &[PhotoId], options: &RenameOpti
         .iter()
         .map(|entry| entry.to.to_string_lossy().to_lowercase())
         .collect();
+    let mut target_counts: HashMap<&str, usize> = HashMap::with_capacity(targets.len());
+    for target in &targets {
+        *target_counts.entry(target.as_str()).or_default() += 1;
+    }
 
     for (index, entry) in plan.entries.iter_mut().enumerate() {
-        let target = &targets[index];
-        let duplicate = targets
-            .iter()
-            .enumerate()
-            .any(|(other, other_target)| other != index && other_target == target);
-        if duplicate {
+        let target = targets[index].as_str();
+        if target_counts.get(target).copied().unwrap_or_default() > 1 {
             entry.conflict = Some("duplicate name in batch".into());
+            plan.conflicts += 1;
             continue;
         }
         if entry.to.exists() {
             entry.conflict = Some("a file with this name already exists".into());
+            plan.conflicts += 1;
         }
     }
 
@@ -222,10 +252,12 @@ pub fn add_tag(project: &mut Project, ids: &[PhotoId], tag: &str) -> usize {
     let Some(tag) = sanitize_tag(tag) else {
         return 0;
     };
-    let ids: HashSet<PhotoId> = ids.iter().copied().collect();
     let mut changed = 0;
-    for photo in &mut project.photos {
-        if ids.contains(&photo.id) && !photo.has_tag(&tag) {
+    for id in ids {
+        let Some(photo) = project.photo_mut(*id) else {
+            continue;
+        };
+        if !photo.has_tag(&tag) {
             photo.tags.push(tag.clone());
             photo.tags.sort();
             changed += 1;
@@ -236,25 +268,27 @@ pub fn add_tag(project: &mut Project, ids: &[PhotoId], tag: &str) -> usize {
 
 pub fn remove_tag(project: &mut Project, ids: &[PhotoId], tag: &str) -> usize {
     let tag = sanitize_tag(tag).unwrap_or_else(|| tag.trim().to_lowercase());
-    let ids: HashSet<PhotoId> = ids.iter().copied().collect();
     let mut changed = 0;
-    for photo in &mut project.photos {
-        if ids.contains(&photo.id) {
-            let before = photo.tags.len();
-            photo.tags.retain(|existing| existing != &tag);
-            if photo.tags.len() != before {
-                changed += 1;
-            }
+    for id in ids {
+        let Some(photo) = project.photo_mut(*id) else {
+            continue;
+        };
+        let before = photo.tags.len();
+        photo.tags.retain(|existing| existing != &tag);
+        if photo.tags.len() != before {
+            changed += 1;
         }
     }
     changed
 }
 
 pub fn clear_tags(project: &mut Project, ids: &[PhotoId]) -> usize {
-    let ids: HashSet<PhotoId> = ids.iter().copied().collect();
     let mut changed = 0;
-    for photo in &mut project.photos {
-        if ids.contains(&photo.id) && !photo.tags.is_empty() {
+    for id in ids {
+        let Some(photo) = project.photo_mut(*id) else {
+            continue;
+        };
+        if !photo.tags.is_empty() {
             photo.tags.clear();
             changed += 1;
         }
@@ -265,27 +299,28 @@ pub fn clear_tags(project: &mut Project, ids: &[PhotoId]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{PhotoSet, PhotoSize};
     use std::path::PathBuf;
 
     fn photo(id: u64, name: &str) -> Photo {
-        Photo {
-            id: PhotoId(id),
-            path: PathBuf::from("/tmp").join(name),
-            width: 100,
-            height: 100,
-            bytes: 0,
-            tags: vec![],
-            rotation: 0,
-        }
+        Photo::new(
+            PhotoId(id),
+            PathBuf::from("/tmp").join(name),
+            PhotoSize::new(100, 100),
+            0,
+        )
     }
 
     fn project(names: &[&str]) -> Project {
         let mut project = Project::new("Test");
-        project.photos = names
-            .iter()
-            .enumerate()
-            .map(|(index, name)| photo(index as u64 + 1, name))
-            .collect();
+        project.photos = PhotoSet::from_vec(
+            names
+                .iter()
+                .enumerate()
+                .map(|(index, name)| photo(index as u64 + 1, name))
+                .collect(),
+        )
+        .unwrap();
         project
     }
 
@@ -307,7 +342,9 @@ mod tests {
     #[test]
     fn catches_duplicate_targets() {
         let mut project = project(&["a.jpg"]);
-        project.photos.push(project.photos[0].clone());
+        let source = &project.photos[0];
+        let duplicate = Photo::new(PhotoId(2), source.path.clone(), source.size, source.bytes);
+        project.photos.push(duplicate).unwrap();
         let options = RenameOptions {
             prefix: "SAME".into(),
             start: u32::MAX,
@@ -316,21 +353,21 @@ mod tests {
         };
         let plan = plan_rename(&project, &project.photo_ids(), &options);
         assert!(!plan.can_apply());
-        assert_eq!(plan.conflicts().count(), 2);
+        assert_eq!(plan.conflicts, 2);
     }
 
     #[test]
     fn same_file_name_in_different_folders_is_not_a_conflict() {
         let mut project = project(&["a.jpg"]);
-        project.photos.push(Photo {
-            id: PhotoId(2),
-            path: PathBuf::from("/other/a.jpg"),
-            width: 10,
-            height: 10,
-            bytes: 1,
-            tags: vec![],
-            rotation: 0,
-        });
+        project
+            .photos
+            .push(Photo::new(
+                PhotoId(2),
+                PathBuf::from("/other/a.jpg"),
+                PhotoSize::new(10, 10),
+                1,
+            ))
+            .unwrap();
         let options = RenameOptions {
             prefix: "same".into(),
             start: 1,
@@ -352,15 +389,13 @@ mod tests {
         std::fs::write(&occupied, "x").unwrap();
 
         let mut project = Project::new("Test");
-        project.photos = vec![Photo {
-            id: PhotoId(1),
-            path: original.clone(),
-            width: 10,
-            height: 10,
-            bytes: 1,
-            tags: vec![],
-            rotation: 0,
-        }];
+        project.photos = PhotoSet::from_vec(vec![Photo::new(
+            PhotoId(1),
+            original.clone(),
+            PhotoSize::new(10, 10),
+            1,
+        )])
+        .unwrap();
         let options = RenameOptions {
             prefix: "TARGET".into(),
             start: 1,
@@ -391,26 +426,11 @@ mod tests {
         std::fs::write(&second, "2").unwrap();
 
         let mut project = Project::new("Test");
-        project.photos = vec![
-            Photo {
-                id: PhotoId(1),
-                path: first.clone(),
-                width: 10,
-                height: 10,
-                bytes: 1,
-                tags: vec![],
-                rotation: 0,
-            },
-            Photo {
-                id: PhotoId(2),
-                path: second.clone(),
-                width: 10,
-                height: 10,
-                bytes: 1,
-                tags: vec![],
-                rotation: 0,
-            },
-        ];
+        project.photos = PhotoSet::from_vec(vec![
+            Photo::new(PhotoId(1), first.clone(), PhotoSize::new(10, 10), 1),
+            Photo::new(PhotoId(2), second.clone(), PhotoSize::new(10, 10), 1),
+        ])
+        .unwrap();
 
         let options = RenameOptions {
             prefix: "SHOOT".into(),
@@ -433,15 +453,13 @@ mod tests {
         std::fs::write(&original, "1").unwrap();
 
         let mut project = Project::new("Test");
-        project.photos = vec![Photo {
-            id: PhotoId(1),
-            path: original.clone(),
-            width: 10,
-            height: 10,
-            bytes: 1,
-            tags: vec![],
-            rotation: 0,
-        }];
+        project.photos = PhotoSet::from_vec(vec![Photo::new(
+            PhotoId(1),
+            original.clone(),
+            PhotoSize::new(10, 10),
+            1,
+        )])
+        .unwrap();
         let options = RenameOptions {
             prefix: "SHOT".into(),
             start: 1,

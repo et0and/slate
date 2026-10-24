@@ -49,6 +49,14 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - The library uses `uniform_list`; never build all photo cells. Schedule thumbs
   only for the rendered range and keep the cache at `THUMB_CACHE`. The 10,000
   photo path must stay virtualised.
+- `Project.photos` is a `PhotoSet`: unique, private ids, O(1) `photo(id)`, and
+  copy-on-write snapshots. Use `Photo::new` and `photo.id()`; never add a linear
+  id lookup or replace the set with a bare `Vec`.
+- `ViewState` owns visible indices, tag counts and scope ids. Call
+  `project_changed`, `filter_changed` or `selection_changed` after edits; panels
+  must read the cache instead of scanning the project.
+- `QuarterTurns` and `PhotoSize` carry the rotation and pixel invariants. Do not
+  reintroduce `% 4`, zero-width or zero-height checks.
 - Text field callbacks must not read or update the same field from inside its
   own event handler (GPUI entity re-borrow panic). Pass values through the
   callback instead.

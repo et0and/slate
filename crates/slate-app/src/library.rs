@@ -92,15 +92,13 @@ impl ContactSheet {
     fn render_cell(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let (id, name, dimensions, tags, bytes, rotation) = {
             let photo = &self.project.photos[index];
-            let (width, height) = photo.oriented_size();
             (
-                photo.id,
+                photo.id(),
                 photo.file_name(),
-                if width == 0 || height == 0 {
-                    "—".to_string()
-                } else {
-                    format!("{width} × {height}")
-                },
+                photo
+                    .oriented_size()
+                    .map(|(width, height)| format!("{width} × {height}"))
+                    .unwrap_or_else(|| "—".to_string()),
                 if photo.tags.is_empty() {
                     None
                 } else {

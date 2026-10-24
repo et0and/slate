@@ -47,8 +47,6 @@ Slate supports popular colour themes, with support for custom themes coming soon
 
 <img src="docs/app-preview-dark.jpg" width="49%" alt="Slate in dark mode"> <img src="docs/menu-preview.jpg" width="49%" alt="The View menu in One Dark">
 
-*Dark mode and the View menu. Themes: Light, Dark, One Dark, Monokai, Catppuccin.*
-
 ## Get started
 
 Build Slate with Rust 1.99.1. It runs on macOS 11+, Windows 10/11, and Linux with X11/Wayland.

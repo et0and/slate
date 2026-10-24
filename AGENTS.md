@@ -1,6 +1,6 @@
 # Repository guide
 
-Desktop contact-sheet builder: Rust + GPUI 0.2.2, macOS-first.
+Slate Desktop: a desktop contact-sheet builder in Rust + GPUI 0.2.2, macOS-first.
 
 ## Commands
 
@@ -9,18 +9,18 @@ Desktop contact-sheet builder: Rust + GPUI 0.2.2, macOS-first.
 - `cargo test --workspace` — core + app tests
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo fmt --all`
-- `cargo run -p sheet-core --example sample_sheet` — regenerate `target/sample`
+- `cargo run -p slate-core --example sample_sheet` — regenerate `target/sample`
   and the design-check PDFs
 
 ## Shape
 
 ```
-crates/sheet-core   GUI-free: model, import, batch, layout, pdf
-crates/sheet-app    GPUI shell: app state, text field, panels, theme
+crates/slate-core   GUI-free: model, import, batch, layout, pdf
+crates/slate-app    GPUI shell: app state, text field, panels, theme
 ```
 
-- One file per domain in core. Do not add GPUI dependencies to `sheet-core`.
-- `sheet-app` owns all dialogs, async tasks, thumbnails and interaction state.
+- One file per domain in core. Do not add GPUI dependencies to `slate-core`.
+- `slate-app` owns all dialogs, async tasks, thumbnails and interaction state.
 - Keep the app single-window unless the whole state model is reworked.
 
 ## Rules

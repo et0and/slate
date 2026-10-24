@@ -11,12 +11,12 @@ use gpui::{
     Window, actions, div, prelude::*, px,
 };
 use image::{Frame, RgbaImage};
-use sheet_core::PreviewImage;
-use sheet_core::batch::{self, RenameOptions, RenamePlan};
-use sheet_core::import::{self, Probe};
-use sheet_core::layout::{self, SheetLayout};
-use sheet_core::model::{Filter, Photo, PhotoId, Project, SheetId, SheetSettings};
-use sheet_core::pdf::{self, ExportSummary};
+use slate_core::PreviewImage;
+use slate_core::batch::{self, RenameOptions, RenamePlan};
+use slate_core::import::{self, Probe};
+use slate_core::layout::{self, SheetLayout};
+use slate_core::model::{Filter, Photo, PhotoId, Project, SheetId, SheetSettings};
+use slate_core::pdf::{self, ExportSummary};
 
 use crate::text_field::TextField;
 use crate::theme;
@@ -1243,7 +1243,7 @@ impl Render for ContactSheet {
         }
 
         let title = format!(
-            "{}{} — Contact Sheet",
+            "{}{} — Slate",
             self.project.name,
             if self.dirty { " *" } else { "" }
         );

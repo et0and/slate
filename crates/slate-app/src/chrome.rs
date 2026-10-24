@@ -87,14 +87,14 @@ impl ContactSheet {
                         div()
                             .text_size(px(14.0))
                             .font_weight(gpui::FontWeight::BOLD)
-                            .child("CONTACT SHEET"),
+                            .child("SLATE"),
                     )
                     .child(
                         div()
                             .font_family(theme::FONT_MONO)
                             .text_size(px(8.0))
                             .text_color(theme::faint())
-                            .child("FLAT PROOF SYSTEM / V0.1"),
+                            .child("CONTACT SHEET SYSTEM / V0.1"),
                     ),
             );
 

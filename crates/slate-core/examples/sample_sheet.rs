@@ -1,11 +1,11 @@
 //! Generates a synthetic 12-photo project and exports it, for design checks.
 //!
-//! `cargo run -p sheet-core --example sample_sheet`
+//! `cargo run -p slate-core --example sample_sheet`
 
 use std::path::PathBuf;
 
 use image::{ImageBuffer, Rgb};
-use sheet_core::{Project, batch, export_pdf};
+use slate_core::{Project, batch, export_pdf};
 
 fn main() -> anyhow::Result<()> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/sample");
@@ -83,7 +83,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     let mut rotated = project.sheet.clone();
-    rotated.orientation = sheet_core::Orientation::Landscape;
+    rotated.orientation = slate_core::Orientation::Landscape;
     rotated.columns = 4;
     rotated.rows = 3;
     rotated.rotate = true;

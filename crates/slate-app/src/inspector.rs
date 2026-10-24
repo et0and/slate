@@ -2,7 +2,7 @@
 
 use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, img, prelude::*, px, rgba};
 
-use sheet_core::layout;
+use slate_core::layout;
 
 use crate::app::ContactSheet;
 use crate::theme;

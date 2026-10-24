@@ -1,16 +1,16 @@
 [package]
-name = "sheet-app"
+name = "slate-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "contact-sheet"
+name = "slate-desktop"
 path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
 image.workspace = true
-sheet-core = { path = "../sheet-core" }
+slate-core = { path = "../slate-core" }
 unicode-segmentation = "1"

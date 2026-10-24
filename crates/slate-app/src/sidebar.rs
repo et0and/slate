@@ -2,8 +2,8 @@
 
 use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, prelude::*, px, rgba};
 
-use sheet_core::batch;
-use sheet_core::model::Filter;
+use slate_core::batch;
+use slate_core::model::Filter;
 
 use crate::app::ContactSheet;
 use crate::theme;

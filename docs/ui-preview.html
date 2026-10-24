@@ -1,0 +1,313 @@
+<!doctype html>
+<!-- Design reference for docs/app-preview.jpg, not a live capture of the GPUI window. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Slate Desktop — interface preview</title>
+<style>
+  :root {
+    --paper: #fbfaf6;
+    --panel: #f2f0e9;
+    --ink: #111110;
+    --muted: #6f6c64;
+    --faint: #a8a49a;
+    --rule: #d8d4ca;
+    --accent: #e43d0f;
+    --photo: #e8e5dd;
+    --white: #fff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1440px; height: 1060px; overflow: hidden; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: Menlo, Monaco, monospace; }
+  .window { width: 100%; height: 100%; display: flex; flex-direction: column; }
+
+  .topbar { height: 54px; flex: 0 0 54px; border-bottom: 1px solid var(--ink); display: flex; align-items: center; }
+  .brand { width: 252px; height: 100%; flex: 0 0 252px; border-right: 1px solid var(--rule); display: flex; align-items: center; gap: 9px; padding: 0 12px; }
+  .brand-mark { width: 9px; height: 9px; background: var(--accent); flex: 0 0 9px; }
+  .brand-name { font-size: 14px; font-weight: 700; line-height: 1.1; }
+  .brand-sub { font: 8px Menlo, monospace; color: var(--faint); margin-top: 1px; }
+  .project { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 14px; }
+  .project-name { font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .project-path { font: 8px Menlo, monospace; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stats { display: flex; flex: 0 0 auto; gap: 18px; padding: 0 14px; }
+  .stat { display: flex; flex-direction: column; gap: 1px; }
+  .stat .k { font: 8px Menlo, monospace; color: var(--faint); }
+  .stat .v { font: 10px Menlo, monospace; }
+  .top-actions { height: 100%; flex: 0 0 auto; border-left: 1px solid var(--rule); display: flex; align-items: center; gap: 4px; padding: 0 12px; }
+  .btn { height: 24px; min-width: 0; padding: 0 9px; border: 1px solid var(--ink); background: var(--white); color: var(--ink); display: flex; align-items: center; justify-content: center; font: 9px Menlo, monospace; white-space: nowrap; }
+  .btn.primary { background: var(--ink); color: var(--paper); }
+  .btn.mini { height: 18px; width: 18px; padding: 0; font-size: 10px; border-color: var(--rule); }
+  .btn.text { height: 18px; border: 0; background: transparent; color: var(--muted); padding: 0 5px; font-size: 8px; }
+
+  .workspace { flex: 1; min-height: 0; display: flex; }
+  .rail { background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
+  .rail.left { width: 252px; flex: 0 0 252px; border-right: 1px solid var(--rule); }
+  .rail.right { width: 340px; flex: 0 0 340px; border-left: 1px solid var(--rule); }
+  .section-head { height: 24px; flex: 0 0 24px; background: var(--ink); color: var(--paper); display: flex; align-items: center; justify-content: space-between; padding: 0 10px; }
+  .section-left { display: flex; align-items: center; gap: 8px; }
+  .section-num { font: 8px Menlo, monospace; color: var(--faint); }
+  .section-title { font: 9px Menlo, monospace; font-weight: 700; }
+  .section-meta { font: 8px Menlo, monospace; color: var(--faint); }
+
+  .block { padding: 9px 10px; }
+  .project-title { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .project-path-small { font: 8px Menlo, monospace; color: var(--faint); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kv { margin-top: 4px; border-top: 1px solid var(--rule); }
+  .kv-row { height: 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--rule); font: 8px Menlo, monospace; }
+  .kv-row .k { color: var(--faint); }
+  .kv-row .v { font-size: 9px; }
+  .import-row { display: flex; gap: 4px; padding: 8px 10px; border-top: 1px solid var(--rule); }
+  .import-row .btn { flex: 1; }
+
+  .filter-block { padding: 8px 10px; border-top: 1px solid var(--rule); display: flex; flex-direction: column; gap: 5px; }
+  .row-between { display: flex; align-items: center; justify-content: space-between; }
+  .label { font: 8px Menlo, monospace; color: var(--muted); text-transform: uppercase; }
+  .micro { font: 8px Menlo, monospace; color: var(--faint); }
+  .field { height: 26px; border: 1px solid var(--rule); background: var(--white); display: flex; align-items: center; padding: 0 6px; font: 11px Menlo, monospace; color: var(--faint); white-space: nowrap; overflow: hidden; }
+  .field.filled { color: var(--ink); }
+  .mini-row { display: flex; gap: 4px; }
+  .mini-row .btn { flex: 1; }
+  .text-action { margin-top: 1px; font: 8px Menlo, monospace; color: var(--muted); height: 18px; display: flex; align-items: center; padding: 0 5px; border: 0; background: transparent; white-space: nowrap; }
+  .note { font: 8px Menlo, monospace; color: var(--faint); }
+
+  .tag-section { border-top: 1px solid var(--rule); }
+  .tag-head { height: 28px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; }
+  .tag-row { height: 19px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; font: 8px Menlo, monospace; color: var(--ink); }
+  .tag-row.active { background: var(--ink); color: var(--paper); }
+  .tag-row .count { color: inherit; }
+  .tag-form { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+
+  .rename { border-top: 1px solid var(--rule); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+  .rename .field { font-size: 11px; }
+  .steppers { display: flex; gap: 12px; align-items: center; margin-top: 2px; }
+  .stepper { display: flex; align-items: center; gap: 3px; }
+  .stepper .val { font: 9px Menlo, monospace; }
+  .rename .sample { font: 8px Menlo, monospace; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rename .preview-btn { height: 24px; margin-top: 2px; }
+
+  .log { border-top: 1px solid var(--rule); padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+  .log-line { font: 8px Menlo, monospace; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .center { flex: 1; min-width: 0; background: var(--paper); display: flex; flex-direction: column; overflow: hidden; }
+  .center-bar { height: 34px; flex: 0 0 34px; border-bottom: 1px solid var(--ink); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; }
+  .center-left { display: flex; align-items: center; gap: 10px; }
+  .center-title { font: 9px Menlo, monospace; font-weight: 700; }
+  .center-right { display: flex; align-items: center; gap: 14px; }
+  .grid { flex: 1; padding: 14px; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 10px; overflow: hidden; }
+  .cell { width: 180px; flex: 0 0 180px; padding: 2px; border: 1px solid transparent; }
+  .cell.sel { border-color: var(--ink); }
+  .cell-inner { width: 174px; background: var(--white); }
+  .thumb { width: 174px; height: 132px; border: 1px solid var(--rule); border-bottom: 0; background: var(--photo); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .thumb img { width: 100%; height: 100%; object-fit: contain; }
+  .meta { border: 1px solid var(--rule); border-top: 1px solid var(--rule); padding: 4px 6px; display: flex; flex-direction: column; gap: 2px; }
+  .meta-top { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+  .index { font: 8px Menlo, monospace; color: var(--accent); }
+  .dims { font: 8px Menlo, monospace; color: var(--faint); }
+  .filename { font: 9px Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta-bottom { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+  .tags { font: 8px Menlo, monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .size { font: 8px Menlo, monospace; color: var(--faint); }
+
+  .inspector-scroll { flex: 1; min-height: 0; overflow: hidden; }
+  .preview-block { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .preview-head { display: flex; align-items: center; justify-content: space-between; }
+  .pager { display: flex; align-items: center; gap: 4px; }
+  .pager .page-label { font: 8px Menlo, monospace; color: var(--muted); }
+  .page { width: 300px; height: 424px; border: 1px solid var(--ink); background: var(--white); overflow: hidden; }
+  .page img { display: block; width: 300px; height: 424px; object-fit: contain; }
+
+  .settings { padding: 8px 10px 0; }
+  .field-label { font: 8px Menlo, monospace; color: var(--muted); margin-bottom: 3px; }
+  .settings .field { margin-bottom: 4px; color: var(--ink); }
+  .setting { height: 30px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--rule); gap: 8px; }
+  .setting .s-label { font: 8px Menlo, monospace; color: var(--faint); white-space: nowrap; }
+  .setting .s-value { font: 8px Menlo, monospace; white-space: nowrap; display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+  .stepper-row { display: flex; align-items: center; gap: 10px; }
+  .stepper-row .stepper { display: flex; align-items: center; gap: 2px; }
+  .stepper-row .val { font: 8px Menlo, monospace; width: 34px; text-align: center; }
+  .toggle { height: 20px; padding: 0 7px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--ink); background: var(--ink); color: var(--paper); font: 8px Menlo, monospace; }
+  .toggle.off { border-color: var(--rule); background: var(--white); color: var(--faint); }
+  .summary { padding: 7px 0; font: 8px Menlo, monospace; color: var(--faint); }
+  .action-row { padding: 8px 10px; border-top: 1px solid var(--rule); display: flex; gap: 4px; }
+  .action-row .btn { flex: 1; height: 28px; }
+  .saved-head { height: 26px; padding: 8px 10px 0; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--rule); }
+  .saved-empty { padding: 6px 10px 8px; font: 8px Menlo, monospace; color: var(--faint); }
+
+  .statusbar { height: 26px; flex: 0 0 26px; border-top: 1px solid var(--ink); background: var(--panel); display: flex; align-items: center; justify-content: space-between; padding: 0 10px; }
+  .status-left { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .status-dot { width: 6px; height: 6px; background: var(--ink); flex: 0 0 6px; }
+  .status-text { font: 8px Menlo, monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .status-right { display: flex; align-items: center; gap: 14px; }
+</style>
+</head>
+<body>
+<div class="window">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div>
+        <div class="brand-name">SLATE</div>
+        <div class="brand-sub">CONTACT SHEET SYSTEM / V0.1</div>
+      </div>
+    </div>
+    <div class="project">
+      <div class="project-name">STREET / WALK 26</div>
+      <div class="project-path">/Users/hackshaw/Pictures/street-walk.contactsheet</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="k">PHOTOS</div><div class="v">0012</div></div>
+      <div class="stat"><div class="k">SELECTED</div><div class="v">0012</div></div>
+      <div class="stat"><div class="k">SHEETS</div><div class="v">0000</div></div>
+      <div class="stat"><div class="k">PAGES</div><div class="v">0001</div></div>
+    </div>
+    <div class="top-actions">
+      <div class="btn">OPEN</div>
+      <div class="btn">SAVE</div>
+      <div class="btn primary">EXPORT PDF</div>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="rail left">
+      <div class="section-head">
+        <div class="section-left"><span class="section-num">01</span><span class="section-title">LIBRARY</span></div>
+        <span class="section-meta">0012</span>
+      </div>
+
+      <div class="block">
+        <div class="project-title">STREET / WALK 26</div>
+        <div class="project-path-small">/Users/hackshaw/Pictures/street-walk.contactsheet</div>
+        <div class="kv">
+          <div class="kv-row"><span class="k">PHOTOS</span><span class="v">0012</span></div>
+          <div class="kv-row"><span class="k">SELECTED</span><span class="v">0012</span></div>
+          <div class="kv-row"><span class="k">TAGS</span><span class="v">0006</span></div>
+          <div class="kv-row"><span class="k">STATE</span><span class="v">SAVED</span></div>
+        </div>
+      </div>
+
+      <div class="import-row"><div class="btn">FILES</div><div class="btn">FOLDER</div></div>
+
+      <div class="filter-block">
+        <div class="row-between"><span class="label">FILTER</span><span class="micro">0012 SHOWN</span></div>
+        <div class="field">FILTER FILE NAMES</div>
+        <div class="mini-row"><div class="btn">ALL</div><div class="btn">NONE</div><div class="btn">INV</div></div>
+        <div class="text-action">REMOVE FROM PROJECT / KEEPS FILES</div>
+        <div class="note">NO SELECTION / SHEETS USE ALL VISIBLE</div>
+      </div>
+
+      <div class="tag-section">
+        <div class="tag-head"><span class="label">FILTER BY TAG</span><span class="micro">06 TAGS</span></div>
+        <div class="tag-row active"><span>ALL IMAGES</span><span class="count">0012</span></div>
+        <div class="tag-row"><span>UNTAGGED</span><span class="count">0000</span></div>
+        <div class="tag-row"><span>#film</span><span class="count">0004</span></div>
+        <div class="tag-row"><span>#night</span><span class="count">0004</span></div>
+        <div class="tag-row"><span>#portrait</span><span class="count">0004</span></div>
+        <div class="tag-row"><span>#street</span><span class="count">0008</span></div>
+        <div class="tag-row"><span>#walk</span><span class="count">0004</span></div>
+        <div class="tag-row"><span>#select</span><span class="count">0003</span></div>
+        <div class="tag-form">
+          <div class="field">TAG, E.G. STREET</div>
+          <div class="mini-row"><div class="btn">ADD TAG</div><div class="btn">REMOVE</div><div class="btn text">CLEAR</div></div>
+        </div>
+      </div>
+
+      <div class="rename">
+        <div class="row-between"><span class="label">BATCH RENAME</span><span class="micro">0012 IN SCOPE</span></div>
+        <span class="label">PREFIX</span>
+        <div class="field filled">SW26-</div>
+        <span class="label">SUFFIX</span>
+        <div class="field filled">-WEB</div>
+        <div class="steppers">
+          <div class="stepper"><span class="label">START</span><span class="btn mini">−</span><span class="val">00001</span><span class="btn mini">+</span></div>
+          <div class="stepper"><span class="label">PAD</span><span class="btn mini">−</span><span class="val">4</span><span class="btn mini">+</span></div>
+        </div>
+        <span class="label" style="margin-top:2px">NEXT NAME</span>
+        <div class="sample">SW26-00001-WEB.jpg</div>
+        <div class="btn preview-btn">PREVIEW RENAME</div>
+      </div>
+
+      <div class="log">
+        <span class="label">LOG</span>
+        <div class="log-line">OPENED / STREET-WALK.CONTACTSHEET</div>
+        <div class="log-line">IMPORT / 12 NEW FILES</div>
+        <div class="log-line">TAG +street / 8 PHOTO(S)</div>
+        <div class="log-line">SHEET SAVED / STREET / WALK 26</div>
+      </div>
+    </aside>
+
+    <section class="center">
+      <div class="center-bar">
+        <div class="center-left">
+          <span class="center-title">02 / IMAGES</span>
+          <span class="micro">ALL IMAGES</span>
+        </div>
+        <div class="center-right">
+          <span class="micro">SHOWING 0012 / 0012</span>
+          <span class="micro">SELECTED 0012</span>
+        </div>
+      </div>
+      <div class="grid">
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1200.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 001</span><span class="dims">1600×2400</span></div><div class="filename">DSCF1200.jpg</div><div class="meta-bottom"><span class="tags">#night #street</span><span class="size">3.8 MB</span></div></div></div></div>
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1201.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 002</span><span class="dims">2400×1600</span></div><div class="filename">DSCF1201.jpg</div><div class="meta-bottom"><span class="tags">#portrait #street</span><span class="size">3.8 MB</span></div></div></div></div>
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1202.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 003</span><span class="dims">2000×2000</span></div><div class="filename">DSCF1202.jpg</div><div class="meta-bottom"><span class="tags">#film #walk</span><span class="size">3.8 MB</span></div></div></div></div>
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1203.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 004</span><span class="dims">1600×2400</span></div><div class="filename">DSCF1203.jpg</div><div class="meta-bottom"><span class="tags">#night #street</span><span class="size">3.8 MB</span></div></div></div></div>
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1204.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 005</span><span class="dims">2400×1600</span></div><div class="filename">DSCF1204.jpg</div><div class="meta-bottom"><span class="tags">#portrait #street</span><span class="size">3.8 MB</span></div></div></div></div>
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1205.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 006</span><span class="dims">2000×2000</span></div><div class="filename">DSCF1205.jpg</div><div class="meta-bottom"><span class="tags">#film #walk</span><span class="size">3.8 MB</span></div></div></div></div>
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1206.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 007</span><span class="dims">1600×2400</span></div><div class="filename">DSCF1206.jpg</div><div class="meta-bottom"><span class="tags">#night #street</span><span class="size">3.8 MB</span></div></div></div></div>
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1207.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 008</span><span class="dims">2400×1600</span></div><div class="filename">DSCF1207.jpg</div><div class="meta-bottom"><span class="tags">#portrait #street</span><span class="size">3.8 MB</span></div></div></div></div>
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1208.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 009</span><span class="dims">2000×2000</span></div><div class="filename">DSCF1208.jpg</div><div class="meta-bottom"><span class="tags">#film #walk</span><span class="size">3.8 MB</span></div></div></div></div>
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1209.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 010</span><span class="dims">1600×2400</span></div><div class="filename">DSCF1209.jpg</div><div class="meta-bottom"><span class="tags">#night #street</span><span class="size">3.8 MB</span></div></div></div></div>
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1210.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 011</span><span class="dims">2400×1600</span></div><div class="filename">DSCF1210.jpg</div><div class="meta-bottom"><span class="tags">#portrait #street</span><span class="size">3.8 MB</span></div></div></div></div>
+        <div class="cell sel"><div class="cell-inner"><div class="thumb"><img src="../target/sample/DSCF1211.jpg" alt=""></div><div class="meta"><div class="meta-top"><span class="index">■ 012</span><span class="dims">2000×2000</span></div><div class="filename">DSCF1211.jpg</div><div class="meta-bottom"><span class="tags">#film #walk</span><span class="size">3.8 MB</span></div></div></div></div>
+      </div>
+    </section>
+
+    <aside class="rail right">
+      <div class="section-head">
+        <div class="section-left"><span class="section-num">03</span><span class="section-title">SHEET</span></div>
+        <span class="section-meta">0012</span>
+      </div>
+      <div class="inspector-scroll">
+        <div class="preview-block">
+          <div class="preview-head">
+            <span class="label">PAGE PREVIEW</span>
+            <div class="pager"><span class="btn mini">‹</span><span class="page-label">PAGE 01 / 01</span><span class="btn mini">›</span></div>
+          </div>
+          <div class="page"><img src="../target/sample/sample.pdf.png" alt=""></div>
+        </div>
+        <div class="settings">
+          <div class="field-label">SHEET TITLE</div>
+          <div class="field">STREET / WALK 26</div>
+          <div class="setting"><span class="s-label">PAPER / ORIENTATION</span><span class="s-value">A4 / PORTRAIT <span class="btn mini">›</span></span></div>
+          <div class="setting"><span class="s-label">ORIENTATION</span><span class="btn" style="height:24px;font-size:8px">PORTRAIT</span></div>
+          <div class="setting"><span class="s-label">GRID / COLUMNS × ROWS</span><span class="stepper-row"><span class="stepper"><span class="btn mini">−</span><span class="val">3C</span><span class="btn mini">+</span></span><span class="stepper"><span class="btn mini">−</span><span class="val">4R</span><span class="btn mini">+</span></span></span></div>
+          <div class="setting"><span class="s-label">MARGIN</span><span class="stepper-row"><span class="stepper"><span class="btn mini">−</span><span class="val">12 MM</span><span class="btn mini">+</span></span></span></div>
+          <div class="setting"><span class="s-label">GUTTER</span><span class="stepper-row"><span class="stepper"><span class="btn mini">−</span><span class="val">4 MM</span><span class="btn mini">+</span></span></span></div>
+          <div class="setting"><span class="s-label">CAPTIONS / FILENAMES</span><span class="toggle">ON</span></div>
+          <div class="setting"><span class="s-label">INDEX NUMBERS</span><span class="toggle">ON</span></div>
+          <div class="setting"><span class="s-label">ROTATE TO FIT</span><span class="toggle off">OFF</span></div>
+          <div class="setting"><span class="s-label">HEADER BAND</span><span class="toggle">ON</span></div>
+          <div class="setting"><span class="s-label">FOOTER BAND</span><span class="toggle">ON</span></div>
+          <div class="summary">12 PHOTOS / 1 PAGE / 12 UP</div>
+        </div>
+        <div class="action-row"><div class="btn">SAVE SHEET</div><div class="btn primary">EXPORT PDF</div></div>
+        <div class="saved-head"><span class="label">SAVED SHEETS</span><span class="micro">00</span></div>
+        <div class="saved-empty">NO SAVED SHEETS / SAVE A LAYOUT TO REUSE IT</div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="statusbar">
+    <div class="status-left"><span class="status-dot"></span><span class="status-text">OPENED 12 PHOTOS / PROJECT SAVED</span></div>
+    <div class="status-right"><span class="micro">PROJECT SAVED</span><span class="micro">CMD+S SAVE / CMD+O OPEN / CMD+E EXPORT</span></div>
+  </footer>
+</div>
+</body>
+</html>

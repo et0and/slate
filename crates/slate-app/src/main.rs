@@ -83,7 +83,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(1080.0), px(720.0))),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Contact Sheet".into()),
+                    title: Some("Slate".into()),
                     appears_transparent: false,
                     ..Default::default()
                 }),

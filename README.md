@@ -66,7 +66,3 @@ Verify:
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
-
-## License and credits
-
-Slate is licensed under the [GNU General Public License v3.0](LICENSE). Bundled Geist and Geist Mono are under the SIL Open Font License. Sample photographs are from Unsplash. SQLite is public domain.

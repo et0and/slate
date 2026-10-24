@@ -16,6 +16,13 @@ printpdf = { version = "0.12", default-features = false, features = ["jpeg", "pn
 kamadak-exif = "0.6"
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 anyhow = "1"
+google-drive = "0.10.0"
+open = "5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+tokio = { version = "1", features = ["fs", "io-util", "net", "rt-multi-thread", "time"] }
+tokio-util = { version = "0.7", features = ["io"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
 
 [patch.crates-io]
 xattr = { path = "vendor/xattr" }

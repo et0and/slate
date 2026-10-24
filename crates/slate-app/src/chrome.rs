@@ -9,9 +9,14 @@ use crate::widgets::ui_text;
 impl ContactSheet {
     pub(crate) fn render_statusbar(&self) -> AnyElement {
         let busy = self
-            .import_state
+            .drive_download
             .as_ref()
-            .map(|state| format!("Importing {}/{}", state.done, state.total));
+            .map(|state| format!("Downloading {} from Google Drive", state.total))
+            .or_else(|| {
+                self.import_state
+                    .as_ref()
+                    .map(|state| format!("Importing {}/{}", state.done, state.total))
+            });
         let left = busy.unwrap_or_else(|| self.status.clone());
         let saved = if self.dirty {
             "Unsaved changes"

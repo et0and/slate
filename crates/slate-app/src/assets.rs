@@ -32,6 +32,7 @@ icons! {
     FILE_PLUS => "icons/file-plus.svg",
     SAVE => "icons/save.svg",
     DOWNLOAD => "icons/download.svg",
+    UPLOAD => "icons/upload.svg",
     TRASH => "icons/trash.svg",
     EXTERNAL_LINK => "icons/external-link.svg",
     IMAGE => "icons/image.svg",

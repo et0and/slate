@@ -13,6 +13,12 @@ use crate::widgets::{
 
 impl ContactSheet {
     pub(crate) fn render_overlay(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if let Some(notice) = self.render_drive_notice(cx) {
+            return Some(notice);
+        }
+        if let Some(picker) = self.render_drive_picker(cx) {
+            return Some(picker);
+        }
         if self.about_open {
             return Some(self.render_about(cx));
         }

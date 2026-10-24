@@ -32,7 +32,10 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   Keep both invariants when adding commands.
 - `slate-core/store.rs` is a local SQLite catalogue only; `.slate` files
   stay portable. Remember a project after open/save and keep the recent list
-  bounded.
+  bounded. `store::data_directory()` is the one application-data path.
+- `drive.rs` owns Google OAuth, the refresh token, Drive listing and streaming
+  transfers. `drive_ui.rs` owns the Drive browser, setup notice and the
+  import/export workflows. Keep every Drive command in the Drive menu.
 
 ## Rules
 
@@ -68,6 +71,13 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - PDFs are flat, RGB, no layers. Images are capped at 300 DPI for their cell.
 - HEIC/RAW decoding goes through macOS `sips`; keep the fallback path working on
   other platforms by returning an error that the UI can display.
+- Google Drive uses a Desktop OAuth client and the fixed loopback callback
+  `http://127.0.0.1:53682/oauth2callback`. Credentials resolve env first, then
+  `google-oauth.json`, then build-time values. Never log client secrets or tokens.
+- Use `google-drive` for OAuth and folder listing. Transfers stream through
+  `reqwest`; never buffer a complete photo or PDF in memory. Avoid
+  `FileOps::create_or_update` because its update branch drops the patched
+  metadata. Drive downloads check `generation` before they touch the project.
 - `vendor/xattr` is a patched 0.2.3 crate: libc 0.2.191 removed `ENOATTR` on
   Linux. Remove the patch when `zed-async-tar` stops pulling xattr 0.2.
 

@@ -20,6 +20,8 @@ use slate_core::model::{Filter, Photo, PhotoId, Project, QuarterTurns, SheetId, 
 use slate_core::pdf::{self, ExportSummary};
 use slate_core::store::{LocalStore, RecentProject};
 
+use crate::drive;
+use crate::drive_ui::{DriveDownload, DriveNotice, DrivePicker};
 use crate::history::{History, Snapshot};
 use crate::memory;
 use crate::panels::{DIVIDER_W, PanelLayout, ResizeTarget};
@@ -102,6 +104,11 @@ pub struct ContactSheet {
     pub(crate) panels: PanelLayout,
     pub(crate) menu_open: Option<crate::menubar::MenuId>,
     pub(crate) about_open: bool,
+    pub(crate) drive_account: Option<drive::DriveAccount>,
+    pub(crate) drive_picker: Option<DrivePicker>,
+    pub(crate) drive_notice: Option<DriveNotice>,
+    pub(crate) drive_linking: bool,
+    pub(crate) drive_download: Option<DriveDownload>,
     pub(crate) history: History,
     pub(crate) store: LocalStore,
     pub(crate) recent_projects: Vec<RecentProject>,
@@ -214,6 +221,11 @@ impl ContactSheet {
             panels: PanelLayout::default(),
             menu_open: None,
             about_open: false,
+            drive_account: drive::load_account(),
+            drive_picker: None,
+            drive_notice: None,
+            drive_linking: false,
+            drive_download: None,
             history: History::default(),
             store,
             recent_projects,
@@ -886,6 +898,8 @@ impl ContactSheet {
                 self.importing_paths.clear();
                 self.imports_in_flight = 0;
                 self.import_state = None;
+                self.drive_picker = None;
+                self.drive_notice = None;
                 self.thumbs.clear();
                 self.thumbs_queued.clear();
                 self.thumb_order.clear();
@@ -1509,7 +1523,11 @@ impl Render for ContactSheet {
                 }
             }))
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
-                if this.about_open {
+                if this.drive_notice.is_some() {
+                    this.drive_notice = None;
+                } else if this.drive_picker.is_some() {
+                    this.drive_picker = None;
+                } else if this.about_open {
                     this.about_open = false;
                 } else if this.menu_open.is_some() {
                     this.menu_open = None;
@@ -1586,7 +1604,7 @@ fn render_image(preview: PreviewImage) -> Arc<RenderImage> {
     Arc::new(RenderImage::new(vec![Frame::new(buffer)]))
 }
 
-fn is_untitled(name: &str) -> bool {
+pub(crate) fn is_untitled(name: &str) -> bool {
     let name = name.trim();
     name.is_empty() || name.eq_ignore_ascii_case("untitled")
 }

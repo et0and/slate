@@ -3,6 +3,8 @@
 mod app;
 mod assets;
 mod chrome;
+mod drive;
+mod drive_ui;
 mod history;
 mod inspector;
 mod library;

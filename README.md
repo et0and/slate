@@ -16,16 +16,16 @@
 
 <img src="docs/app-preview-light.jpg" alt="Slate desktop app showing a contact sheet project">
 
-Slate turns a folder of photos into a print-ready contact sheet. No upload, no account, no browser tab. Import a shoot, tag selects, rotate frames, and export a flat PDF. The `.slate` project stays portable; the photos stay where they are.
+Slate turns a folder of photos into a print-ready contact sheet. Local-first, with Drive optional. Import a shoot, tag selects, rotate frames, and export a flat PDF. The `.slate` project stays portable; the photos stay where they are.
 
 Use Slate for client proofs, portfolio edits, archive indexes, and the first pass through a shoot.
 
 ## Why Slate
 
 - **Built for the cull.** Import folders or drops, search by name, tag, batch rename on disk, and rotate each frame from its thumbnail.
-- **Fast on real libraries.** The grid is virtualised and only visible thumbnails load. A 10,000-photo project opens in about 0.2 seconds warm and stays around 137 MB.
+- **Fast on real libraries.** The grid is virtualised and only visible thumbnails load. A 10,000-photo project opens in about 0.2 seconds warm and stays around 78 MB.
 - **Your files stay yours.** Slate reads originals in place. `.slate` files hold layout, tags, rotation, and saved sheets — never copies of your photos.
-- **One sheet, no noise.** Five menus, five themes, zero toolbars. Commands live in File, Edit, View, History, and Help.
+- **One sheet, no noise.** Six menus, five themes, zero toolbars. Commands live in File, Edit, View, Drive, History, and Help.
 - **Print-ready by default.** A4, A3, Letter, and Tabloid sheets export as flat PDFs at up to 300 DPI per cell.
 - **Undo that keeps up.** Every layout change is undoable without copying the whole library.
 
@@ -66,6 +66,10 @@ cargo run --release -p slate-core --example stress
 ![Rotated contact sheet](docs/example-rotated.jpg)
 
 *A4 landscape, 4 × 3, rotate-to-fit.*
+
+## Google Drive
+
+Link a Drive account from the Drive menu to browse folders, import images next to the `.slate` project, and export a PDF to a folder you choose. Setup takes one Desktop OAuth client: [Google Drive setup](docs/google-drive.md).
 
 ## Get started
 

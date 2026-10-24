@@ -50,7 +50,7 @@ For development, you can set `SLATE_GOOGLE_CLIENT_ID` and
 `SLATE_GOOGLE_CLIENT_SECRET` instead. Release builds may bake the same values in
 at build time; the local file still wins.
 
-Restart Slate, then choose **Drive → Link Google Drive**. The browser opens, and
+Save the file, then choose **Drive → Link Google Drive**. The browser opens, and
 the callback returns to the app. Drive → Unlink removes the stored refresh token.
 
 ## What Slate stores

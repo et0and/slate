@@ -1010,6 +1010,15 @@ impl ContactSheet {
         .detach();
     }
 
+    /// Import files that are already known to be images. Drive downloads use
+    /// this because a Drive image may have no local extension.
+    pub(crate) fn begin_import_files(&mut self, mut paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        paths.sort();
+        paths.dedup();
+        self.last_import_render = Instant::now();
+        self.enqueue_import(paths, cx);
+    }
+
     pub(crate) fn begin_import(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         let generation = self.generation;
         self.last_import_render = Instant::now();

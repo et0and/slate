@@ -24,7 +24,7 @@ Use Slate for client proofs, portfolio edits, archive indexes, and the first pas
 
 - **Built for the cull.** Import folders or drops, search by name, tag, batch rename on disk, and rotate each frame from its thumbnail.
 - **Fast on real libraries.** The grid is virtualised and only visible thumbnails load. A 10,000-photo project opens in about 0.2 seconds warm and stays around 78 MB.
-- **Your files stay yours.** Slate reads originals in place. `.slate` files hold layout, tags, rotation, and saved sheets — never copies of your photos.
+- **Your files stay yours.** Local photos are read in place; Drive imports download beside the project. `.slate` files hold layout, tags, rotation, and saved sheets — not image data.
 - **One sheet, no noise.** Six menus, five themes, zero toolbars. Commands live in File, Edit, View, Drive, History, and Help.
 - **Print-ready by default.** A4, A3, Letter, and Tabloid sheets export as flat PDFs at up to 300 DPI per cell.
 - **Undo that keeps up.** Every layout change is undoable without copying the whole library.
@@ -96,4 +96,4 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ## License and credits
 
-Slate is licensed under the [GNU General Public License v3.0](LICENSE). Bundled Geist and Geist Mono are under the SIL Open Font License. Sample photographs are from Unsplash. SQLite is public domain.
+Slate is licensed under the [GNU General Public License v3.0](LICENSE). Bundled Geist and Geist Mono are under the SIL Open Font License. Sample photographs are from Unsplash. SQLite is public domain. The Google Drive client uses the MIT-licensed `google-drive` crate.

@@ -430,7 +430,7 @@ impl ContactSheet {
                             summary.paths.len(),
                             errors
                         ));
-                        this.begin_import(summary.paths, cx);
+                        this.begin_import_files(summary.paths, cx);
                     }
                     Err(error) => {
                         this.set_status(format!("Drive download failed / {error:#}"));
@@ -580,6 +580,10 @@ impl ContactSheet {
             )
             .child(
                 div()
+                    .id("drive-notice-body")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
                     .px(px(20.0))
                     .py(px(18.0))
                     .flex()

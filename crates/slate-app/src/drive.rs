@@ -51,6 +51,7 @@ struct OAuthConfigFile {
 pub struct DriveEntry {
     pub id: String,
     pub name: String,
+    pub mime_type: String,
     pub size: u64,
     pub is_folder: bool,
 }
@@ -108,8 +109,8 @@ pub fn oauth_config() -> Result<OAuthConfig> {
         && !client_secret.trim().is_empty()
     {
         return Ok(OAuthConfig {
-            client_id,
-            client_secret,
+            client_id: client_id.trim().to_string(),
+            client_secret: client_secret.trim().to_string(),
             redirect_uri: REDIRECT_URI.to_string(),
         });
     }
@@ -122,8 +123,8 @@ pub fn oauth_config() -> Result<OAuthConfig> {
             serde_json::from_str(&data).with_context(|| format!("parse {}", path.display()))?;
         if !file.client_id.trim().is_empty() && !file.client_secret.trim().is_empty() {
             return Ok(OAuthConfig {
-                client_id: file.client_id,
-                client_secret: file.client_secret,
+                client_id: file.client_id.trim().to_string(),
+                client_secret: file.client_secret.trim().to_string(),
                 redirect_uri: REDIRECT_URI.to_string(),
             });
         }
@@ -136,8 +137,8 @@ pub fn oauth_config() -> Result<OAuthConfig> {
         && !client_secret.trim().is_empty()
     {
         return Ok(OAuthConfig {
-            client_id: client_id.to_string(),
-            client_secret: client_secret.to_string(),
+            client_id: client_id.trim().to_string(),
+            client_secret: client_secret.trim().to_string(),
             redirect_uri: REDIRECT_URI.to_string(),
         });
     }
@@ -159,7 +160,7 @@ pub fn setup_steps() -> Vec<String> {
             "Save the client ID and secret in {} as {{\"client_id\":\"…\",\"client_secret\":\"…\"}}.",
             oauth_config_path().display()
         ),
-        "Restart Slate, then choose Drive → Link Google Drive.".to_string(),
+        "Save the file, then choose Drive → Link Google Drive.".to_string(),
         "The browser returns to http://127.0.0.1:53682/oauth2callback automatically.".to_string(),
     ]
 }
@@ -336,8 +337,8 @@ fn wait_for_code(
                     "200 OK",
                     "<!doctype html><meta charset=\"utf-8\"><title>Slate</title>\
                      <body style=\"font-family:-apple-system,system-ui,sans-serif;padding:48px\">\
-                     <h1 style=\"font-size:20px\">Google Drive linked</h1>\
-                     <p>You can close this window and return to Slate.</p></body>",
+                     <h1 style=\"font-size:20px\">Authorization received</h1>\
+                     <p>Return to Slate to finish linking Google Drive.</p></body>",
                 );
                 return Ok(code.clone());
             }
@@ -500,7 +501,7 @@ pub fn download_images(
                 summary.errors.push(format!("{}: {error}", entry.name));
                 continue;
             }
-            let path = folder.join(safe_file_name(&entry.name));
+            let path = folder.join(local_file_name(&entry));
             match download_one(&http, &access_token, &entry.id, &path).await {
                 Ok(()) => summary.paths.push(path),
                 Err(error) => summary.errors.push(format!("{}: {error}", entry.name)),
@@ -660,9 +661,32 @@ fn entry_from_file(file: File) -> Option<DriveEntry> {
     Some(DriveEntry {
         id: file.id,
         name: file.name,
+        mime_type: file.mime_type,
         size: u64::try_from(file.size).unwrap_or(0),
         is_folder,
     })
+}
+
+fn local_file_name(entry: &DriveEntry) -> String {
+    let name = safe_file_name(&entry.name);
+    if Path::new(&name).extension().is_some() {
+        return name;
+    }
+    let extension = match entry.mime_type.as_str() {
+        "image/jpeg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/webp" => Some("webp"),
+        "image/tiff" => Some("tiff"),
+        "image/gif" => Some("gif"),
+        "image/bmp" => Some("bmp"),
+        "image/heic" | "image/heif" => Some("heic"),
+        "image/avif" => Some("avif"),
+        _ => None,
+    };
+    match extension {
+        Some(extension) => format!("{name}.{extension}"),
+        None => name,
+    }
 }
 
 fn unique_name(existing: &[String], requested: &str) -> String {
@@ -800,5 +824,14 @@ mod tests {
         let image = entry_from_file(image).unwrap();
         assert_eq!(image.size, 42);
         assert!(entry_from_file(text).is_none());
+
+        let extensionless = entry_from_file(File {
+            id: "extensionless".to_string(),
+            name: "walk".to_string(),
+            mime_type: "image/jpeg".to_string(),
+            ..File::default()
+        })
+        .unwrap();
+        assert_eq!(local_file_name(&extensionless), "walk.jpg");
     }
 }

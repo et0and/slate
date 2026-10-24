@@ -42,6 +42,8 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - PDFs are flat, RGB, no layers. Images are capped at 300 DPI for their cell.
 - HEIC/RAW decoding goes through macOS `sips`; keep the fallback path working on
   other platforms by returning an error that the UI can display.
+- `vendor/xattr` is a patched 0.2.3 crate: libc 0.2.191 removed `ENOATTR` on
+  Linux. Remove the patch when `zed-async-tar` stops pulling xattr 0.2.
 
 ## Style
 

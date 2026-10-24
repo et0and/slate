@@ -16,3 +16,6 @@ printpdf = { version = "0.12", default-features = false, features = ["jpeg", "pn
 kamadak-exif = "0.6"
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 anyhow = "1"
+
+[patch.crates-io]
+xattr = { path = "vendor/xattr" }

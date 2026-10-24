@@ -9,6 +9,7 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result};
@@ -328,6 +329,7 @@ fn sips_dimensions(_path: &Path) -> Result<(u32, u32)> {
     anyhow::bail!("sips is only available on macOS")
 }
 
+#[cfg(target_os = "macos")]
 fn unique() -> u64 {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     COUNTER.fetch_add(1, Ordering::Relaxed)

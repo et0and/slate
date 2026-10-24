@@ -10,6 +10,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  SLATE_GOOGLE_CLIENT_ID: ${{ vars.SLATE_GOOGLE_CLIENT_ID }}
+  SLATE_GOOGLE_TOKEN_BROKER: ${{ vars.SLATE_GOOGLE_TOKEN_BROKER }}
 
 jobs:
   macos:

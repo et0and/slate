@@ -71,10 +71,11 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - PDFs are flat, RGB, no layers. Images are capped at 300 DPI for their cell.
 - HEIC/RAW decoding goes through macOS `sips`; keep the fallback path working on
   other platforms by returning an error that the UI can display.
-- Google Drive uses a Desktop OAuth client and the fixed loopback callback
-  `http://127.0.0.1:53682/oauth2callback`. Credentials resolve from the runtime
-  environment first, then `google-oauth.json`. Never compile credentials into a
-  binary, commit them, or log secrets or tokens.
+- Google Drive uses a Desktop OAuth client with PKCE and the fixed loopback
+  callback `http://127.0.0.1:53682/oauth2callback`. Google still requires a
+  secret for this client at the token endpoint. Official builds use
+  `token_broker`; local development may use a local `client_secret`. Never
+  compile a secret or token into a binary, commit one, or log one.
 - Use `google-drive` for OAuth and folder listing. Transfers stream through
   `reqwest`; never buffer a complete photo or PDF in memory. Avoid
   `FileOps::create_or_update` because its update branch drops the patched

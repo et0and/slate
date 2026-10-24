@@ -3,7 +3,8 @@
 //! `google-drive` owns OAuth and folder listing. Transfers use a streaming
 //! request so a 10,000-photo export never has to hold a whole PDF in memory.
 //!
-//! OAuth credentials are read at runtime and are never compiled into the binary.
+//! The public client ID may be compiled into an official build. Client
+//! secrets and refresh tokens are never compiled into the binary.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -13,12 +14,14 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use google_drive::Client;
 use google_drive::about::About;
 use google_drive::files::Files;
 use google_drive::types::File;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 use url::Url;
@@ -28,6 +31,7 @@ use slate_core::import;
 use slate_core::store::data_directory;
 
 const REDIRECT_URI: &str = "http://127.0.0.1:53682/oauth2callback";
+const TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
 const CALLBACK_PATH: &str = "/oauth2callback";
 const DRIVE_READONLY_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
 const DRIVE_FILE_SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
@@ -39,14 +43,47 @@ const UPLOAD_BASE: &str = "https://www.googleapis.com/upload/drive/v3/files";
 #[derive(Debug, Clone)]
 pub struct OAuthConfig {
     pub client_id: String,
-    pub client_secret: String,
+    pub client_secret: Option<String>,
+    pub token_broker: Option<String>,
     pub redirect_uri: String,
+}
+
+impl OAuthConfig {
+    fn secret(&self) -> Option<&str> {
+        self.client_secret
+            .as_deref()
+            .map(str::trim)
+            .filter(|secret| !secret.is_empty())
+    }
+
+    fn broker(&self) -> Option<&str> {
+        self.token_broker
+            .as_deref()
+            .map(str::trim)
+            .filter(|broker| !broker.is_empty())
+    }
+}
+
+fn broker_url(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
 }
 
 #[derive(Debug, Deserialize)]
 struct OAuthConfigFile {
     client_id: String,
-    client_secret: String,
+    #[serde(default)]
+    client_secret: Option<String>,
+    #[serde(default)]
+    token_broker: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OAuthToken {
+    access_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -101,20 +138,25 @@ pub fn token_path() -> PathBuf {
     data_directory().join("google-drive.json")
 }
 
-/// Resolve an OAuth client from the environment, a local config file, or a
-/// value compiled into a release build.
+/// Resolve an OAuth client from the runtime environment, a local config file,
+/// or the public client ID compiled into an official build. The client secret is
+/// optional and never compiled into a build.
 pub fn oauth_config() -> Result<OAuthConfig> {
-    if let (Ok(client_id), Ok(client_secret)) = (
-        std::env::var("SLATE_GOOGLE_CLIENT_ID"),
-        std::env::var("SLATE_GOOGLE_CLIENT_SECRET"),
-    ) && !client_id.trim().is_empty()
-        && !client_secret.trim().is_empty()
-    {
-        return Ok(OAuthConfig {
-            client_id: client_id.trim().to_string(),
-            client_secret: client_secret.trim().to_string(),
-            redirect_uri: REDIRECT_URI.to_string(),
-        });
+    if let Ok(client_id) = std::env::var("SLATE_GOOGLE_CLIENT_ID") {
+        let client_id = client_id.trim();
+        if !client_id.is_empty() {
+            let client_secret = std::env::var("SLATE_GOOGLE_CLIENT_SECRET")
+                .ok()
+                .map(|secret| secret.trim().to_string())
+                .filter(|secret| !secret.is_empty());
+            let token_broker = broker_url(std::env::var("SLATE_GOOGLE_TOKEN_BROKER").ok());
+            return Ok(OAuthConfig {
+                client_id: client_id.to_string(),
+                client_secret,
+                token_broker,
+                redirect_uri: REDIRECT_URI.to_string(),
+            });
+        }
     }
 
     let path = oauth_config_path();
@@ -123,17 +165,37 @@ pub fn oauth_config() -> Result<OAuthConfig> {
             std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         let file: OAuthConfigFile =
             serde_json::from_str(&data).with_context(|| format!("parse {}", path.display()))?;
-        if !file.client_id.trim().is_empty() && !file.client_secret.trim().is_empty() {
+        let client_id = file.client_id.trim();
+        if !client_id.is_empty() {
+            let client_secret = file
+                .client_secret
+                .map(|secret| secret.trim().to_string())
+                .filter(|secret| !secret.is_empty());
             return Ok(OAuthConfig {
-                client_id: file.client_id.trim().to_string(),
-                client_secret: file.client_secret.trim().to_string(),
+                client_id: client_id.to_string(),
+                client_secret,
+                token_broker: broker_url(file.token_broker),
+                redirect_uri: REDIRECT_URI.to_string(),
+            });
+        }
+    }
+
+    if let Some(client_id) = option_env!("SLATE_GOOGLE_CLIENT_ID") {
+        let client_id = client_id.trim();
+        if !client_id.is_empty() {
+            return Ok(OAuthConfig {
+                client_id: client_id.to_string(),
+                client_secret: None,
+                token_broker: broker_url(
+                    option_env!("SLATE_GOOGLE_TOKEN_BROKER").map(str::to_string),
+                ),
                 redirect_uri: REDIRECT_URI.to_string(),
             });
         }
     }
 
     bail!(
-        "Google Drive is not configured. Add a Desktop OAuth client to {}.",
+        "Google Drive is not configured. Add a Desktop OAuth client ID to {}.",
         path.display()
     )
 }
@@ -146,7 +208,7 @@ pub fn setup_steps() -> Vec<String> {
         "Add the drive.readonly and drive.file scopes.".to_string(),
         "Create an OAuth client ID of type Desktop app.".to_string(),
         format!(
-            "Save the client ID and secret in {} as {{\"client_id\":\"…\",\"client_secret\":\"…\"}}.",
+            "Save the client ID in {} as {{\"client_id\":\"…\"}}. Add client_secret for local testing, or token_broker (https://api.tom.so) for an official build.",
             oauth_config_path().display()
         ),
         "Save the file, then choose Drive → Link Google Drive.".to_string(),
@@ -194,8 +256,16 @@ fn restrict_permissions(_path: &Path) -> Result<()> {
 }
 
 /// Run the OAuth desktop loopback flow. This blocks until the browser returns
-/// to the local callback or the attempt times out.
+/// to the local callback or the attempt times out. PKCE protects the code
+/// exchange; a client secret is optional.
 pub fn link_account(config: &OAuthConfig) -> Result<DriveAccount> {
+    if config.secret().is_none() && config.broker().is_none() {
+        bail!(
+            "Google requires a client secret for this Desktop client. Add client_secret to {} for local use, or token_broker for an official build.",
+            oauth_config_path().display()
+        );
+    }
+
     let listener = TcpListener::bind(("127.0.0.1", 53682))
         .context("another Google Drive link is waiting, or port 53682 is already in use")?;
     listener
@@ -203,22 +273,21 @@ pub fn link_account(config: &OAuthConfig) -> Result<DriveAccount> {
         .context("configure the Google Drive callback listener")?;
 
     let state = Uuid::new_v4().simple().to_string();
-    let url = auth_url(config, &state)?;
+    let verifier = code_verifier();
+    let challenge = code_challenge(&verifier);
+    let url = auth_url(config, &state, &challenge)?;
     open::that_detached(&url).context("open the Google Drive authorization page")?;
 
     let code = wait_for_code(&listener, &state, Duration::from_secs(180))?;
     let (token, about) = run(async move {
-        let mut client = Client::new(
+        let token = exchange_code(config, &code, &verifier).await?;
+        let client = Client::new(
             config.client_id.clone(),
-            config.client_secret.clone(),
+            config.secret().unwrap_or_default().to_string(),
             config.redirect_uri.clone(),
-            "",
-            "",
+            token.access_token.clone(),
+            token.refresh_token.clone().unwrap_or_default(),
         );
-        let token = client
-            .get_access_token(&code, &state)
-            .await
-            .context("exchange the Google Drive authorization code")?;
         let about = About::new(client)
             .get()
             .await
@@ -227,7 +296,8 @@ pub fn link_account(config: &OAuthConfig) -> Result<DriveAccount> {
         Ok::<_, anyhow::Error>((token, about))
     })?;
 
-    if token.refresh_token.is_empty() {
+    let refresh_token = token.refresh_token.unwrap_or_default();
+    if refresh_token.is_empty() {
         bail!(
             "Google did not return a refresh token. Remove Slate from myaccount.google.com/permissions, then link again."
         );
@@ -235,7 +305,7 @@ pub fn link_account(config: &OAuthConfig) -> Result<DriveAccount> {
 
     let user = about.and_then(|about| about.user);
     let account = DriveAccount {
-        refresh_token: token.refresh_token,
+        refresh_token,
         email: user
             .as_ref()
             .map(|user| user.email_address.clone())
@@ -249,7 +319,7 @@ pub fn link_account(config: &OAuthConfig) -> Result<DriveAccount> {
     Ok(account)
 }
 
-fn auth_url(config: &OAuthConfig, state: &str) -> Result<String> {
+fn auth_url(config: &OAuthConfig, state: &str, challenge: &str) -> Result<String> {
     let mut url = Url::parse("https://accounts.google.com/o/oauth2/v2/auth")?;
     url.query_pairs_mut()
         .append_pair("client_id", &config.client_id)
@@ -262,8 +332,133 @@ fn auth_url(config: &OAuthConfig, state: &str) -> Result<String> {
         .append_pair("access_type", "offline")
         .append_pair("prompt", "consent")
         .append_pair("include_granted_scopes", "true")
+        .append_pair("code_challenge", challenge)
+        .append_pair("code_challenge_method", "S256")
         .append_pair("state", state);
     Ok(url.into())
+}
+
+fn code_verifier() -> String {
+    let first = Uuid::new_v4().simple().to_string();
+    let second = Uuid::new_v4().simple().to_string();
+    format!("{first}{second}")
+}
+
+fn code_challenge(verifier: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
+
+async fn exchange_code(config: &OAuthConfig, code: &str, verifier: &str) -> Result<OAuthToken> {
+    if config.secret().is_none()
+        && let Some(broker) = config.broker()
+    {
+        return post_broker(
+            broker,
+            "/oauth/google/token",
+            &BrokerExchange {
+                code,
+                code_verifier: verifier,
+                redirect_uri: &config.redirect_uri,
+                client_id: &config.client_id,
+            },
+        )
+        .await;
+    }
+
+    let mut params = vec![
+        ("grant_type", "authorization_code".to_string()),
+        ("code", code.to_string()),
+        ("client_id", config.client_id.clone()),
+        ("redirect_uri", config.redirect_uri.clone()),
+        ("code_verifier", verifier.to_string()),
+    ];
+    if let Some(secret) = config.secret() {
+        params.push(("client_secret", secret.to_string()));
+    }
+    post_token(params).await
+}
+
+async fn refresh_access_token(config: &OAuthConfig, refresh_token: &str) -> Result<OAuthToken> {
+    if config.secret().is_none()
+        && let Some(broker) = config.broker()
+    {
+        return post_broker(
+            broker,
+            "/oauth/google/refresh",
+            &BrokerRefresh {
+                refresh_token,
+                client_id: &config.client_id,
+            },
+        )
+        .await;
+    }
+
+    let mut params = vec![
+        ("grant_type", "refresh_token".to_string()),
+        ("refresh_token", refresh_token.to_string()),
+        ("client_id", config.client_id.clone()),
+    ];
+    if let Some(secret) = config.secret() {
+        params.push(("client_secret", secret.to_string()));
+    }
+    post_token(params).await
+}
+
+#[derive(Serialize)]
+struct BrokerExchange<'a> {
+    code: &'a str,
+    code_verifier: &'a str,
+    redirect_uri: &'a str,
+    client_id: &'a str,
+}
+
+#[derive(Serialize)]
+struct BrokerRefresh<'a> {
+    refresh_token: &'a str,
+    client_id: &'a str,
+}
+
+async fn post_broker(broker: &str, path: &str, body: &impl Serialize) -> Result<OAuthToken> {
+    let url = format!("{}{}", broker.trim_end_matches('/'), path);
+    let response = http_client()
+        .post(url)
+        .json(body)
+        .send()
+        .await
+        .context("send the Google token broker request")?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .context("read the Google token broker response")?;
+    if !status.is_success() {
+        bail!("Google token broker failed: {status} {body}");
+    }
+    serde_json::from_str(&body).context("parse the Google token broker response")
+}
+
+async fn post_token(params: Vec<(&'static str, String)>) -> Result<OAuthToken> {
+    let response = http_client()
+        .post(TOKEN_ENDPOINT)
+        .form(&params)
+        .send()
+        .await
+        .context("send the Google token request")?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .context("read the Google token response")?;
+    if !status.is_success() {
+        if body.contains("client_secret is missing") {
+            bail!(
+                "Google rejected the PKCE exchange because it requires a client secret. Add client_secret to {} or use a server broker.",
+                oauth_config_path().display()
+            );
+        }
+        bail!("Google token request failed: {status} {body}");
+    }
+    serde_json::from_str(&body).context("parse the Google token response")
 }
 
 fn wait_for_code(
@@ -367,22 +562,25 @@ where
         .block_on(future)
 }
 
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent(concat!("Slate/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .expect("Google Drive HTTP client")
+}
+
 async fn authorized_client(
     config: &OAuthConfig,
     account: &DriveAccount,
 ) -> Result<(Client, String)> {
-    let mut client = Client::new(
+    let token = refresh_access_token(config, &account.refresh_token).await?;
+    let client = Client::new(
         config.client_id.clone(),
-        config.client_secret.clone(),
+        config.secret().unwrap_or_default().to_string(),
         config.redirect_uri.clone(),
-        "",
+        token.access_token.clone(),
         account.refresh_token.clone(),
     );
-    client.set_auto_access_token_refresh(true);
-    let token = client
-        .refresh_access_token()
-        .await
-        .context("refresh the Google Drive access token")?;
     Ok((client, token.access_token))
 }
 
@@ -486,7 +684,7 @@ pub fn download_images(
     let directory = directory.to_path_buf();
     run(async move {
         let (_, access_token) = authorized_client(&config, &account).await?;
-        let http = reqwest::Client::new();
+        let http = http_client();
         let mut summary = DownloadSummary::default();
         for entry in entries {
             let folder = directory.join(safe_component(&entry.id));
@@ -583,7 +781,7 @@ pub fn upload_pdf(
             "mimeType": "application/pdf",
             "parents": [folder_id],
         });
-        let http = reqwest::Client::new();
+        let http = http_client();
         let response = http
             .post(format!(
                 "{UPLOAD_BASE}?uploadType=resumable&supportsAllDrives=true&fields=id%2Cname"
@@ -756,13 +954,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auth_url_carries_offline_access_and_state() {
+    fn auth_url_carries_offline_access_pkce_and_state() {
         let config = OAuthConfig {
             client_id: "client".to_string(),
-            client_secret: "secret".to_string(),
+            client_secret: None,
+            token_broker: None,
             redirect_uri: REDIRECT_URI.to_string(),
         };
-        let url = Url::parse(&auth_url(&config, "state-123").unwrap()).unwrap();
+        let challenge = code_challenge("abc");
+        let url = Url::parse(&auth_url(&config, "state-123", &challenge).unwrap()).unwrap();
         let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(
             query.get("access_type").map(String::as_str),
@@ -770,8 +970,57 @@ mod tests {
         );
         assert_eq!(query.get("prompt").map(String::as_str), Some("consent"));
         assert_eq!(query.get("state").map(String::as_str), Some("state-123"));
+        assert_eq!(
+            query.get("code_challenge").map(String::as_str),
+            Some("ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0")
+        );
+        assert_eq!(
+            query.get("code_challenge_method").map(String::as_str),
+            Some("S256")
+        );
         assert!(query["scope"].contains(DRIVE_READONLY_SCOPE));
         assert!(query["scope"].contains(DRIVE_FILE_SCOPE));
+    }
+
+    #[test]
+    fn broker_exchange_uses_the_generic_contract() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0_u8; 4096];
+            let read = stream.read(&mut buffer).unwrap_or(0);
+            sender
+                .send(String::from_utf8_lossy(&buffer[..read]).into_owned())
+                .unwrap();
+            let body = r#"{"access_token":"access-token","refresh_token":"refresh-token"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let token = run(async {
+            post_broker(
+                &format!("http://{address}"),
+                "/oauth/google/token",
+                &BrokerExchange {
+                    code: "code",
+                    code_verifier: "verifier",
+                    redirect_uri: REDIRECT_URI,
+                    client_id: "client",
+                },
+            )
+            .await
+        })
+        .unwrap();
+        assert_eq!(token.access_token, "access-token");
+        let request = receiver.recv().unwrap();
+        assert!(request.starts_with("POST /oauth/google/token HTTP/1.1"));
+        assert!(request.contains(r#""client_id":"client""#));
+        server.join().unwrap();
     }
 
     #[test]

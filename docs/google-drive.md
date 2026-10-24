@@ -1,8 +1,10 @@
 # Google Drive
 
 Drive import and PDF export are optional. Slate uses a Google Cloud **Desktop
-OAuth client**. OAuth credentials are runtime configuration: no client secret is
-committed to the repository or compiled into release builds.
+OAuth client** with PKCE. The public client ID is bundled into official builds.
+Google currently still requires a client secret at the token endpoint for
+Desktop clients, so official builds use a **token broker** that holds the secret.
+A local `client_secret` works for development.
 
 ## Create the OAuth client
 
@@ -16,7 +18,7 @@ committed to the repository or compiled into release builds.
    - Add your Google account under **Test users**.
 5. Open **Credentials → Create credentials → OAuth client ID**.
 6. Choose **Desktop app** and create it.
-7. Copy the client ID and client secret.
+7. Copy the client ID. Copy the client secret only if your client requires it.
 
 Desktop clients use a loopback redirect. Slate listens on:
 
@@ -29,6 +31,33 @@ You do not need to register that URI manually for a Desktop client.
 ## Configure Slate
 
 Create `google-oauth.json` in Slate's application-data folder:
+
+```json
+{
+  "client_id": "YOUR_CLIENT_ID"
+}
+```
+
+PKCE uses a one-time verifier. Google still asks Desktop clients for a client
+secret at the token endpoint, so choose one of these:
+
+- **Official build:** point `token_broker` at the wwwtom API broker. The Worker
+  holds the secret.
+- **Local development:** add `client_secret` to this file. It stays local.
+
+Official build configuration:
+
+```json
+{
+  "client_id": "YOUR_CLIENT_ID",
+  "token_broker": "https://api.tom.so"
+}
+```
+
+`https://api.tom.so` hosts the generic broker at `/oauth/google/token` and
+`/oauth/google/refresh`.
+
+Local development configuration:
 
 ```json
 {
@@ -47,9 +76,33 @@ Default locations:
 
 If `SLATE_DATA_DIR` is set, Slate uses `$SLATE_DATA_DIR/google-oauth.json`.
 
-For development, you can set `SLATE_GOOGLE_CLIENT_ID` and
-`SLATE_GOOGLE_CLIENT_SECRET` instead. Slate never compiles these values into a
-release binary; each installation reads its own local client.
+For development, you can set `SLATE_GOOGLE_CLIENT_ID`,
+`SLATE_GOOGLE_CLIENT_SECRET`, and `SLATE_GOOGLE_TOKEN_BROKER`. Official builds
+compile the public client ID and broker URL from the
+`SLATE_GOOGLE_CLIENT_ID` and `SLATE_GOOGLE_TOKEN_BROKER` repository variables.
+Slate never compiles a client secret.
+
+## Token broker contract
+
+The broker is a small HTTPS Worker with two JSON endpoints:
+
+```text
+POST /oauth/google/token
+{ "code", "code_verifier", "redirect_uri", "client_id" }
+
+POST /oauth/google/refresh
+{ "refresh_token", "client_id" }
+```
+
+Both return:
+
+```json
+{ "access_token": "…", "refresh_token": "…" }
+```
+
+The Worker holds `SLATE_GOOGLE_CLIENT_ID` and
+`SLATE_GOOGLE_CLIENT_SECRET`, adds the secret to the Google token request, and
+never logs codes, tokens, or the secret. It must reject GET and invalid input.
 
 Save the file, then choose **Drive → Link Google Drive**. The browser opens, and
 the callback returns to the app. Drive → Unlink removes the stored refresh token;
@@ -94,5 +147,8 @@ Internal app in a Google Workspace for long-lived tokens.
 - **No refresh token**: remove Slate's access at
   [myaccount.google.com/permissions](https://myaccount.google.com/permissions)
   and link again.
+- **`client_secret is missing`**: this Google client requires a secret at the
+  token endpoint. Add `client_secret` for local development, or set
+  `token_broker` to the official Worker.
 - **Repeated 401 responses**: unlink and relink the account. A testing-mode
   refresh token may have expired.

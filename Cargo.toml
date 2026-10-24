@@ -16,6 +16,8 @@ printpdf = { version = "0.12", default-features = false, features = ["jpeg", "pn
 kamadak-exif = "0.6"
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 anyhow = "1"
+base64 = "0.21"
+sha2 = "0.10"
 google-drive = "0.10.0"
 open = "5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }

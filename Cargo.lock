@@ -5729,6 +5729,7 @@ name = "slate-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.21.7",
  "google-drive",
  "gpui",
  "image",
@@ -5736,6 +5737,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "slate-core",
  "tokio",
  "tokio-util",

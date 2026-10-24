@@ -49,6 +49,9 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - The library uses `uniform_list`; never build all photo cells. Schedule thumbs
   only for the rendered range and keep the cache at `THUMB_CACHE`. The 10,000
   photo path must stay virtualised.
+- JPEG thumbnails and PDF images go through `jpeg-decoder`'s reduced IDCT. Do
+  not decode a full-resolution JPEG just to make a preview. Call
+  `memory::release_free_pages` after a project open or import drains.
 - `Project.photos` is a `PhotoSet`: unique, private ids, O(1) `photo(id)`, and
   copy-on-write snapshots. Use `Photo::new` and `photo.id()`; never add a linear
   id lookup or replace the set with a bare `Vec`.

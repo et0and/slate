@@ -8,6 +8,7 @@ license.workspace = true
 anyhow.workspace = true
 image.workspace = true
 kamadak-exif.workspace = true
+jpeg-decoder = "0.3"
 printpdf.workspace = true
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde.workspace = true

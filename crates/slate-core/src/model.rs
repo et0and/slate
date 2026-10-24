@@ -4,6 +4,7 @@
 //! so a project can always be reopened and exported later.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::{BufReader, BufWriter, Write};
 use std::num::NonZeroU32;
 use std::ops::{Deref, Index};
 use std::path::{Path, PathBuf};
@@ -693,8 +694,8 @@ impl Project {
     }
 
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let data = std::fs::read_to_string(path)?;
-        let mut project: Project = serde_json::from_str(&data)?;
+        let file = std::fs::File::open(path)?;
+        let mut project: Project = serde_json::from_reader(BufReader::new(file))?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
         for photo in &mut project.photos {
             if photo.path.is_relative() {
@@ -716,8 +717,10 @@ impl Project {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let data = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, data + "\n")?;
+        let file = std::fs::File::create(path)?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, self)?;
+        writer.write_all(b"\n")?;
         Ok(())
     }
 }

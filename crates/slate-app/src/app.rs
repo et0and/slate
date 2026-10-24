@@ -21,6 +21,7 @@ use slate_core::pdf::{self, ExportSummary};
 use slate_core::store::{LocalStore, RecentProject};
 
 use crate::history::{History, Snapshot};
+use crate::memory;
 use crate::panels::{DIVIDER_W, PanelLayout, ResizeTarget};
 use crate::text_field::TextField;
 use crate::theme;
@@ -44,7 +45,8 @@ actions!(
     ]
 );
 
-const THUMB_CACHE: usize = 256;
+const THUMB_CACHE: usize = 32;
+const THUMB_EDGE: u32 = 256;
 const THUMB_QUEUE_LIMIT: usize = 512;
 
 #[derive(Debug, Clone)]
@@ -912,6 +914,7 @@ impl ContactSheet {
                 self.log("File loaded");
                 self.set_status(format!("Opened {} photos", self.project.photos.len()));
                 self.refresh_preview();
+                memory::release_free_pages();
                 cx.notify();
             }
             Err(error) => {
@@ -1072,7 +1075,7 @@ impl ContactSheet {
             let task_path = path.clone();
             cx.spawn(async move |this, cx| {
                 let result = cx
-                    .background_spawn(async move { import::probe(&task_path, 320) })
+                    .background_spawn(async move { import::probe(&task_path, THUMB_EDGE) })
                     .await;
                 let _ = this.update(cx, |this, cx| {
                     if this.generation != generation {
@@ -1153,6 +1156,7 @@ impl ContactSheet {
         self.import_queue.clear();
         self.importing_paths.clear();
         self.imports_in_flight = 0;
+        memory::release_free_pages();
         self.refresh_and_notify(cx);
     }
 
@@ -1217,7 +1221,7 @@ impl ContactSheet {
             let generation = self.generation;
             cx.spawn(async move |this, cx| {
                 let result = cx
-                    .background_spawn(async move { import::preview(&path, 320) })
+                    .background_spawn(async move { import::preview(&path, THUMB_EDGE) })
                     .await;
                 let _ = this.update(cx, |this, cx| {
                     if this.generation != generation {
@@ -1234,6 +1238,9 @@ impl ContactSheet {
                         }
                     }
                     this.pump_thumbs(cx);
+                    if this.thumb_queue.is_empty() && this.thumbs_in_flight == 0 {
+                        memory::release_free_pages();
+                    }
                     cx.notify();
                 });
             })
@@ -1260,7 +1267,7 @@ impl ContactSheet {
             _ => return None,
         };
         let rotated = rotate_render_image(&base, turns)?;
-        if self.rotated_thumbs.len() >= 128 {
+        if self.rotated_thumbs.len() >= 8 {
             self.rotated_thumbs.clear();
         }
         self.rotated_thumbs.insert((id, turns), rotated.clone());

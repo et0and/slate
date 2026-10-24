@@ -6,6 +6,7 @@ mod chrome;
 mod history;
 mod inspector;
 mod library;
+mod memory;
 mod menubar;
 mod overlay;
 mod panels;

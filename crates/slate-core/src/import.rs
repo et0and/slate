@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, Result};
 use exif::{In, Reader as ExifReader, Tag};
 use image::{DynamicImage, ImageReader, RgbaImage, imageops};
+use jpeg_decoder::{Decoder as JpegDecoder, PixelFormat};
 
 pub const EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "tif", "tiff", "webp", "gif", "bmp", "heic", "heif", "dng", "cr2", "cr3",
@@ -160,11 +161,14 @@ pub fn preview(path: &Path, max_edge: u32) -> Result<PreviewImage> {
 /// so a contact sheet export never embeds more pixels than print resolution
 /// needs.
 pub fn load_oriented(path: &Path, max_edge: Option<u32>) -> Result<DynamicImage> {
-    let mut image = if is_standard(path) {
-        let reader = ImageReader::open(path)?
-            .with_guessed_format()
-            .with_context(|| format!("unrecognised image format for {}", path.display()))?;
-        reader.decode()?
+    let mut image = if is_jpeg(path) {
+        match decode_jpeg(path, max_edge) {
+            Ok(Some(image)) => image,
+            Ok(None) => decode_standard(path)?,
+            Err(error) => return Err(error),
+        }
+    } else if is_standard(path) {
+        decode_standard(path)?
     } else {
         decode_via_sips(path, max_edge.unwrap_or(4096))?
     };
@@ -187,6 +191,59 @@ pub fn load_oriented(path: &Path, max_edge: Option<u32>) -> Result<DynamicImage>
         }
     }
 
+    Ok(image)
+}
+
+fn is_jpeg(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg")
+        })
+}
+
+fn decode_standard(path: &Path) -> Result<DynamicImage> {
+    let reader = ImageReader::open(path)?
+        .with_guessed_format()
+        .with_context(|| format!("unrecognised image format for {}", path.display()))?;
+    Ok(reader.decode()?)
+}
+
+/// Decode JPEGs with the decoder's reduced IDCT. A 24 MP photo becomes a
+/// few hundred kilobytes instead of a full RGBA frame, which keeps the
+/// thumbnail path below the memory budget.
+fn decode_jpeg(path: &Path, max_edge: Option<u32>) -> Result<Option<DynamicImage>> {
+    let file = File::open(path)?;
+    let mut decoder = JpegDecoder::new(BufReader::new(file));
+    decoder.read_info()?;
+    let info = decoder.info().context("JPEG has no image info")?;
+    if !matches!(info.pixel_format, PixelFormat::RGB24 | PixelFormat::L8) {
+        return Ok(None);
+    }
+
+    let (width, height) = (u32::from(info.width), u32::from(info.height));
+    if let Some(max_edge) = max_edge {
+        let long_edge = width.max(height);
+        if long_edge > max_edge && long_edge > 0 {
+            let scale = max_edge as f32 / long_edge as f32;
+            let requested_width = ((width as f32 * scale).round() as u16).max(1);
+            let requested_height = ((height as f32 * scale).round() as u16).max(1);
+            decoder.scale(requested_width, requested_height)?;
+        }
+    }
+
+    let pixels = decoder.decode()?;
+    let info = decoder.info().context("JPEG has no decoded image info")?;
+    let (width, height) = (u32::from(info.width), u32::from(info.height));
+    let image = match info.pixel_format {
+        PixelFormat::RGB24 => {
+            image::RgbImage::from_raw(width, height, pixels).map(DynamicImage::ImageRgb8)
+        }
+        PixelFormat::L8 => {
+            image::GrayImage::from_raw(width, height, pixels).map(DynamicImage::ImageLuma8)
+        }
+        _ => None,
+    };
     Ok(image)
 }
 
@@ -361,6 +418,17 @@ mod tests {
         assert_eq!(probe.preview.height(), 32);
         assert_eq!(probe.preview.image.as_raw().len(), 64 * 32 * 4);
         assert!(probe.bytes > 0);
+    }
+
+    #[test]
+    fn probes_jpeg_with_reduced_decode() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("photo.jpg");
+        write_test_jpeg(&path, 400, 200);
+        let probe = probe(&path, 64).unwrap();
+        assert_eq!((probe.width, probe.height), (400, 200));
+        assert_eq!(probe.preview.width(), 64);
+        assert_eq!(probe.preview.height(), 32);
     }
 
     #[test]

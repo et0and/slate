@@ -15,6 +15,7 @@ pub(crate) struct ViewState {
     tags: Arc<BTreeMap<String, usize>>,
     untagged: usize,
     search_names: Vec<String>,
+    search_names_ready: bool,
 }
 
 impl ViewState {
@@ -84,7 +85,6 @@ impl ViewState {
     fn rebuild_project(&mut self, project: &Project) {
         let mut tags = BTreeMap::new();
         let mut untagged = 0;
-        let mut search_names = Vec::with_capacity(project.photos.len());
         for photo in &project.photos {
             if photo.tags.is_empty() {
                 untagged += 1;
@@ -92,21 +92,34 @@ impl ViewState {
             for tag in &photo.tags {
                 *tags.entry(tag.clone()).or_insert(0) += 1;
             }
-            search_names.push(photo.file_name().to_lowercase());
         }
         self.tags = Arc::new(tags);
         self.untagged = untagged;
-        self.search_names = search_names;
+        self.search_names.clear();
+        self.search_names_ready = false;
     }
 
     fn rebuild_visible(&mut self, project: &Project, filter: &Filter, search: &str) {
         let needle = search.trim().to_lowercase();
-        let mut visible = Vec::with_capacity(self.search_names.len());
+        if !needle.is_empty() && !self.search_names_ready {
+            self.search_names = project
+                .photos
+                .iter()
+                .map(|photo| photo.file_name().to_lowercase())
+                .collect();
+            self.search_names_ready = true;
+        }
+        let mut visible = Vec::with_capacity(project.photos.len());
         for (index, photo) in project.photos.iter().enumerate() {
-            let Some(name) = self.search_names.get(index) else {
+            if !filter.matches(photo) {
                 continue;
-            };
-            if filter.matches(photo) && (needle.is_empty() || name.contains(&needle)) {
+            }
+            if needle.is_empty()
+                || self
+                    .search_names
+                    .get(index)
+                    .is_some_and(|name| name.contains(&needle))
+            {
                 visible.push(index);
             }
         }

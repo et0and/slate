@@ -37,13 +37,13 @@ A 10,000-photo project should not feel like a browser tab. Release build on macO
 | --- | ---: |
 | Project file size | 2.2 MB |
 | Launch with a 10k project | 0.2 s warm / 0.8 s cold |
-| Memory, project open | ~137 MB |
+| Memory, project open | ~78 MB footprint |
 | Metadata load | 5 ms |
 | Plan an 834-page sheet | 3 ms |
 | Rename plan, 10k files | 20 ms |
-| Thumbnail cache | 256 images |
+| Thumbnail cache | 32 images |
 
-Export is on demand. At 12 up, 10,000 photos become 834 A4 pages.
+Memory is the physical footprint after the first screen settles; resident memory is about 98 MB. Export is on demand. At 12 up, 10,000 photos become 834 A4 pages.
 
 Reproduce the core numbers with:
 

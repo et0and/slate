@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use gpui::{
     App, Context, ExternalPaths, FocusHandle, Focusable, PathPromptOptions, Render, RenderImage,
-    Window, actions, div, prelude::*, px,
+    Window, WindowAppearance, actions, div, prelude::*, px,
 };
 use image::{Frame, RgbaImage};
 use slate_core::PreviewImage;
@@ -83,6 +83,8 @@ pub struct ContactSheet {
     pub(crate) focus: FocusHandle,
     pub(crate) focused_once: bool,
     pub(crate) window_title: String,
+    pub(crate) dark: bool,
+    pub(crate) appearance_initialized: bool,
 
     pub(crate) search_field: gpui::Entity<TextField>,
     pub(crate) title_field: gpui::Entity<TextField>,
@@ -97,7 +99,7 @@ impl ContactSheet {
 
         let search_field = cx.new(|cx| {
             let weak = weak.clone();
-            TextField::new(cx, "FILTER FILE NAMES").on_change(move |value, app| {
+            TextField::new(cx, "Filter file names").on_change(move |value, app| {
                 let _ = weak.update(app, |this, cx| {
                     this.search = value.to_string();
                     this.preview_page = 0;
@@ -109,7 +111,7 @@ impl ContactSheet {
 
         let title_field = cx.new(|cx| {
             let weak = weak.clone();
-            TextField::new(cx, "SHEET TITLE").on_change(move |value, app| {
+            TextField::new(cx, "Sheet title").on_change(move |value, app| {
                 let _ = weak.update(app, |this, cx| {
                     this.project.sheet.title = value.to_string();
                     this.dirty = true;
@@ -120,7 +122,7 @@ impl ContactSheet {
 
         let prefix_field = cx.new(|cx| {
             let weak = weak.clone();
-            TextField::new(cx, "PREFIX").on_change(move |value, app| {
+            TextField::new(cx, "Prefix").on_change(move |value, app| {
                 let _ = weak.update(app, |this, cx| {
                     this.rename_options.prefix = value.to_string();
                     cx.notify();
@@ -131,7 +133,7 @@ impl ContactSheet {
         let suffix_field = cx.new(|cx| {
             let change_weak = weak.clone();
             let submit_weak = weak.clone();
-            TextField::new(cx, "SUFFIX")
+            TextField::new(cx, "Suffix")
                 .on_change(move |value, app| {
                     let _ = change_weak.update(app, |this, cx| {
                         this.rename_options.suffix = value.to_string();
@@ -145,17 +147,17 @@ impl ContactSheet {
 
         let tag_field = cx.new(|cx| {
             let weak = weak.clone();
-            TextField::new(cx, "TAG, E.G. STREET").on_submit(move |value, app| {
+            TextField::new(cx, "Tag, e.g. street").on_submit(move |value, app| {
                 let value = value.to_string();
                 let _ = weak.update(app, |this, cx| this.apply_tag_value(value, cx, true));
             })
         });
 
         let mut log = VecDeque::new();
-        log.push_back("SESSION READY".to_string());
+        log.push_back("Session ready".to_string());
 
         Self {
-            project: Project::new("UNTITLED"),
+            project: Project::new("Untitled"),
             project_path: None,
             dirty: false,
             generation: 1,
@@ -178,11 +180,13 @@ impl ContactSheet {
             rename_pending: None,
             rename_options: RenameOptions::default(),
             exporting: None,
-            status: "IMPORT FILES OR A FOLDER TO BEGIN".to_string(),
+            status: "Import files or a folder to begin".to_string(),
             log,
             focus: cx.focus_handle(),
             focused_once: false,
             window_title: String::new(),
+            dark: false,
+            appearance_initialized: false,
             search_field,
             title_field,
             prefix_field,
@@ -268,8 +272,8 @@ impl ContactSheet {
 
     pub(crate) fn filter_label(&self) -> String {
         match &self.filter {
-            Filter::All => "ALL IMAGES".to_string(),
-            Filter::Untagged => "UNTAGGED".to_string(),
+            Filter::All => "All images".to_string(),
+            Filter::Untagged => "Untagged".to_string(),
             Filter::Tag(tag) => format!("#{tag}"),
         }
     }
@@ -279,8 +283,10 @@ impl ContactSheet {
         let layout = SheetLayout::from_settings(&self.project.sheet);
         let pages = self.page_count();
         format!(
-            "{photos} PHOTOS / {pages} PAGE{} / {} UP",
-            if pages == 1 { "" } else { "S" },
+            "{} photos / {} page{} / {} per page",
+            photos,
+            pages,
+            if pages == 1 { "" } else { "s" },
             layout.per_page()
         )
     }
@@ -296,6 +302,22 @@ impl ContactSheet {
 
     pub(crate) fn set_status(&mut self, text: impl Into<String>) {
         self.status = text.into();
+    }
+
+    pub(crate) fn toggle_appearance(&mut self, cx: &mut Context<Self>) {
+        self.dark = !self.dark;
+        theme::set_dark(self.dark);
+        let fields = [
+            self.search_field.clone(),
+            self.title_field.clone(),
+            self.prefix_field.clone(),
+            self.suffix_field.clone(),
+            self.tag_field.clone(),
+        ];
+        for field in fields {
+            field.update(cx, |_, cx| cx.notify());
+        }
+        cx.notify();
     }
 
     pub(crate) fn refresh_preview(&mut self, cx: &mut Context<Self>) {
@@ -349,13 +371,13 @@ impl ContactSheet {
 
     pub(crate) fn remove_selected(&mut self, cx: &mut Context<Self>) {
         if self.selected.is_empty() {
-            self.set_status("SELECT PHOTOS TO REMOVE FROM THE PROJECT");
+            self.set_status("Select photos to remove from the project");
             cx.notify();
             return;
         }
         let ids = self.target_ids();
         if ids.is_empty() {
-            self.set_status("SELECT PHOTOS FIRST");
+            self.set_status("Select photos first");
             cx.notify();
             return;
         }
@@ -367,8 +389,10 @@ impl ContactSheet {
             self.rotated.remove(id);
         }
         self.dirty = true;
-        self.log(format!("REMOVED {removed} PHOTOS FROM PROJECT"));
-        self.set_status(format!("REMOVED {removed} FROM PROJECT / FILES UNTOUCHED"));
+        self.log(format!("Removed {removed} photos from the project"));
+        self.set_status(format!(
+            "Removed {removed} from the project / files untouched"
+        ));
         self.refresh_preview(cx);
         cx.notify();
     }
@@ -389,12 +413,12 @@ impl ContactSheet {
         let ids = self.target_ids();
         let tag = tag.trim().to_string();
         if tag.is_empty() {
-            self.set_status("TYPE A TAG FIRST");
+            self.set_status("Type a tag first");
             cx.notify();
             return;
         }
         if ids.is_empty() {
-            self.set_status("NO PHOTOS IN SCOPE");
+            self.set_status("No photos in scope");
             cx.notify();
             return;
         }
@@ -406,8 +430,8 @@ impl ContactSheet {
             self.tag_field
                 .update(cx, |field, cx| field.set_value("", cx));
         }
-        self.set_status(format!("TAGGED {changed} / {tag} / {} IN SCOPE", ids.len()));
-        self.log(format!("TAG +{tag} / {changed} PHOTO(S)"));
+        self.set_status(format!("Tagged {changed} / {tag} / {} in scope", ids.len()));
+        self.log(format!("Tag +{tag} / {changed} photo(s)"));
         cx.notify();
     }
 
@@ -415,7 +439,7 @@ impl ContactSheet {
         let ids = self.target_ids();
         let tag = self.tag_field.read(cx).value().trim().to_string();
         if tag.is_empty() {
-            self.set_status("TYPE THE TAG TO REMOVE");
+            self.set_status("Type the tag to remove");
             cx.notify();
             return;
         }
@@ -425,8 +449,8 @@ impl ContactSheet {
         }
         self.tag_field
             .update(cx, |field, cx| field.set_value("", cx));
-        self.set_status(format!("REMOVED TAG {tag} FROM {changed} PHOTO(S)"));
-        self.log(format!("TAG -{tag} / {changed} PHOTO(S)"));
+        self.set_status(format!("Removed tag {tag} from {changed} photo(s)"));
+        self.log(format!("Tag -{tag} / {changed} photo(s)"));
         cx.notify();
     }
 
@@ -436,8 +460,8 @@ impl ContactSheet {
         if changed > 0 {
             self.dirty = true;
         }
-        self.set_status(format!("CLEARED TAGS ON {changed} PHOTO(S)"));
-        self.log(format!("TAGS CLEARED / {changed} PHOTO(S)"));
+        self.set_status(format!("Cleared tags on {changed} photo(s)"));
+        self.log(format!("Tags cleared / {changed} photo(s)"));
         self.refresh_preview(cx);
         cx.notify();
     }
@@ -447,22 +471,22 @@ impl ContactSheet {
     pub(crate) fn preview_rename(&mut self, cx: &mut Context<Self>) {
         let ids = self.target_ids();
         if ids.is_empty() {
-            self.set_status("SELECT PHOTOS TO RENAME");
+            self.set_status("Select photos to rename");
             cx.notify();
             return;
         }
         let plan = batch::plan_rename(&self.project, &ids, &self.rename_options);
         if plan.entries.is_empty() {
-            self.set_status("NO CHANGES / NAMES ALREADY MATCH");
-            self.log(format!("RENAME: 0 CHANGES / {} SKIPPED", plan.skipped));
+            self.set_status("No changes / names already match");
+            self.log(format!("Rename: 0 changes / {} skipped", plan.skipped));
             cx.notify();
             return;
         }
         let conflicts = plan.conflicts().count();
         if conflicts > 0 {
-            self.set_status(format!("{conflicts} RENAME CONFLICT(S)"));
+            self.set_status(format!("{conflicts} rename conflict(s)"));
         } else {
-            self.set_status(format!("RENAME READY / {} FILES", plan.entries.len()));
+            self.set_status(format!("Rename ready / {} files", plan.entries.len()));
         }
         self.rename_pending = Some(plan);
         cx.notify();
@@ -474,7 +498,7 @@ impl ContactSheet {
         };
         if !plan.can_apply() {
             self.rename_pending = Some(plan);
-            self.set_status("FIX RENAME CONFLICTS FIRST");
+            self.set_status("Fix rename conflicts first");
             cx.notify();
             return;
         }
@@ -483,26 +507,26 @@ impl ContactSheet {
             self.dirty = true;
         }
         for (_, error) in &report.errors {
-            self.log(format!("RENAME ERROR: {error}"));
+            self.log(format!("Rename error: {error}"));
         }
         if report.renamed_count() > 0 {
             if let Some(path) = self.project_path.clone() {
                 self.write_project(path, cx);
             } else {
-                self.log("RENAME APPLIED / PROJECT UNSAVED");
+                self.log("Rename applied / project unsaved");
             }
         }
         self.set_status(format!(
-            "RENAMED {} FILE(S){}",
+            "Renamed {} file(s){}",
             report.renamed_count(),
             if report.errors.is_empty() {
                 String::new()
             } else {
-                format!(" / {} ERROR(S)", report.errors.len())
+                format!(" / {} error(s)", report.errors.len())
             }
         ));
         self.log(format!(
-            "RENAME / {} OK / {} ERROR",
+            "Rename / {} ok / {} error",
             report.renamed_count(),
             report.errors.len()
         ));
@@ -511,7 +535,7 @@ impl ContactSheet {
 
     pub(crate) fn cancel_rename(&mut self, cx: &mut Context<Self>) {
         self.rename_pending = None;
-        self.set_status("RENAME CANCELLED");
+        self.set_status("Rename cancelled");
         cx.notify();
     }
 
@@ -591,20 +615,20 @@ impl ContactSheet {
     pub(crate) fn save_sheet(&mut self, cx: &mut Context<Self>) {
         let ids = self.target_ids();
         if ids.is_empty() {
-            self.set_status("NO PHOTOS IN SCOPE");
+            self.set_status("No photos in scope");
             cx.notify();
             return;
         }
         let name = if self.project.sheet.title.trim().is_empty() {
-            format!("SHEET {:02}", self.project.saved_sheets.len() + 1)
+            format!("Sheet {:02}", self.project.saved_sheets.len() + 1)
         } else {
             self.project.sheet.title.trim().to_string()
         };
         self.project
             .upsert_saved_sheet(name.clone(), self.project.sheet.clone(), ids.clone());
         self.dirty = true;
-        self.set_status(format!("SAVED SHEET / {name} / {} PHOTOS", ids.len()));
-        self.log(format!("SHEET SAVED / {name} / {} PHOTO(S)", ids.len()));
+        self.set_status(format!("Saved sheet / {name} / {} photos", ids.len()));
+        self.log(format!("Sheet saved / {name} / {} photo(s)", ids.len()));
         cx.notify();
     }
 
@@ -613,8 +637,8 @@ impl ContactSheet {
         self.project.saved_sheets.retain(|sheet| sheet.id != id);
         if self.project.saved_sheets.len() != before {
             self.dirty = true;
-            self.log("SHEET DELETED");
-            self.set_status("SHEET DELETED / PROJECT UNSAVED");
+            self.log("Sheet deleted");
+            self.set_status("Sheet deleted / project unsaved");
         }
         cx.notify();
     }
@@ -643,8 +667,8 @@ impl ContactSheet {
         self.title_field
             .update(cx, |field, cx| field.set_value(sheet.name.clone(), cx));
         self.dirty = true;
-        self.set_status(format!("LOADED SHEET / {}", sheet.name));
-        self.log(format!("SHEET LOADED / {}", sheet.name));
+        self.set_status(format!("Loaded sheet / {}", sheet.name));
+        self.log(format!("Sheet loaded / {}", sheet.name));
         self.refresh_preview(cx);
         cx.notify();
     }
@@ -725,12 +749,12 @@ impl ContactSheet {
                 self.dirty = false;
                 self.preview_page = 0;
                 self.rename_pending = None;
-                self.log(format!("OPENED {}", path.display()));
+                self.log(format!("Opened {}", path.display()));
                 self.set_status(format!(
-                    "OPENED {} PHOTOS{}",
+                    "Opened {} photos{}",
                     self.project.photos.len(),
                     if missing > 0 {
-                        format!(" / {missing} MISSING")
+                        format!(" / {missing} missing")
                     } else {
                         String::new()
                     }
@@ -740,8 +764,8 @@ impl ContactSheet {
                 cx.notify();
             }
             Err(error) => {
-                self.log(format!("OPEN FAILED: {error}"));
-                self.set_status(format!("OPEN FAILED / {error}"));
+                self.log(format!("Open failed: {error}"));
+                self.set_status(format!("Open failed / {error}"));
                 cx.notify();
             }
         }
@@ -778,12 +802,12 @@ impl ContactSheet {
             Ok(()) => {
                 self.project_path = Some(path.clone());
                 self.dirty = false;
-                self.log(format!("SAVED {}", path.display()));
-                self.set_status(format!("SAVED / {}", path.display()));
+                self.log(format!("Saved {}", path.display()));
+                self.set_status(format!("Saved / {}", path.display()));
             }
             Err(error) => {
-                self.log(format!("SAVE FAILED: {error}"));
-                self.set_status(format!("SAVE FAILED / {error}"));
+                self.log(format!("Save failed: {error}"));
+                self.set_status(format!("Save failed / {error}"));
             }
         }
         cx.notify();
@@ -818,7 +842,7 @@ impl ContactSheet {
 
     pub(crate) fn begin_import(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         let generation = self.generation;
-        self.set_status("SCANNING…");
+        self.set_status("Scanning…");
         cx.notify();
         cx.spawn(async move |this, cx| {
             let found = cx
@@ -847,13 +871,13 @@ impl ContactSheet {
             .collect();
 
         if new_paths.is_empty() {
-            self.set_status("NO NEW PHOTOS FOUND");
-            self.log("IMPORT / 0 NEW FILES");
+            self.set_status("No new photos found");
+            self.log("Import / 0 new files");
             cx.notify();
             return;
         }
 
-        if self.project.name == "UNTITLED"
+        if is_untitled(&self.project.name)
             && let Some(name) = new_paths[0].parent().and_then(|parent| parent.file_name())
         {
             self.project.name = name.to_string_lossy().into_owned();
@@ -867,9 +891,9 @@ impl ContactSheet {
         }
         self.importing_paths.extend(new_paths.iter().cloned());
         self.import_queue.extend(new_paths.iter().cloned());
-        self.log(format!("IMPORT / {} NEW FILES", new_paths.len()));
+        self.log(format!("Import / {} new files", new_paths.len()));
         self.set_status(format!(
-            "IMPORTING {}/{}",
+            "Importing {}/{}",
             self.import_state
                 .as_ref()
                 .map(|state| state.done)
@@ -955,18 +979,18 @@ impl ContactSheet {
         if let Some(state) = self.import_state.take() {
             let errors = state.errors.len();
             for error in state.errors {
-                self.log(format!("IMPORT SKIP / {error}"));
+                self.log(format!("Import skip / {error}"));
             }
-            self.log(format!("IMPORT / {} FILES / {} ERRORS", state.done, errors));
+            self.log(format!("Import / {} files / {} errors", state.done, errors));
             self.set_status(format!(
-                "IMPORTED {} PHOTOS{}{}",
+                "Imported {} photos{}{}",
                 state.done,
                 if errors > 0 {
-                    format!(" / {errors} COULD NOT BE PREVIEWED")
+                    format!(" / {errors} could not be previewed")
                 } else {
                     String::new()
                 },
-                if self.dirty { " / UNSAVED" } else { "" }
+                if self.dirty { " / unsaved" } else { "" }
             ));
         }
         self.import_queue.clear();
@@ -1118,7 +1142,7 @@ impl ContactSheet {
     pub(crate) fn export_current(&mut self, cx: &mut Context<Self>) {
         let photos = self.export_photos();
         if photos.is_empty() {
-            self.set_status("NO PHOTOS TO EXPORT");
+            self.set_status("No photos to export");
             cx.notify();
             return;
         }
@@ -1142,7 +1166,7 @@ impl ContactSheet {
             .filter_map(|id| self.project.photo(*id).cloned())
             .collect();
         if photos.is_empty() {
-            self.set_status(format!("SHEET {} HAS NO PHOTOS", sheet.name));
+            self.set_status(format!("Sheet {} has no photos", sheet.name));
             cx.notify();
             return;
         }
@@ -1157,7 +1181,7 @@ impl ContactSheet {
         cx: &mut Context<Self>,
     ) {
         if self.exporting.is_some() {
-            self.set_status("EXPORT ALREADY IN PROGRESS");
+            self.set_status("Export already in progress");
             cx.notify();
             return;
         }
@@ -1176,8 +1200,8 @@ impl ContactSheet {
             let output = ensure_extension(path, "pdf");
             let _ = this.update(cx, |this, cx| {
                 this.exporting = Some(output.display().to_string());
-                this.set_status(format!("EXPORTING / {}", output.display()));
-                this.log(format!("EXPORT START / {} PHOTOS", photos.len()));
+                this.set_status(format!("Exporting / {}", output.display()));
+                this.log(format!("Export start / {} photos", photos.len()));
                 cx.notify();
             });
 
@@ -1194,8 +1218,8 @@ impl ContactSheet {
                 match result {
                     Ok(summary) => this.export_finished(&title, summary),
                     Err(error) => {
-                        this.log(format!("EXPORT FAILED: {error}"));
-                        this.set_status(format!("EXPORT FAILED / {error}"));
+                        this.log(format!("Export failed: {error}"));
+                        this.set_status(format!("Export failed / {error}"));
                     }
                 }
                 cx.notify();
@@ -1208,22 +1232,22 @@ impl ContactSheet {
         let kilobytes = summary.bytes / 1024;
         let missing = summary.missing.len();
         self.log(format!(
-            "EXPORT / {} / {} PAGES / {} KB / {} MISSING",
+            "Export / {} / {} pages / {} KB / {} missing",
             title, summary.pages, kilobytes, missing
         ));
         for reason in summary.missing.iter().take(3) {
-            self.log(format!("EXPORT SKIP / {reason}"));
+            self.log(format!("Export skip / {reason}"));
         }
         self.set_status(format!(
-            "EXPORTED {} PAGES / {} KB{}{}",
+            "Exported {} pages / {} KB{}{}",
             summary.pages,
             kilobytes,
             if missing > 0 {
-                format!(" / {missing} MISSING")
+                format!(" / {missing} missing")
             } else {
                 String::new()
             },
-            if self.dirty { " / PROJECT UNSAVED" } else { "" }
+            if self.dirty { " / project unsaved" } else { "" }
         ));
         reveal(&summary.path);
     }
@@ -1241,9 +1265,17 @@ impl Render for ContactSheet {
             window.focus(&self.focus);
             self.focused_once = true;
         }
+        if !self.appearance_initialized {
+            self.dark = matches!(
+                window.appearance(),
+                WindowAppearance::Dark | WindowAppearance::VibrantDark
+            );
+            self.appearance_initialized = true;
+        }
+        theme::set_dark(self.dark);
 
         let title = format!(
-            "{}{} — Slate",
+            "{}{} — Contact sheet",
             self.project.name,
             if self.dirty { " *" } else { "" }
         );
@@ -1299,6 +1331,11 @@ fn render_image(preview: PreviewImage) -> Arc<RenderImage> {
     let bgra = preview.to_bgra();
     let buffer = RgbaImage::from_raw(width, height, bgra).unwrap_or_else(|| RgbaImage::new(1, 1));
     Arc::new(RenderImage::new(vec![Frame::new(buffer)]))
+}
+
+fn is_untitled(name: &str) -> bool {
+    let name = name.trim();
+    name.is_empty() || name.eq_ignore_ascii_case("untitled")
 }
 
 fn ensure_extension(path: PathBuf, extension: &str) -> PathBuf {

@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod app;
 mod chrome;
 mod inspector;
@@ -55,8 +57,8 @@ fn main() {
             Menu {
                 name: "File".into(),
                 items: vec![
-                    MenuItem::action("Open Project…", OpenProject),
-                    MenuItem::action("Save Project", SaveProject),
+                    MenuItem::action("Open project…", OpenProject),
+                    MenuItem::action("Save project", SaveProject),
                     MenuItem::separator(),
                     MenuItem::action("Export PDF…", ExportSheet),
                     MenuItem::separator(),
@@ -68,11 +70,11 @@ fn main() {
             Menu {
                 name: "Photos".into(),
                 items: vec![
-                    MenuItem::action("Import Files…", ImportFiles),
-                    MenuItem::action("Import Folder…", ImportFolder),
+                    MenuItem::action("Import files…", ImportFiles),
+                    MenuItem::action("Import folder…", ImportFolder),
                     MenuItem::separator(),
-                    MenuItem::action("Select All Visible", SelectAllPhotos),
-                    MenuItem::action("Deselect All", DeselectPhotos),
+                    MenuItem::action("Select all visible", SelectAllPhotos),
+                    MenuItem::action("Deselect all", DeselectPhotos),
                 ],
             },
         ]);
@@ -83,7 +85,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(1080.0), px(720.0))),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Slate".into()),
+                    title: Some("Contact sheet".into()),
                     appears_transparent: false,
                     ..Default::default()
                 }),

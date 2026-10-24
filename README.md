@@ -8,10 +8,12 @@ and save the project or a sheet preset to export again later.
 
 ## Interface
 
-![Slate Desktop workspace](docs/app-preview.jpg)
+![Slate Desktop in light mode](docs/app-preview-light.jpg)
 
-The workspace: library grid, tag filters, batch rename, live page preview and
-sheet controls.
+![Slate Desktop in dark mode](docs/app-preview-dark.jpg)
+
+The workspace in light and dark modes: library grid, tag filters, batch rename,
+live page preview and sheet controls.
 
 ## Sheet output
 
@@ -37,14 +39,18 @@ example.*
   size. No layers, no transparency.
 - **Projects and saved sheets** stored as plain JSON (`.contactsheet`), so a
   sheet can be reopened and exported later.
+- **Light and dark modes**, monochrome and high contrast. The app follows the
+  system appearance at launch and switches from the masthead.
 - **One-window, keyboard-first workflow**: `⌘O` open, `⌘S` save, `⌘E` export,
   `⌘I` import files, `⇧⌘I` import folder, `Esc` dismiss.
 
 ## Run
 
-Requires macOS and a stable Rust toolchain. Full Xcode is not required: GPUI's
-Metal shaders are compiled at runtime (the `runtime_shaders` feature) so the
-Command Line Tools are enough.
+Runs on macOS 11+, Windows 10/11, and Linux with X11 or Wayland. Builds use Rust
+1.99.1. On macOS, full Xcode is not required: GPUI's Metal shaders are compiled
+at runtime (the `runtime_shaders` feature), so the Command Line Tools are
+enough. HEIC/RAW decoding still uses macOS ImageIO; other platforms import those
+files as placeholders.
 
 ```sh
 cargo run --release
@@ -60,16 +66,38 @@ Generate a sample project and two exported sheets for a design check:
 
 ```sh
 cargo run -p slate-core --example sample_sheet
-open target/sample
+inspect the outputs in target/sample
+```
+
+## Releases
+
+CI builds and tests macOS, Linux and Windows. A `v*` tag publishes:
+
+| Platform | Artifact |
+| --- | --- |
+| macOS (universal) | `slate-desktop-macos-universal.zip` containing `Slate.app` |
+| Linux x86_64 | `slate-desktop-linux-x86_64.tar.gz` |
+| Windows x86_64 | `slate-desktop-windows-x86_64.zip` |
+
+The macOS app is ad-hoc signed, not notarized. The release and CI workflows use
+only first-party GitHub Actions, pinned to full commit SHAs; there are no
+third-party actions.
+
+Tag a release from `main`:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ## Workflow
 
-1. **Import** with `FILES`, `FOLDER`, or by dropping photos into the window.
-   Imported photos are selected automatically and previews build in the
-   background.
+1. **Import** with **Import files**, **Import folder**, or by dropping photos
+   into the window. Imported photos are selected automatically and previews
+   build in the background.
 2. **Filter and select.** With no explicit selection, collated sheets use every
-   visible photo. `ALL / NONE / INV` change the explicit selection.
+   visible photo. **All**, **None** and **Invert** change the explicit
+   selection.
 3. **Tag and rename.** Batch operations apply to the selection, or to every
    visible photo when nothing is selected. Rename shows a full before/after list
    and refuses to apply when a target already exists.
@@ -105,7 +133,7 @@ SRW, 3FR) are decoded through ImageIO via `sips`, including embedded previews
 and orientation.
 
 A file that cannot be decoded is still imported. It appears as a
-`NO PREVIEW` cell and prints as a `MISSING` placeholder, so a batch is never
+“No preview” cell and prints as a “Missing” placeholder, so a batch is never
 silently dropped.
 
 ## Data and safety notes
@@ -113,7 +141,7 @@ silently dropped.
 - Renames are real filesystem renames, conflict-checked before applying. There
   is no undo.
 - Tags are stored in the project file, not written into EXIF/IPTC metadata.
-- `REMOVE FROM PROJECT` never deletes files from disk.
+- “Remove from project” never deletes files from disk.
 - Project files store absolute photo paths.
 - PDF labels use the built-in Helvetica and Courier fonts, so non-ASCII
   filenames are replaced with `?` in the PDF. The project keeps the real name.
@@ -123,12 +151,14 @@ silently dropped.
 
 ## Design
 
-The interface follows the U.S. Graphics Company principles: flat, dense, explicit
-state, thin rules, no rounded corners, no shadows, no decorative gradients. One
-vermilion accent marks selection and active work; everything else is paper,
-black and a warm grey. Labels and metadata are monospaced; sheet titles and
-photo names carry the hierarchy. The PDF uses the same language: a technical
-caption strip, a hairline grid and a compact header/footer.
+The interface is monochrome and high contrast: true black and white, neutral
+greys, hairline rules, no rounded corners and no decorative gradients. Restrained
+shadows lift only the paper preview and the confirmation modal. Labels use
+sentence case throughout; no copy is forced to uppercase.
+Metadata is monospaced and dense, while sheet titles and photo names carry the
+hierarchy. Light and dark modes follow the system appearance at launch and can
+be switched from the masthead. The PDF stays paper-white with a technical
+caption strip, hairline grid and compact header/footer.
 
 ## Architecture
 
@@ -166,6 +196,7 @@ cargo fmt --all -- --check
 - GPUI is pinned to `0.2.2`, the latest crates.io release.
 - No undo history, multi-window support or EXIF writing yet.
 - HEIC/RAW support is macOS-only.
+- macOS releases are ad-hoc signed, not notarized.
 - Saved sheets reference photo IDs; missing files export as placeholders.
 
 ## License

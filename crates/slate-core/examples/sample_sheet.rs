@@ -11,8 +11,8 @@ fn main() -> anyhow::Result<()> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/sample");
     std::fs::create_dir_all(&root)?;
 
-    let mut project = Project::new("STREET / WALK 26");
-    project.sheet.title = "STREET / WALK 26".into();
+    let mut project = Project::new("Street / Walk 26");
+    project.sheet.title = "Street / Walk 26".into();
     project.sheet.columns = 3;
     project.sheet.rows = 4;
     project.sheet.rotate = false;
@@ -52,7 +52,7 @@ fn main() -> anyhow::Result<()> {
             }
             color
         });
-        let name = format!("DSCF{:04}.jpg", 1200 + index);
+        let name = format!("street-walk-{:02}.jpg", index + 1);
         let path = root.join(&name);
         image.save(&path)?;
         let id = project.add_photo(path, width, height, 4_000_000);
@@ -87,7 +87,7 @@ fn main() -> anyhow::Result<()> {
     rotated.columns = 4;
     rotated.rows = 3;
     rotated.rotate = true;
-    rotated.title = "ROTATED / FIT".into();
+    rotated.title = "Rotated / fit".into();
     export_pdf(
         &project.name,
         &rotated,
@@ -99,7 +99,7 @@ fn main() -> anyhow::Result<()> {
     clean.captions = false;
     clean.index = true;
     clean.header = false;
-    clean.title = "INDEX ONLY".into();
+    clean.title = "Index only".into();
     export_pdf(
         &project.name,
         &clean,

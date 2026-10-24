@@ -179,7 +179,7 @@ fn draw_header(
     page_count: usize,
     photo_count: usize,
 ) {
-    let title = ascii_lossy(settings.title_or(project_name)).to_uppercase();
+    let title = ascii_lossy(settings.title_or(project_name));
     let title_width = layout.page_w_mm - layout.margin_mm * 2.0;
     let title = truncate_chars(&title, (title_width * MM_TO_PT / (13.0 * 0.58)) as usize);
     ops.extend(text_op(
@@ -193,7 +193,7 @@ fn draw_header(
     ));
 
     let meta = format!(
-        "CONTACT SHEET   {} PHOTOS   {} {}   {} x {}",
+        "Contact sheet   {} photos   {} {}   {} x {}",
         photo_count,
         settings.paper.label(),
         settings.orientation.label(),
@@ -210,7 +210,7 @@ fn draw_header(
         &meta,
     ));
 
-    let page_label = format!("SHEET {:02} / {:02}", page, page_count);
+    let page_label = format!("Sheet {:02} / {:02}", page, page_count);
     let field_width = layout.page_w_mm - layout.margin_mm * 2.0;
     let x = layout.margin_mm + field_width - page_label.chars().count() as f32 * 1.28;
     ops.extend(text_op(
@@ -253,8 +253,8 @@ fn draw_footer(
         HAIRLINE,
     ));
 
-    let project_label = ascii_lossy(project_name).to_uppercase();
-    let sheet_label = ascii_lossy(settings.title_or(project_name)).to_uppercase();
+    let project_label = ascii_lossy(project_name);
+    let sheet_label = ascii_lossy(settings.title_or(project_name));
     let label = if project_label == sheet_label {
         project_label
     } else {
@@ -272,7 +272,7 @@ fn draw_footer(
         &label,
     ));
 
-    let page_label = format!("PAGE {:02} / {:02}", page, page_count);
+    let page_label = format!("Page {:02} / {:02}", page, page_count);
     let x = layout.margin_mm + (layout.page_w_mm - layout.margin_mm * 2.0)
         - page_label.chars().count() as f32 * 1.28;
     ops.extend(text_op(
@@ -324,7 +324,7 @@ fn draw_photo(
                 6.0,
                 BuiltinFont::Courier,
                 TEXT_GREY,
-                "MISSING",
+                "Missing",
             ));
             return ImageOutcome::Missing(format!("{}: {error}", photo.file_name()));
         }
@@ -438,7 +438,7 @@ pub fn export_pdf(
                 7.0,
                 BuiltinFont::Courier,
                 TEXT_GREY,
-                "NO PHOTOS SELECTED",
+                "No photos selected",
             ));
         }
 

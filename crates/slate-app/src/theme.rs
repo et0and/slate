@@ -1,53 +1,93 @@
-//! Shared visual language: flat, dense, black and paper with one accent.
+//! Shared visual language: monochrome, high contrast, light and dark.
 
-use gpui::{Rgba, rgb, rgba};
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use gpui::{Rgba, rgb};
+
+#[cfg(target_os = "macos")]
 pub const FONT_UI: &str = "Helvetica Neue";
+#[cfg(target_os = "windows")]
+pub const FONT_UI: &str = "Segoe UI";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub const FONT_UI: &str = "DejaVu Sans";
+
+#[cfg(target_os = "macos")]
 pub const FONT_MONO: &str = "Menlo";
+#[cfg(target_os = "windows")]
+pub const FONT_MONO: &str = "Consolas";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub const FONT_MONO: &str = "DejaVu Sans Mono";
+
+static DARK: AtomicBool = AtomicBool::new(false);
+
+pub fn set_dark(dark: bool) {
+    DARK.store(dark, Ordering::Relaxed);
+}
+
+pub fn is_dark() -> bool {
+    DARK.load(Ordering::Relaxed)
+}
+
+fn tone(light: u32, dark: u32) -> Rgba {
+    if is_dark() { rgb(dark) } else { rgb(light) }
+}
 
 pub fn ink() -> Rgba {
-    rgb(0x111110)
+    tone(0x111111, 0xf3f3f1)
 }
 
 pub fn paper() -> Rgba {
-    rgb(0xfbfaf6)
+    tone(0xf6f6f4, 0x0b0b0c)
 }
 
 pub fn panel() -> Rgba {
-    rgb(0xf2f0e9)
+    tone(0xfbfbfa, 0x111113)
 }
 
-pub fn white() -> Rgba {
+pub fn surface() -> Rgba {
+    tone(0xffffff, 0x171719)
+}
+
+/// A sheet is paper: always white, in both interface appearances.
+pub fn sheet() -> Rgba {
     rgb(0xffffff)
 }
 
+pub fn sheet_ink() -> Rgba {
+    rgb(0x0a0a0a)
+}
+
+pub fn sheet_muted() -> Rgba {
+    rgb(0x555555)
+}
+
+pub fn sheet_photo() -> Rgba {
+    rgb(0xededed)
+}
+
+pub fn sheet_rule() -> Rgba {
+    rgb(0xd0d0d0)
+}
+
 pub fn muted() -> Rgba {
-    rgb(0x6f6c64)
+    tone(0x5f5f5c, 0xb3b3af)
 }
 
 pub fn faint() -> Rgba {
-    rgb(0xa8a49a)
+    tone(0x8b8b87, 0x858581)
 }
 
 pub fn rule() -> Rgba {
-    rgb(0xd8d4ca)
+    tone(0xe3e3df, 0x2a2a2c)
 }
 
-pub fn accent() -> Rgba {
-    rgb(0xe43d0f)
-}
-
+/// Quiet fill for hover, selection and disabled emphasis.
 pub fn accent_soft() -> Rgba {
-    rgba(0xe43d0f14)
-}
-
-pub fn danger() -> Rgba {
-    rgb(0xb42304)
+    tone(0xeeeeeb, 0x222224)
 }
 
 pub fn photo_bg() -> Rgba {
-    rgb(0xe8e5dd)
+    tone(0xefefec, 0x1d1d1f)
 }
 
-pub const MICRO: f32 = 9.0;
-pub const FIELD: f32 = 26.0;
+pub const FIELD: f32 = 30.0;

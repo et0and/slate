@@ -94,8 +94,8 @@ impl Paper {
         match self {
             Paper::A4 => "A4",
             Paper::A3 => "A3",
-            Paper::Letter => "LETTER",
-            Paper::Tabloid => "TABLOID",
+            Paper::Letter => "Letter",
+            Paper::Tabloid => "Tabloid",
         }
     }
 
@@ -118,8 +118,8 @@ pub enum Orientation {
 impl Orientation {
     pub fn label(self) -> &'static str {
         match self {
-            Orientation::Portrait => "PORTRAIT",
-            Orientation::Landscape => "LANDSCAPE",
+            Orientation::Portrait => "Portrait",
+            Orientation::Landscape => "Landscape",
         }
     }
 
@@ -227,7 +227,7 @@ pub struct Project {
 
 impl Default for Project {
     fn default() -> Self {
-        Self::new("UNTITLED")
+        Self::new("Untitled")
     }
 }
 
@@ -352,7 +352,7 @@ impl Project {
 
     pub fn normalize(&mut self) {
         if self.name.trim().is_empty() {
-            self.name = "UNTITLED".to_string();
+            self.name = "Untitled".to_string();
         }
         self.schema = if self.schema == 0 {
             SCHEMA_VERSION

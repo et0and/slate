@@ -1,4 +1,4 @@
-//! Left rail: library overview, filters, tags, batch rename and the log.
+//! Left rail: library overview, filters, tags, batch rename and activity.
 
 use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, prelude::*, px, rgba};
 
@@ -7,9 +7,7 @@ use slate_core::model::Filter;
 
 use crate::app::ContactSheet;
 use crate::theme;
-use crate::widgets::{
-    button, key_value, label, micro, mini_button, rule, section_header, text_button,
-};
+use crate::widgets::{button, label, metric, micro, mini_button, section_header, text_button};
 
 impl ContactSheet {
     pub(crate) fn render_sidebar(
@@ -25,118 +23,141 @@ impl ContactSheet {
         let fresh = !self.dirty && self.project_path.is_none();
 
         let project_block = div()
-            .px(px(10.0))
-            .py(px(9.0))
+            .px(px(14.0))
+            .pt(px(14.0))
+            .pb(px(12.0))
             .flex()
             .flex_col()
             .gap(px(3.0))
             .child(
                 div()
-                    .text_size(px(13.0))
-                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_size(px(15.0))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
                     .truncate()
-                    .child(self.project.name.to_uppercase()),
+                    .child(self.project.name.clone()),
             )
             .child(
                 div()
                     .font_family(theme::FONT_MONO)
-                    .text_size(px(8.0))
+                    .text_size(px(9.0))
                     .text_color(theme::faint())
                     .truncate()
                     .child(
                         self.project_path
                             .as_ref()
                             .map(|path| path.display().to_string())
-                            .unwrap_or_else(|| "NO PROJECT FILE".to_string()),
+                            .unwrap_or_else(|| "No project file".to_string()),
                     ),
             )
             .child(
                 div()
-                    .mt(px(4.0))
-                    .border_t_1()
-                    .border_color(theme::rule())
-                    .child(key_value("PHOTOS", format!("{photo_count:04}")))
-                    .child(key_value("SELECTED", format!("{selected_count:04}")))
-                    .child(key_value("TAGS", format!("{:04}", tag_counts.len())))
-                    .child(key_value(
-                        "STATE",
-                        if fresh {
-                            "EMPTY"
-                        } else if self.dirty {
-                            "UNSAVED"
-                        } else {
-                            "SAVED"
-                        },
-                    )),
+                    .mt(px(12.0))
+                    .flex()
+                    .items_start()
+                    .gap(px(20.0))
+                    .child(metric("Photos", format!("{photo_count}")))
+                    .child(metric("Selected", format!("{selected_count}")))
+                    .child(metric("Tags", format!("{tag_count_total}"))),
+            )
+            .child(
+                div()
+                    .mt(px(9.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(div().w(px(5.0)).h(px(5.0)).bg(if fresh || self.dirty {
+                        theme::faint()
+                    } else {
+                        theme::ink()
+                    }))
+                    .child(
+                        div()
+                            .font_family(theme::FONT_UI)
+                            .text_size(px(9.0))
+                            .text_color(theme::faint())
+                            .child(if fresh {
+                                "Empty"
+                            } else if self.dirty {
+                                "Unsaved changes"
+                            } else {
+                                "Saved"
+                            }),
+                    ),
             );
 
         let import_row = div()
-            .px(px(10.0))
-            .py(px(8.0))
+            .px(px(14.0))
+            .pb(px(14.0))
             .flex()
-            .gap(px(4.0))
+            .gap(px(6.0))
             .child(
-                button("sidebar-import-files", "FILES")
+                button("sidebar-import-files", "Import files")
                     .flex_1()
                     .on_click(cx.listener(|this, _, _, cx| this.import_prompt(false, cx))),
             )
             .child(
-                button("sidebar-import-folder", "FOLDER")
+                button("sidebar-import-folder", "Folder")
                     .flex_1()
                     .on_click(cx.listener(|this, _, _, cx| this.import_prompt(true, cx))),
             );
 
         let filter_block = div()
-            .px(px(10.0))
-            .py(px(8.0))
+            .px(px(14.0))
+            .py(px(12.0))
+            .border_t_1()
+            .border_color(theme::rule())
             .flex()
             .flex_col()
-            .gap(px(5.0))
+            .gap(px(8.0))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(label("FILTER"))
-                    .child(micro(format!("{:04} SHOWN", self.visible_count()))),
+                    .child(label("Filter"))
+                    .child(micro(format!("{} shown", self.visible_count()))),
             )
             .child(self.search_field.clone())
             .child(
                 div()
                     .flex()
-                    .gap(px(4.0))
+                    .items_center()
+                    .justify_between()
                     .child(
-                        button("sidebar-all", "ALL")
-                            .flex_1()
-                            .on_click(cx.listener(|this, _, _, cx| this.select_all_visible(cx))),
+                        div()
+                            .font_family(theme::FONT_UI)
+                            .text_size(px(9.0))
+                            .text_color(theme::faint())
+                            .child(format!("{selected_count} selected")),
                     )
                     .child(
-                        button("sidebar-none", "NONE")
-                            .flex_1()
-                            .on_click(cx.listener(|this, _, _, cx| this.deselect_all(cx))),
-                    )
-                    .child(
-                        button("sidebar-invert", "INV")
-                            .flex_1()
-                            .on_click(cx.listener(|this, _, _, cx| this.invert_visible(cx))),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(1.0))
+                            .child(text_button("sidebar-all", "All").on_click(
+                                cx.listener(|this, _, _, cx| this.select_all_visible(cx)),
+                            ))
+                            .child(
+                                text_button("sidebar-none", "None")
+                                    .on_click(cx.listener(|this, _, _, cx| this.deselect_all(cx))),
+                            )
+                            .child(
+                                text_button("sidebar-invert", "Invert").on_click(
+                                    cx.listener(|this, _, _, cx| this.invert_visible(cx)),
+                                ),
+                            ),
                     ),
             )
             .child(
-                text_button("remove-selected", "REMOVE FROM PROJECT / KEEPS FILES")
+                text_button("remove-selected", "Remove from project")
                     .on_click(cx.listener(|this, _, _, cx| this.remove_selected(cx))),
-            )
-            .child(
-                div()
-                    .font_family(theme::FONT_MONO)
-                    .text_size(px(8.0))
-                    .text_color(theme::faint())
-                    .child("NO SELECTION / SHEETS USE ALL VISIBLE"),
             );
 
         let mut filter_rows: Vec<AnyElement> = Vec::new();
         let is_all = matches!(self.filter, Filter::All);
         filter_rows.push(
-            filter_row("filter-all", "ALL IMAGES", photo_count, is_all)
+            filter_row("filter-all", "All images", photo_count, is_all)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.filter = Filter::All;
                     this.refresh_preview(cx);
@@ -146,7 +167,7 @@ impl ContactSheet {
         );
         let is_untagged = matches!(self.filter, Filter::Untagged);
         filter_rows.push(
-            filter_row("filter-untagged", "UNTAGGED", untagged, is_untagged)
+            filter_row("filter-untagged", "Untagged", untagged, is_untagged)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.filter = Filter::Untagged;
                     this.refresh_preview(cx);
@@ -174,43 +195,46 @@ impl ContactSheet {
         }
 
         let tags_block = div()
+            .border_t_1()
+            .border_color(theme::rule())
             .flex()
             .flex_col()
             .child(
                 div()
-                    .px(px(10.0))
-                    .py(px(6.0))
+                    .px(px(14.0))
+                    .pt(px(12.0))
+                    .pb(px(6.0))
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(label("FILTER BY TAG"))
-                    .child(micro(format!("{tag_count_total:02} TAGS"))),
+                    .child(label("Tags"))
+                    .child(micro(format!("{tag_count_total}"))),
             )
             .children(filter_rows)
             .child(
                 div()
-                    .px(px(10.0))
-                    .py(px(8.0))
+                    .px(px(14.0))
+                    .py(px(10.0))
                     .flex()
                     .flex_col()
-                    .gap(px(4.0))
+                    .gap(px(6.0))
                     .child(self.tag_field.clone())
                     .child(
                         div()
                             .flex()
-                            .gap(px(4.0))
+                            .items_center()
+                            .gap(px(2.0))
                             .child(
-                                button("tag-add", "ADD TAG").flex_1().on_click(
+                                button("tag-add", "Add tag").flex_1().on_click(
                                     cx.listener(|this, _, _, cx| this.apply_tag(cx, true)),
                                 ),
                             )
                             .child(
-                                button("tag-remove", "REMOVE")
-                                    .flex_1()
+                                text_button("tag-remove", "Remove")
                                     .on_click(cx.listener(|this, _, _, cx| this.remove_tag(cx))),
                             )
                             .child(
-                                text_button("tag-clear", "CLEAR")
+                                text_button("tag-clear", "Clear")
                                     .on_click(cx.listener(|this, _, _, cx| this.clear_tags(cx))),
                             ),
                     ),
@@ -224,40 +248,48 @@ impl ContactSheet {
             .map(|photo| {
                 batch::preview_name(photo, self.rename_options.start, &self.rename_options)
             })
-            .unwrap_or_else(|| "NO PHOTO IN SCOPE".to_string());
+            .unwrap_or_else(|| "No photo in scope".to_string());
 
         let start = self.rename_options.start;
         let padding = self.rename_options.padding;
         let rename_block = div()
-            .px(px(10.0))
-            .py(px(8.0))
+            .px(px(14.0))
+            .py(px(12.0))
+            .border_t_1()
+            .border_color(theme::rule())
             .flex()
             .flex_col()
-            .gap(px(4.0))
+            .gap(px(6.0))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(label("BATCH RENAME"))
-                    .child(micro(format!("{target_count:04} IN SCOPE"))),
+                    .child(label("Batch rename"))
+                    .child(micro(format!("{target_count} in scope"))),
             )
-            .child(label("PREFIX"))
+            .child(label("Prefix"))
             .child(self.prefix_field.clone())
-            .child(label("SUFFIX"))
+            .child(label("Suffix"))
             .child(self.suffix_field.clone())
             .child(
                 div()
                     .mt(px(2.0))
                     .flex()
                     .items_center()
-                    .gap(px(12.0))
+                    .gap(px(16.0))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(3.0))
-                            .child(label("START"))
+                            .gap(px(4.0))
+                            .child(
+                                div()
+                                    .font_family(theme::FONT_UI)
+                                    .text_size(px(9.0))
+                                    .text_color(theme::faint())
+                                    .child("Start"),
+                            )
                             .child(mini_button("start-minus", "−").on_click(cx.listener(
                                 |this, _, _, cx| {
                                     this.rename_options.start =
@@ -268,7 +300,7 @@ impl ContactSheet {
                             .child(
                                 div()
                                     .font_family(theme::FONT_MONO)
-                                    .text_size(px(9.0))
+                                    .text_size(px(9.5))
                                     .child(format!("{start:05}")),
                             )
                             .child(mini_button("start-plus", "+").on_click(cx.listener(
@@ -283,8 +315,14 @@ impl ContactSheet {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(3.0))
-                            .child(label("PAD"))
+                            .gap(px(4.0))
+                            .child(
+                                div()
+                                    .font_family(theme::FONT_UI)
+                                    .text_size(px(9.0))
+                                    .text_color(theme::faint())
+                                    .child("Pad"),
+                            )
                             .child(mini_button("pad-minus", "−").on_click(cx.listener(
                                 |this, _, _, cx| {
                                     this.rename_options.padding =
@@ -295,7 +333,7 @@ impl ContactSheet {
                             .child(
                                 div()
                                     .font_family(theme::FONT_MONO)
-                                    .text_size(px(9.0))
+                                    .text_size(px(9.5))
                                     .child(format!("{padding}")),
                             )
                             .child(mini_button("pad-plus", "+").on_click(cx.listener(
@@ -309,40 +347,46 @@ impl ContactSheet {
             )
             .child(
                 div()
-                    .mt(px(3.0))
+                    .mt(px(2.0))
                     .flex()
                     .flex_col()
-                    .gap(px(1.0))
-                    .child(label("NEXT NAME"))
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .font_family(theme::FONT_UI)
+                            .text_size(px(9.0))
+                            .text_color(theme::faint())
+                            .child("Next"),
+                    )
                     .child(
                         div()
                             .font_family(theme::FONT_MONO)
-                            .text_size(px(8.0))
-                            .text_color(theme::ink())
+                            .text_size(px(9.0))
+                            .text_color(theme::muted())
                             .truncate()
                             .child(sample),
                     ),
             )
             .child(
-                button("rename-preview", "PREVIEW RENAME")
+                button("rename-preview", "Preview rename")
                     .w_full()
                     .mt(px(2.0))
                     .on_click(cx.listener(|this, _, _, cx| this.preview_rename(cx))),
             );
 
         let log_block = div()
-            .px(px(10.0))
-            .py(px(8.0))
-            .flex()
-            .flex_col()
-            .gap(px(3.0))
+            .px(px(14.0))
+            .py(px(12.0))
             .border_t_1()
             .border_color(theme::rule())
-            .child(label("LOG"))
-            .children(self.log.iter().rev().take(7).map(|line| {
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .child(label("Activity"))
+            .children(self.log.iter().rev().take(4).map(|line| {
                 div()
                     .font_family(theme::FONT_MONO)
-                    .text_size(px(8.0))
+                    .text_size(px(8.5))
                     .text_color(theme::faint())
                     .truncate()
                     .child(line.clone())
@@ -350,7 +394,7 @@ impl ContactSheet {
             }));
 
         div()
-            .w(px(252.0))
+            .w(px(256.0))
             .flex_shrink_0()
             .h_full()
             .flex()
@@ -358,7 +402,7 @@ impl ContactSheet {
             .bg(theme::panel())
             .border_r_1()
             .border_color(theme::rule())
-            .child(section_header("01", "LIBRARY", format!("{photo_count:04}")))
+            .child(section_header("01", "Library", format!("{photo_count:04}")))
             .child(
                 div()
                     .id("sidebar-scroll")
@@ -366,13 +410,9 @@ impl ContactSheet {
                     .min_h(px(0.0))
                     .overflow_y_scroll()
                     .child(project_block)
-                    .child(rule())
                     .child(import_row)
-                    .child(rule())
                     .child(filter_block)
-                    .child(rule())
                     .child(tags_block)
-                    .child(rule())
                     .child(rename_block)
                     .child(log_block),
             )
@@ -388,20 +428,47 @@ fn filter_row(
 ) -> gpui::Stateful<gpui::Div> {
     let base = div()
         .id(id)
-        .h(px(20.0))
-        .px(px(10.0))
+        .h(px(28.0))
+        .px(px(14.0))
         .flex()
         .items_center()
         .justify_between()
+        .gap(px(8.0))
         .cursor_pointer()
-        .font_family(theme::FONT_MONO)
-        .text_size(px(8.0));
+        .font_family(theme::FONT_UI)
+        .text_size(px(10.0))
+        .text_color(if active { theme::ink() } else { theme::muted() })
+        .bg(if active {
+            theme::accent_soft()
+        } else {
+            rgba(0x00000000)
+        });
     let base = if active {
-        base.bg(theme::ink()).text_color(theme::paper())
+        base
     } else {
-        base.bg(rgba(0x00000000))
-            .text_color(theme::ink())
-            .hover(|style| style.bg(theme::accent_soft()))
+        base.hover(|style| style.bg(theme::accent_soft()).text_color(theme::ink()))
     };
-    base.child(name.to_string()).child(format!("{count:04}"))
+    base.child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(7.0))
+            .child(div().w(px(4.0)).h(px(4.0)).bg(if active {
+                theme::ink()
+            } else {
+                rgba(0x00000000)
+            }))
+            .child(name.to_string()),
+    )
+    .child(
+        div()
+            .font_family(theme::FONT_MONO)
+            .text_size(px(9.0))
+            .text_color(if active {
+                theme::muted()
+            } else {
+                theme::faint()
+            })
+            .child(format!("{count}")),
+    )
 }

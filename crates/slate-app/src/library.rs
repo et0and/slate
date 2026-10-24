@@ -1,6 +1,6 @@
 //! The image library grid.
 
-use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, img, prelude::*, px, rgba};
+use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, img, prelude::*, px};
 
 use crate::app::ContactSheet;
 use crate::theme;
@@ -18,46 +18,80 @@ impl ContactSheet {
             .filter(|index| self.selected.contains(&self.project.photos[**index].id))
             .count();
 
+        let filter_active = !matches!(&self.filter, slate_core::model::Filter::All);
+        let filter_label = self.filter_label();
+        let search = self.search.clone();
+        let has_query = filter_active || !search.is_empty();
+
         let toolbar = div()
-            .h(px(34.0))
+            .h(px(44.0))
             .flex_shrink_0()
-            .px(px(12.0))
+            .px(px(16.0))
             .flex()
             .items_center()
             .justify_between()
             .border_b_1()
-            .border_color(theme::ink())
+            .border_color(theme::rule())
             .bg(theme::paper())
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.0))
+                    .gap(px(9.0))
                     .child(
                         div()
                             .font_family(theme::FONT_MONO)
                             .text_size(px(9.0))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child("02 / IMAGES"),
+                            .text_color(theme::faint())
+                            .child("02"),
                     )
-                    .child(micro(self.filter_label()))
-                    .child(micro(if self.search.is_empty() {
-                        String::new()
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("Library"),
+                    )
+                    .child(
+                        div()
+                            .h(px(22.0))
+                            .px(px(8.0))
+                            .flex()
+                            .items_center()
+                            .bg(theme::accent_soft())
+                            .font_family(theme::FONT_UI)
+                            .text_size(px(9.0))
+                            .text_color(theme::muted())
+                            .child(filter_label),
+                    )
+                    .children(if has_query {
+                        Some(
+                            button("clear-filters", "Clear")
+                                .h(px(22.0))
+                                .px(px(8.0))
+                                .on_click(cx.listener(|this, _, _, cx| this.clear_filters(cx))),
+                        )
                     } else {
-                        format!("/ \"{}\"", self.search.to_uppercase())
-                    })),
+                        None
+                    })
+                    .children(if search.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            div()
+                                .font_family(theme::FONT_MONO)
+                                .text_size(px(9.0))
+                                .text_color(theme::faint())
+                                .child(format!("“{search}”")),
+                        )
+                    }),
             )
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(14.0))
-                    .child(micro(format!(
-                        "SHOWING {:04} / {:04}",
-                        visible.len(),
-                        self.project.photos.len()
-                    )))
-                    .child(micro(format!("SELECTED {:04}", selected_visible))),
+                    .child(micro(format!("{} images", visible.len())))
+                    .child(micro(format!("{selected_visible} selected"))),
             );
 
         let body: AnyElement = if self.project.photos.is_empty() {
@@ -72,12 +106,12 @@ impl ContactSheet {
                 let selected = self.selected.contains(&id);
                 let name = photo.file_name();
                 let dimensions = if photo.width == 0 || photo.height == 0 {
-                    "NO PREVIEW".to_string()
+                    "No preview".to_string()
                 } else {
-                    format!("{}×{}", photo.width, photo.height)
+                    format!("{} × {}", photo.width, photo.height)
                 };
                 let tags = if photo.tags.is_empty() {
-                    "NO TAGS".to_string()
+                    "No tags".to_string()
                 } else {
                     photo
                         .tags
@@ -104,20 +138,20 @@ impl ContactSheet {
                         .flex_col()
                         .items_center()
                         .justify_center()
-                        .gap(px(3.0))
+                        .gap(px(4.0))
                         .child(
                             div()
-                                .font_family(theme::FONT_MONO)
-                                .text_size(px(8.0))
-                                .text_color(theme::danger())
-                                .child("NO PREVIEW"),
+                                .font_family(theme::FONT_UI)
+                                .text_size(px(9.5))
+                                .text_color(theme::muted())
+                                .child("No preview"),
                         )
                         .child(
                             div()
                                 .font_family(theme::FONT_MONO)
-                                .text_size(px(8.0))
+                                .text_size(px(8.5))
                                 .text_color(theme::faint())
-                                .child("UNSUPPORTED OR MISSING"),
+                                .child("Unsupported or missing"),
                         )
                         .into_any_element()
                 } else {
@@ -126,72 +160,69 @@ impl ContactSheet {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .font_family(theme::FONT_MONO)
-                        .text_size(px(8.0))
+                        .font_family(theme::FONT_UI)
+                        .text_size(px(9.5))
                         .text_color(theme::faint())
-                        .child("LOADING")
+                        .child("Loading")
                         .into_any_element()
                 };
 
-                let inner = div()
-                    .w(px(174.0))
-                    .flex()
-                    .flex_col()
-                    .bg(theme::white())
-                    .border_1()
-                    .border_color(theme::rule())
+                let badge = selected.then(|| {
+                    div()
+                        .absolute()
+                        .top(px(8.0))
+                        .right(px(8.0))
+                        .w(px(18.0))
+                        .h(px(18.0))
+                        .bg(theme::ink())
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .font_family(theme::FONT_UI)
+                        .text_size(px(10.0))
+                        .text_color(theme::paper())
+                        .child("✓")
+                });
+
+                let cell = div()
+                    .id(ElementId::Name(SharedString::from(format!(
+                        "cell-{}",
+                        id.0
+                    ))))
+                    .w(px(188.0))
+                    .p(px(4.0))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(theme::accent_soft()))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_selected(id, cx)))
                     .child(
                         div()
+                            .relative()
                             .w_full()
-                            .h(px(132.0))
+                            .h(px(136.0))
+                            .overflow_hidden()
                             .bg(theme::photo_bg())
                             .flex()
                             .items_center()
                             .justify_center()
-                            .overflow_hidden()
-                            .child(preview),
+                            .child(preview)
+                            .children(badge),
                     )
                     .child(
                         div()
-                            .border_t_1()
-                            .border_color(theme::rule())
-                            .px(px(6.0))
-                            .py(px(4.0))
+                            .px(px(2.0))
+                            .pt(px(8.0))
                             .flex()
                             .flex_col()
-                            .gap(px(2.0))
+                            .gap(px(3.0))
                             .child(
                                 div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .child(
-                                        div()
-                                            .font_family(theme::FONT_MONO)
-                                            .text_size(px(8.0))
-                                            .text_color(if selected {
-                                                theme::accent()
-                                            } else {
-                                                theme::faint()
-                                            })
-                                            .child(if selected {
-                                                format!("■ {index_label}")
-                                            } else {
-                                                index_label.clone()
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .font_family(theme::FONT_MONO)
-                                            .text_size(px(8.0))
-                                            .text_color(theme::faint())
-                                            .child(dimensions),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .font_family(theme::FONT_MONO)
-                                    .text_size(px(9.0))
+                                    .font_family(theme::FONT_UI)
+                                    .font_weight(if selected {
+                                        gpui::FontWeight::MEDIUM
+                                    } else {
+                                        gpui::FontWeight::NORMAL
+                                    })
+                                    .text_size(px(10.5))
                                     .text_color(theme::ink())
                                     .truncate()
                                     .child(name),
@@ -201,56 +232,32 @@ impl ContactSheet {
                                     .flex()
                                     .items_center()
                                     .justify_between()
-                                    .gap(px(4.0))
+                                    .gap(px(6.0))
+                                    .font_family(theme::FONT_MONO)
+                                    .text_size(px(8.5))
+                                    .text_color(theme::faint())
                                     .child(
                                         div()
-                                            .font_family(theme::FONT_MONO)
-                                            .text_size(px(8.0))
-                                            .text_color(if photo.tags.is_empty() {
-                                                theme::faint()
-                                            } else {
-                                                theme::muted()
-                                            })
-                                            .flex_1()
-                                            .min_w(px(0.0))
                                             .truncate()
-                                            .child(tags),
+                                            .child(format!("{index_label}  {dimensions}")),
                                     )
-                                    .child(
-                                        div()
-                                            .font_family(theme::FONT_MONO)
-                                            .text_size(px(8.0))
-                                            .text_color(theme::faint())
-                                            .child(bytes),
-                                    ),
+                                    .child(bytes),
+                            )
+                            .child(
+                                div()
+                                    .font_family(theme::FONT_UI)
+                                    .text_size(px(9.0))
+                                    .text_color(if photo.tags.is_empty() {
+                                        theme::faint()
+                                    } else {
+                                        theme::muted()
+                                    })
+                                    .truncate()
+                                    .child(tags),
                             ),
                     );
 
-                let hover_border = if selected {
-                    theme::ink()
-                } else {
-                    theme::faint()
-                };
-
-                cells.push(
-                    div()
-                        .id(ElementId::Name(SharedString::from(format!(
-                            "cell-{}",
-                            id.0
-                        ))))
-                        .p(px(2.0))
-                        .border_1()
-                        .border_color(if selected {
-                            theme::ink()
-                        } else {
-                            rgba(0x00000000)
-                        })
-                        .cursor_pointer()
-                        .hover(move |style| style.border_color(hover_border))
-                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_selected(id, cx)))
-                        .child(inner)
-                        .into_any_element(),
-                );
+                cells.push(cell.into_any_element());
             }
 
             div()
@@ -258,8 +265,8 @@ impl ContactSheet {
                 .flex_1()
                 .min_h(px(0.0))
                 .overflow_y_scroll()
-                .p(px(14.0))
-                .child(div().flex().flex_wrap().gap(px(10.0)).children(cells))
+                .p(px(16.0))
+                .child(div().flex().flex_wrap().gap(px(14.0)).children(cells))
                 .into_any_element()
         };
 
@@ -281,60 +288,61 @@ impl ContactSheet {
             .flex()
             .items_center()
             .justify_center()
-            .p(px(40.0))
+            .p(px(48.0))
             .child(
                 div()
-                    .w(px(460.0))
+                    .w(px(420.0))
                     .flex()
                     .flex_col()
-                    .gap(px(12.0))
+                    .gap(px(14.0))
                     .child(
                         div()
                             .text_size(px(30.0))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child("NO PHOTOS."),
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("No photos yet."),
+                    )
+                    .child(
+                        div()
+                            .font_family(theme::FONT_UI)
+                            .text_size(px(11.0))
+                            .line_height(px(17.0))
+                            .text_color(theme::muted())
+                            .child(
+                                "Import a folder, choose files, or drop photos anywhere. Tag and rename in bulk, then lay out a contact sheet.",
+                            ),
                     )
                     .child(rule())
                     .child(
                         div()
-                            .font_family(theme::FONT_MONO)
-                            .text_size(px(9.0))
-                            .text_color(theme::muted())
-                            .child(
-                                "IMPORT FILES OR A FOLDER / DRAG PHOTOS ANYWHERE. TAG AND RENAME IN BULK, THEN BUILD A CONTACT SHEET.",
-                            ),
-                    )
-                    .child(
-                        div()
                             .flex()
-                            .gap(px(8.0))
-                            .mt(px(6.0))
+                            .gap(px(6.0))
+                            .mt(px(2.0))
                             .child(
-                                primary_button("empty-import-files", "IMPORT FILES")
+                                primary_button("empty-import-files", "Import files")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.import_prompt(false, cx)
                                     })),
                             )
                             .child(
-                                button("empty-import-folder", "IMPORT FOLDER")
+                                button("empty-import-folder", "Import folder")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.import_prompt(true, cx)
                                     })),
                             )
                             .child(
-                                button("empty-open", "OPEN PROJECT").on_click(
+                                button("empty-open", "Open project").on_click(
                                     cx.listener(|this, _, _, cx| this.open_project_prompt(cx)),
                                 ),
                             ),
                     )
                     .child(
                         div()
-                            .mt(px(10.0))
+                            .mt(px(8.0))
                             .font_family(theme::FONT_MONO)
-                            .text_size(px(8.0))
+                            .text_size(px(8.5))
                             .text_color(theme::faint())
                             .child(
-                                "JPG / JPEG / PNG / TIFF / WEBP / GIF / BMP / HEIC / DNG / CR2 / CR3 / NEF / ARW / RAF / RW2 / ORF / PEF / SRW",
+                                "JPEG · PNG · TIFF · WebP · GIF · BMP · HEIC · DNG · CR2 · CR3 · NEF · ARW · RAF · RW2 · ORF · PEF · SRW",
                             ),
                     ),
             )
@@ -347,27 +355,32 @@ impl ContactSheet {
             .flex()
             .items_center()
             .justify_center()
-            .p(px(40.0))
+            .p(px(48.0))
             .child(
                 div()
-                    .w(px(400.0))
+                    .w(px(380.0))
                     .flex()
                     .flex_col()
                     .gap(px(12.0))
                     .child(
                         div()
                             .text_size(px(26.0))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .child("NO MATCHES."),
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("No matches."),
                     )
-                    .child(rule())
-                    .child(micro(format!(
-                        "FILTER {} / SEARCH \"{}\"",
-                        self.filter_label(),
-                        self.search.to_uppercase()
-                    )))
                     .child(
-                        button("clear-filters", "CLEAR FILTERS")
+                        div()
+                            .font_family(theme::FONT_UI)
+                            .text_size(px(10.5))
+                            .text_color(theme::muted())
+                            .child(format!(
+                                "Filter {} / search “{}”",
+                                self.filter_label(),
+                                self.search
+                            )),
+                    )
+                    .child(
+                        button("clear-filters-empty", "Clear filters")
                             .on_click(cx.listener(|this, _, _, cx| this.clear_filters(cx))),
                     ),
             )

@@ -1,0 +1,191 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: macOS universal
+    runs-on: macos-latest
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust 1.99.1
+        shell: bash
+        run: rustup toolchain install 1.99.1 --profile minimal
+
+      - name: Build universal binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add --toolchain 1.99.1 aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --locked --target aarch64-apple-darwin -p slate-app
+          cargo build --release --locked --target x86_64-apple-darwin -p slate-app
+          lipo -create \
+            target/aarch64-apple-darwin/release/slate-desktop \
+            target/x86_64-apple-darwin/release/slate-desktop \
+            -output slate-desktop
+
+      - name: Package app
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then VERSION="0.1.0"; fi
+          APP="dist/Slate.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp slate-desktop "$APP/Contents/MacOS/slate-desktop"
+          cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleShortVersionString ${VERSION}" \
+            "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy \
+            -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" \
+            "$APP/Contents/Info.plist"
+          codesign --force --deep --sign - "$APP"
+          mkdir -p dist/package
+          cp -R "$APP" dist/package/
+          cp README.md LICENSE dist/package/
+          (cd dist/package && zip -q -r ../slate-desktop-macos-universal.zip Slate.app README.md LICENSE)
+          rm -rf dist/package
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slate-desktop-macos-universal
+          path: dist/*.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust 1.99.1
+        shell: bash
+        run: rustup toolchain install 1.99.1 --profile minimal
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb1-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxcb-randr0-dev \
+            libxcb-xtest0-dev \
+            libxcb-xkb-dev \
+            libxcb-render0-dev \
+            libxcb-xinput-dev \
+            libxcb-composite0-dev \
+            libxcb-damage0-dev
+
+      - name: Build
+        run: cargo build --release --locked -p slate-app
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          strip target/release/slate-desktop
+          mkdir -p dist/package
+          cp target/release/slate-desktop README.md LICENSE dist/package/
+          tar -czf dist/slate-desktop-linux-x86_64.tar.gz \
+            -C dist/package slate-desktop README.md LICENSE
+          rm -rf dist/package
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slate-desktop-linux-x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust 1.99.1
+        shell: bash
+        run: rustup toolchain install 1.99.1 --profile minimal
+
+      - name: Locate fxc.exe
+        shell: pwsh
+        run: |
+          $fxc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe" |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $fxc) {
+            throw "fxc.exe was not found in the Windows SDK"
+          }
+          "GPUI_FXC_PATH=$($fxc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build
+        run: cargo build --release --locked -p slate-app
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\package | Out-Null
+          Copy-Item target\release\slate-desktop.exe dist\package\
+          Copy-Item README.md, LICENSE dist\package\
+          Compress-Archive -Path dist\package\* `
+            -DestinationPath dist\slate-desktop-windows-x86_64.zip -Force
+          Remove-Item -Recurse -Force dist\package
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slate-desktop-windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "Slate Desktop $GITHUB_REF_NAME" \
+              --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber

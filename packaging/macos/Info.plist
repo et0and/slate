@@ -8,6 +8,10 @@
     <string>Slate</string>
     <key>CFBundleExecutable</key>
     <string>slate-desktop</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.et0and.slate-desktop</string>
     <key>CFBundleInfoDictionaryVersion</key>

@@ -21,7 +21,7 @@ use slate_core::pdf::{self, ExportSummary};
 use slate_core::store::{LocalStore, RecentProject};
 
 use crate::drive;
-use crate::drive_ui::{DriveDownload, DriveNotice, DrivePicker};
+use crate::drive_ui::{DriveDownload, DriveMode, DriveNotice, DrivePicker};
 use crate::history::{History, Snapshot};
 use crate::memory;
 use crate::panels::{DIVIDER_W, PanelLayout, ResizeTarget};
@@ -44,8 +44,33 @@ actions!(
         Undo,
         Redo,
         Dismiss,
+        SaveSheet,
+        InvertSelection,
+        RemoveSelected,
+        ResetPanels,
+        About,
+        ImportDrive,
+        ExportDrive,
+        LinkDrive,
+        UnlinkDrive,
+        HideSlate,
+        HideOthers,
+        OpenWebsite,
+        ReportIssue,
     ]
 );
+
+#[derive(Clone, PartialEq, gpui::Action)]
+#[action(no_json, namespace = contact_sheet)]
+pub(crate) struct OpenRecent {
+    pub path: PathBuf,
+}
+
+#[derive(Clone, PartialEq, gpui::Action)]
+#[action(no_json, namespace = contact_sheet)]
+pub(crate) struct SetTheme {
+    pub theme: theme::Theme,
+}
 
 const THUMB_CACHE: usize = 32;
 const THUMB_EDGE: u32 = 224;
@@ -186,7 +211,7 @@ impl ContactSheet {
         let store = LocalStore::default_location();
         let recent_projects = store.recent_projects(5).unwrap_or_default();
 
-        Self {
+        let this = Self {
             project: Project::new("Untitled"),
             project_path: None,
             dirty: false,
@@ -234,7 +259,9 @@ impl ContactSheet {
             prefix_field,
             suffix_field,
             tag_field,
-        }
+        };
+        this.sync_native_menus(cx);
+        this
     }
 
     // ----- queries -------------------------------------------------------
@@ -339,6 +366,7 @@ impl ContactSheet {
         }
         self.theme = theme;
         theme::set_theme(theme);
+        self.sync_native_menus(cx);
         let fields = [
             self.search_field.clone(),
             self.title_field.clone(),
@@ -925,6 +953,7 @@ impl ContactSheet {
                 self.selection_changed();
                 self.filter_changed();
                 self.remember_current_project();
+                self.sync_native_menus(cx);
                 self.log("File loaded");
                 self.set_status(format!("Opened {} photos", self.project.photos.len()));
                 self.refresh_preview();
@@ -972,6 +1001,7 @@ impl ContactSheet {
                 self.dirty = false;
                 self.history.mark_saved();
                 self.remember_current_project();
+                self.sync_native_menus(cx);
                 self.log("Write complete");
                 self.set_status(format!("Project written / {}", path.display()));
             }
@@ -1530,6 +1560,71 @@ impl Render for ContactSheet {
                 if !this.editing_text(window, cx) {
                     this.redo(cx);
                 }
+            }))
+            .on_action(cx.listener(|this, _: &SaveSheet, _, cx| {
+                this.close_menu(cx);
+                this.save_sheet(cx);
+            }))
+            .on_action(cx.listener(|this, _: &InvertSelection, _, cx| {
+                this.close_menu(cx);
+                this.invert_visible(cx);
+            }))
+            .on_action(cx.listener(|this, _: &RemoveSelected, _, cx| {
+                this.close_menu(cx);
+                this.remove_selected(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ResetPanels, _, cx| {
+                this.close_menu(cx);
+                this.panels.reset();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &About, _, cx| {
+                this.menu_open = None;
+                this.about_open = true;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ImportDrive, _, cx| {
+                if this.drive_account.is_some() {
+                    this.open_drive_picker(DriveMode::Import, cx);
+                } else {
+                    this.link_google_drive(cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ExportDrive, _, cx| {
+                if this.drive_account.is_some() {
+                    this.open_drive_picker(DriveMode::Export, cx);
+                } else {
+                    this.link_google_drive(cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &LinkDrive, _, cx| {
+                this.link_google_drive(cx);
+            }))
+            .on_action(cx.listener(|this, _: &UnlinkDrive, _, cx| {
+                this.unlink_google_drive(cx);
+            }))
+            .on_action(cx.listener(|this, action: &OpenRecent, _, cx| {
+                this.close_menu(cx);
+                this.open_project(action.path.clone(), cx);
+            }))
+            .on_action(cx.listener(|this, action: &SetTheme, _, cx| {
+                this.set_theme(action.theme, cx);
+            }))
+            .on_action(cx.listener(|this, _: &HideSlate, _, cx| {
+                this.close_menu(cx);
+                cx.hide();
+            }))
+            .on_action(cx.listener(|this, _: &HideOthers, _, cx| {
+                this.close_menu(cx);
+                cx.hide_other_apps();
+            }))
+            .on_action(cx.listener(|this, _: &OpenWebsite, _, cx| {
+                this.close_menu(cx);
+                cx.open_url("https://tom.so/work/slate");
+            }))
+            .on_action(cx.listener(|this, _: &ReportIssue, _, cx| {
+                this.close_menu(cx);
+                cx.open_url("https://github.com/et0and/slate-desktop/issues");
             }))
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
                 if this.drive_notice.is_some() {

@@ -65,6 +65,12 @@ impl ContactSheet {
             .into_any_element()
     }
 
+    #[cfg(target_os = "macos")]
+    pub(crate) fn render_topbar(&mut self, _cx: &mut Context<Self>) -> AnyElement {
+        div().into_any_element()
+    }
+
+    #[cfg(not(target_os = "macos"))]
     pub(crate) fn render_topbar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .h(px(theme::TOPBAR_H))

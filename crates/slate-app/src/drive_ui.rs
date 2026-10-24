@@ -117,6 +117,7 @@ impl ContactSheet {
                     Ok(account) => {
                         this.drive_account = Some(account);
                         this.drive_notice = None;
+                        this.sync_native_menus(cx);
                         this.log("Google Drive linked");
                         this.set_status("Google Drive linked");
                     }
@@ -142,6 +143,7 @@ impl ContactSheet {
                 self.drive_account = None;
                 self.drive_picker = None;
                 self.drive_notice = None;
+                self.sync_native_menus(cx);
                 self.log("Google Drive unlinked");
                 self.set_status("Google Drive unlinked");
             }

@@ -49,6 +49,7 @@ jobs:
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp slate-desktop "$APP/Contents/MacOS/slate-desktop"
           cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
+          cp packaging/macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
           /usr/libexec/PlistBuddy \
             -c "Set :CFBundleShortVersionString ${VERSION}" \
             "$APP/Contents/Info.plist"

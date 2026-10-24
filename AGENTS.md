@@ -26,7 +26,10 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - Keep the app single-window unless the whole state model is reworked.
 - `panels.rs` owns the drag-resizable rail geometry. Keep the centre at
   `CENTER_MIN` and clamp the widths on every render.
-- `menubar.rs` owns every in-window menu. Do not add native duplicate menus.
+- `menubar.rs` owns every menu. On macOS, build native menus with
+  `cx.set_menus` and hide the in-window topbar; on other platforms, keep the
+  in-window menus. Do not duplicate a command on the same platform. Sync the
+  native menus when recent projects, the theme or the Drive account changes.
 - `history.rs` snapshots project and selection before mutating actions. A
   successful file rename clears history; a save marks older snapshots dirty.
   Keep both invariants when adding commands.
@@ -82,6 +85,9 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   metadata. Drive downloads check `generation` before they touch the project.
 - `vendor/xattr` is a patched 0.2.3 crate: libc 0.2.191 removed `ENOATTR` on
   Linux. Remove the patch when `zed-async-tar` stops pulling xattr 0.2.
+
+- The macOS window title stays empty. Use the native app menu and native
+  command menus; do not set a visible window title.
 
 ## Style
 

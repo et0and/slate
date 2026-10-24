@@ -24,8 +24,8 @@ use gpui::{
 };
 
 use app::{
-    ContactSheet, DeselectPhotos, Dismiss, ExportSheet, ImportFiles, ImportFolder, OpenProject,
-    Quit, Redo, SaveAs, SaveProject, SelectAllPhotos, Undo,
+    ContactSheet, DeselectPhotos, Dismiss, ExportSheet, HideOthers, HideSlate, ImportFiles,
+    ImportFolder, OpenProject, Quit, Redo, SaveAs, SaveProject, SelectAllPhotos, Undo,
 };
 
 #[cfg(target_os = "macos")]
@@ -77,6 +77,8 @@ fn main() {
                     text_field::ShowCharacterPalette,
                     Some("TextField"),
                 ));
+                bindings.push(KeyBinding::new("cmd-h", HideSlate, None));
+                bindings.push(KeyBinding::new("cmd-alt-h", HideOthers, None));
                 bindings
             };
             cx.bind_keys(bindings);
@@ -89,7 +91,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(size(px(1080.0), px(720.0))),
                     titlebar: Some(TitlebarOptions {
-                        title: Some("Contact sheet".into()),
+                        title: Some("".into()),
                         appears_transparent: false,
                         ..Default::default()
                     }),

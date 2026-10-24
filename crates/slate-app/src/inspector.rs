@@ -1,13 +1,15 @@
 //! Right rail: live page preview, sheet settings and saved sheets.
 
-use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, img, prelude::*, px, rgba};
+use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, img, prelude::*, px};
 
 use slate_core::layout;
 
 use crate::app::ContactSheet;
+use crate::assets;
 use crate::theme;
 use crate::widgets::{
-    button, label, micro, mini_button, primary_button, section_header, text_button, toggle,
+    button, checkbox, group_label, icon, label, micro, mini_button, mono_text, setting_row,
+    stepper, ui_text,
 };
 
 const PREVIEW_WIDTH: f32 = 280.0;
@@ -39,7 +41,7 @@ impl ContactSheet {
                         .left(px(sheet_layout.margin_mm * scale))
                         .right(px(sheet_layout.margin_mm * scale))
                         .h(px(0.6))
-                        .bg(theme::sheet_ink())
+                        .bg(theme::sheet_rule())
                         .into_any_element(),
                 );
                 preview_children.push(
@@ -57,7 +59,9 @@ impl ContactSheet {
 
             for placement in &page.placements {
                 let photo = photos.get(placement.photo_index);
-                let image = photo.and_then(|photo| self.preview_image(photo.id, placement.rotated));
+                let image = photo.and_then(|photo| {
+                    self.preview_image(photo.id, photo.rotation(), placement.rotated)
+                });
                 let cell_x = placement.cell_x_mm * scale;
                 let cell_y = placement.cell_y_mm * scale;
                 let cell_w = sheet_layout.cell_w_mm * scale;
@@ -89,7 +93,7 @@ impl ContactSheet {
                         .w(px(cell_w))
                         .h(px(cell_h))
                         .border_1()
-                        .border_color(rgba(0x11111018))
+                        .border_color(theme::sheet_rule())
                         .child(
                             div()
                                 .absolute()
@@ -144,14 +148,11 @@ impl ContactSheet {
             preview_children.push(
                 div()
                     .absolute()
-                    .top(px(preview_height / 2.0 - 8.0))
+                    .top(px(preview_height / 2.0 - 10.0))
                     .w_full()
                     .flex()
                     .justify_center()
-                    .font_family(theme::FONT_UI)
-                    .text_size(px(9.0))
-                    .text_color(theme::sheet_muted())
-                    .child("No photos selected")
+                    .child(icon(assets::IMAGE_OFF, 20.0, theme::sheet_muted()))
                     .into_any_element(),
             );
         }
@@ -164,58 +165,53 @@ impl ContactSheet {
             .bg(theme::sheet())
             .border_1()
             .border_color(theme::rule())
-            .shadow_sm()
+            .shadow_lg()
             .children(preview_children);
 
+        let page_controls = div()
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .child(
+                mini_button("page-prev", assets::CHEVRON_LEFT).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        let page = this.current_page().saturating_sub(1);
+                        this.goto_page(page, cx);
+                    },
+                )),
+            )
+            .child(
+                mono_text(theme::TEXT_META, theme::faint())
+                    .w(px(46.0))
+                    .text_align(gpui::TextAlign::Center)
+                    .child(format!("{} / {}", current + 1, page_count)),
+            )
+            .child(
+                mini_button("page-next", assets::CHEVRON_RIGHT).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        let page =
+                            (this.current_page() + 1).min(this.page_count().saturating_sub(1));
+                        this.goto_page(page, cx);
+                    },
+                )),
+            );
+
         let preview_block = div()
-            .px(px(16.0))
+            .px(px(20.0))
             .pt(px(14.0))
-            .pb(px(10.0))
+            .pb(px(14.0))
             .flex()
             .flex_col()
-            .gap(px(8.0))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(label("Preview"))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(2.0))
-                            .child(mini_button("page-prev", "‹").on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    let page = this.current_page().saturating_sub(1);
-                                    this.goto_page(page, cx);
-                                },
-                            )))
-                            .child(
-                                div()
-                                    .px(px(4.0))
-                                    .font_family(theme::FONT_MONO)
-                                    .text_size(px(9.0))
-                                    .text_color(theme::faint())
-                                    .child(format!("Page {} of {}", current + 1, page_count)),
-                            )
-                            .child(mini_button("page-next", "›").on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    let page = (this.current_page() + 1)
-                                        .min(this.page_count().saturating_sub(1));
-                                    this.goto_page(page, cx);
-                                },
-                            ))),
-                    ),
-            )
+            .gap(px(10.0))
+            .child(div().flex().justify_end().child(page_controls))
             .child(div().w_full().flex().justify_center().child(preview));
 
         let title_block = div()
-            .px(px(16.0))
-            .pb(px(6.0))
+            .px(px(20.0))
+            .pb(px(10.0))
             .flex()
             .flex_col()
-            .gap(px(4.0))
+            .gap(px(5.0))
             .child(label("Title"))
             .child(self.title_field.clone());
 
@@ -228,48 +224,20 @@ impl ContactSheet {
             .flex()
             .items_center()
             .gap(px(12.0))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(2.0))
-                    .child(
-                        mini_button("cols-minus", "−")
-                            .on_click(cx.listener(|this, _, _, cx| this.nudge_columns(-1, cx))),
-                    )
-                    .child(
-                        div()
-                            .font_family(theme::FONT_MONO)
-                            .text_size(px(9.5))
-                            .text_color(theme::ink())
-                            .child(format!("{columns} col")),
-                    )
-                    .child(
-                        mini_button("cols-plus", "+")
-                            .on_click(cx.listener(|this, _, _, cx| this.nudge_columns(1, cx))),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(2.0))
-                    .child(
-                        mini_button("rows-minus", "−")
-                            .on_click(cx.listener(|this, _, _, cx| this.nudge_rows(-1, cx))),
-                    )
-                    .child(
-                        div()
-                            .font_family(theme::FONT_MONO)
-                            .text_size(px(9.5))
-                            .text_color(theme::ink())
-                            .child(format!("{rows} row")),
-                    )
-                    .child(
-                        mini_button("rows-plus", "+")
-                            .on_click(cx.listener(|this, _, _, cx| this.nudge_rows(1, cx))),
-                    ),
-            );
+            .child(stepper(
+                "cols-minus",
+                "cols-plus",
+                format!("{columns} col"),
+                cx.listener(|this, _, _, cx| this.nudge_columns(-1, cx)),
+                cx.listener(|this, _, _, cx| this.nudge_columns(1, cx)),
+            ))
+            .child(stepper(
+                "rows-minus",
+                "rows-plus",
+                format!("{rows} row"),
+                cx.listener(|this, _, _, cx| this.nudge_rows(-1, cx)),
+                cx.listener(|this, _, _, cx| this.nudge_rows(1, cx)),
+            ));
 
         let margin_control = stepper(
             "margin-minus",
@@ -290,72 +258,60 @@ impl ContactSheet {
         let settings = div()
             .flex()
             .flex_col()
-            .px(px(16.0))
-            .pb(px(8.0))
-            .gap(px(1.0))
-            .child(group_label("Layout"))
+            .pb(px(12.0))
+            .child(group_label("Layout").px(px(20.0)).pt(px(12.0)).pb(px(4.0)))
             .child(setting_row(
                 "Paper",
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(3.0))
+                    .gap(px(2.0))
                     .child(
-                        div()
-                            .font_family(theme::FONT_MONO)
-                            .text_size(px(9.5))
-                            .text_color(theme::ink())
+                        mono_text(theme::TEXT_BODY, theme::ink())
                             .child(self.project.sheet.paper.label()),
                     )
                     .child(
-                        mini_button("paper-next", "›")
+                        mini_button("paper-next", assets::CHEVRON_RIGHT)
                             .on_click(cx.listener(|this, _, _, cx| this.cycle_paper(cx))),
                     ),
             ))
             .child(setting_row(
                 "Orientation",
                 button("orientation-toggle", self.project.sheet.orientation.label())
-                    .h(px(24.0))
-                    .px(px(8.0))
+                    .h(px(26.0))
+                    .px(px(9.0))
+                    .text_size(px(theme::TEXT_META))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_orientation(cx))),
             ))
             .child(setting_row("Grid", grid_control))
             .child(setting_row("Margin", margin_control))
             .child(setting_row("Gutter", gutter_control))
-            .child(group_label("Marks"))
+            .child(group_label("Marks").px(px(20.0)).pt(px(12.0)).pb(px(4.0)))
             .child(setting_row(
                 "Captions",
-                toggle("captions-toggle", self.project.sheet.captions)
+                checkbox("captions-toggle", self.project.sheet.captions)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_captions(cx))),
             ))
             .child(setting_row(
                 "Index numbers",
-                toggle("index-toggle", self.project.sheet.index)
+                checkbox("index-toggle", self.project.sheet.index)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_index(cx))),
             ))
             .child(setting_row(
                 "Rotate to fit",
-                toggle("rotate-toggle", self.project.sheet.rotate)
+                checkbox("rotate-toggle", self.project.sheet.rotate)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_rotate(cx))),
             ))
             .child(setting_row(
                 "Header",
-                toggle("header-toggle", self.project.sheet.header)
+                checkbox("header-toggle", self.project.sheet.header)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_header(cx))),
             ))
             .child(setting_row(
                 "Footer",
-                toggle("footer-toggle", self.project.sheet.footer)
+                checkbox("footer-toggle", self.project.sheet.footer)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_footer(cx))),
-            ))
-            .child(
-                div()
-                    .py(px(6.0))
-                    .font_family(theme::FONT_MONO)
-                    .text_size(px(8.5))
-                    .text_color(theme::faint())
-                    .child(self.summary()),
-            );
+            ));
 
         let saved_sheets = self.project.saved_sheets.clone();
         let saved_count = saved_sheets.len();
@@ -365,8 +321,9 @@ impl ContactSheet {
             let name = sheet.name.clone();
             let settings = sheet.settings.clone();
             let count = sheet.photo_ids.len();
+            let photo_label = if count == 1 { "photo" } else { "photos" };
             let meta = format!(
-                "{} / {} × {} / {} photo(s)",
+                "{} / {} × {} / {} {photo_label}",
                 settings.paper.label(),
                 settings.columns,
                 settings.rows,
@@ -376,24 +333,20 @@ impl ContactSheet {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(3.0))
-                    .px(px(16.0))
-                    .py(px(9.0))
+                    .gap(px(5.0))
+                    .px(px(20.0))
+                    .py(px(10.0))
                     .border_b_1()
                     .border_color(theme::rule())
                     .child(
-                        div()
-                            .font_family(theme::FONT_UI)
-                            .text_size(px(10.0))
+                        ui_text(theme::TEXT_BODY, theme::ink())
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .truncate()
                             .child(name),
                     )
                     .child(
-                        div()
-                            .font_family(theme::FONT_MONO)
-                            .text_size(px(8.5))
-                            .text_color(theme::faint())
+                        mono_text(theme::TEXT_MICRO, theme::faint())
+                            .line_height(px(12.0))
                             .child(meta),
                     )
                     .child(
@@ -403,36 +356,36 @@ impl ContactSheet {
                             .items_center()
                             .gap(px(2.0))
                             .child(
-                                text_button(
+                                mini_button(
                                     ElementId::Name(SharedString::from(format!(
                                         "load-sheet-{}",
                                         id.0
                                     ))),
-                                    "Load",
+                                    assets::EXTERNAL_LINK,
                                 )
                                 .on_click(
                                     cx.listener(move |this, _, _, cx| this.load_sheet(id, cx)),
                                 ),
                             )
                             .child(
-                                text_button(
+                                mini_button(
                                     ElementId::Name(SharedString::from(format!(
                                         "export-sheet-{}",
                                         id.0
                                     ))),
-                                    "Export",
+                                    assets::DOWNLOAD,
                                 )
                                 .on_click(
                                     cx.listener(move |this, _, _, cx| this.export_saved(id, cx)),
                                 ),
                             )
                             .child(
-                                text_button(
+                                mini_button(
                                     ElementId::Name(SharedString::from(format!(
                                         "delete-sheet-{}",
                                         id.0
                                     ))),
-                                    "Delete",
+                                    assets::TRASH,
                                 )
                                 .on_click(
                                     cx.listener(move |this, _, _, cx| this.delete_sheet(id, cx)),
@@ -448,84 +401,37 @@ impl ContactSheet {
             .flex_col()
             .child(
                 div()
-                    .px(px(16.0))
-                    .pt(px(12.0))
-                    .pb(px(6.0))
+                    .px(px(20.0))
+                    .pt(px(14.0))
+                    .pb(px(8.0))
                     .flex()
                     .items_center()
                     .justify_between()
                     .border_t_1()
                     .border_color(theme::rule())
-                    .child(label("Saved sheets"))
+                    .child(group_label("Saved sheets"))
                     .child(micro(format!("{saved_count}"))),
             )
             .children(saved_rows)
             .children(if saved_count == 0 {
                 Some(
-                    div()
-                        .px(px(16.0))
-                        .pb(px(12.0))
-                        .font_family(theme::FONT_UI)
-                        .text_size(px(9.0))
-                        .text_color(theme::faint())
+                    ui_text(theme::TEXT_META, theme::faint())
+                        .px(px(20.0))
+                        .pb(px(14.0))
+                        .line_height(px(14.0))
                         .child("No saved sheets. Save a layout to reuse it."),
                 )
             } else {
                 None
             });
 
-        let export_button: AnyElement = if self.exporting.is_some() {
-            primary_button("export-pdf", "Exporting…").into_any_element()
-        } else if empty {
-            div()
-                .flex_1()
-                .h(px(30.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .border_1()
-                .border_color(theme::rule())
-                .font_family(theme::FONT_UI)
-                .text_size(px(10.5))
-                .text_color(theme::faint())
-                .child("Export PDF")
-                .into_any_element()
-        } else {
-            primary_button("export-pdf", "Export PDF")
-                .flex_1()
-                .on_click(cx.listener(|this, _, _, cx| this.export_current(cx)))
-                .into_any_element()
-        };
-
-        let action_bar = div()
-            .h(px(56.0))
-            .flex_shrink_0()
-            .px(px(16.0))
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .border_t_1()
-            .border_color(theme::rule())
-            .bg(theme::panel())
-            .child(
-                button("save-sheet", "Save sheet")
-                    .flex_1()
-                    .on_click(cx.listener(|this, _, _, cx| this.save_sheet(cx))),
-            )
-            .child(export_button);
-
         div()
-            .w(px(self.right_width))
+            .w(px(self.panels.right()))
             .flex_shrink_0()
             .h_full()
             .flex()
             .flex_col()
             .bg(theme::panel())
-            .child(section_header(
-                "03",
-                "Sheet",
-                format!("{} photos", photos.len()),
-            ))
             .child(
                 div()
                     .id("inspector-scroll")
@@ -537,66 +443,6 @@ impl ContactSheet {
                     .child(settings)
                     .child(saved_block),
             )
-            .child(action_bar)
             .into_any_element()
     }
-}
-
-fn group_label(text: &str) -> AnyElement {
-    div()
-        .mt(px(2.0))
-        .pt(px(8.0))
-        .pb(px(3.0))
-        .border_t_1()
-        .border_color(theme::rule())
-        .font_family(theme::FONT_UI)
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_size(px(9.0))
-        .text_color(theme::faint())
-        .child(text.to_string())
-        .into_any_element()
-}
-
-fn setting_row(text: &str, control: impl IntoElement) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .min_h(px(30.0))
-        .border_b_1()
-        .border_color(theme::rule())
-        .child(
-            div()
-                .font_family(theme::FONT_UI)
-                .text_size(px(9.5))
-                .text_color(theme::muted())
-                .child(text.to_string()),
-        )
-        .child(control)
-        .into_any_element()
-}
-
-fn stepper(
-    minus_id: &'static str,
-    plus_id: &'static str,
-    value: String,
-    on_minus: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    on_plus: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(2.0))
-        .child(mini_button(minus_id, "−").on_click(on_minus))
-        .child(
-            div()
-                .font_family(theme::FONT_MONO)
-                .text_size(px(9.5))
-                .text_color(theme::ink())
-                .w(px(38.0))
-                .text_align(gpui::TextAlign::Center)
-                .child(value),
-        )
-        .child(mini_button(plus_id, "+").on_click(on_plus))
-        .into_any_element()
 }

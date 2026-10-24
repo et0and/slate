@@ -1,12 +1,10 @@
-//! Window chrome: masthead with project state and primary commands.
+//! Window chrome: primary commands and status.
 
-use gpui::{AnyElement, Context, div, prelude::*, px};
+use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
 
 use crate::app::ContactSheet;
 use crate::theme;
-use crate::widgets::{
-    command_button, metric, micro, primary_command_button, shortcut_label, text_button,
-};
+use crate::widgets::ui_text;
 
 impl ContactSheet {
     pub(crate) fn render_statusbar(&self) -> AnyElement {
@@ -15,9 +13,16 @@ impl ContactSheet {
             .as_ref()
             .map(|state| format!("Importing {}/{}", state.done, state.total));
         let left = busy.unwrap_or_else(|| self.status.clone());
+        let saved = if self.dirty {
+            "Unsaved changes"
+        } else if self.project_path.is_some() {
+            "Saved"
+        } else {
+            "Not saved"
+        };
 
         div()
-            .h(px(28.0))
+            .h(px(theme::STATUS_H))
             .flex_shrink_0()
             .border_t_1()
             .border_color(theme::rule())
@@ -25,147 +30,48 @@ impl ContactSheet {
             .flex()
             .items_center()
             .justify_between()
-            .px(px(14.0))
+            .px(px(18.0))
             .child(
                 div()
                     .flex()
+                    .flex_1()
+                    .min_w(px(0.0))
                     .items_center()
-                    .gap(px(8.0))
-                    .child(div().w(px(5.0)).h(px(5.0)).bg(if self.exporting.is_some() {
-                        theme::muted()
-                    } else {
-                        theme::ink()
-                    }))
+                    .gap(px(9.0))
                     .child(
                         div()
-                            .font_family(theme::FONT_UI)
-                            .text_size(px(9.5))
-                            .text_color(theme::muted())
+                            .font_family(theme::FONT_MONO)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(theme::TEXT_BODY))
+                            .text_color(if self.exporting.is_some() {
+                                theme::muted()
+                            } else {
+                                theme::ink()
+                            })
+                            .child(">"),
+                    )
+                    .child(
+                        ui_text(theme::TEXT_META, theme::muted())
                             .truncate()
                             .child(left),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(16.0))
-                    .child(
-                        div()
-                            .font_family(theme::FONT_UI)
-                            .text_size(px(9.0))
-                            .text_color(theme::faint())
-                            .child(if self.dirty {
-                                "Project unsaved"
-                            } else if self.project_path.is_some() {
-                                "Project saved"
-                            } else {
-                                "Project not saved"
-                            }),
-                    )
-                    .child(micro(shortcut_hint())),
-            )
+            .child(ui_text(theme::TEXT_META, theme::faint()).child(saved))
             .into_any_element()
     }
 
     pub(crate) fn render_topbar(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let project = div()
-            .flex_1()
-            .min_w(px(0.0))
-            .pl(px(16.0))
-            .pr(px(16.0))
-            .flex()
-            .flex_col()
-            .gap(px(2.0))
-            .child(
-                div()
-                    .text_size(px(13.0))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .truncate()
-                    .child(self.project.name.clone()),
-            )
-            .child(
-                div()
-                    .font_family(theme::FONT_MONO)
-                    .text_size(px(9.0))
-                    .text_color(theme::faint())
-                    .truncate()
-                    .child(
-                        self.project_path
-                            .as_ref()
-                            .map(|path| path.display().to_string())
-                            .unwrap_or_else(|| "Unsaved project".to_string()),
-                    ),
-            );
-
-        let stats = div()
-            .flex()
-            .items_center()
-            .gap(px(22.0))
-            .px(px(16.0))
-            .child(metric("Photos", format!("{}", self.project.photos.len())))
-            .child(metric("Selected", format!("{}", self.selected.len())))
-            .child(metric(
-                "Sheets",
-                format!("{}", self.project.saved_sheets.len()),
-            ))
-            .child(metric("Pages", format!("{}", self.display_page_count())));
-
-        let actions = div()
-            .flex()
-            .items_center()
-            .gap(px(4.0))
-            .px(px(14.0))
-            .h_full()
-            .border_l_1()
-            .border_color(theme::rule())
-            .child(
-                text_button(
-                    "top-appearance",
-                    if self.dark { "Light mode" } else { "Dark mode" },
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_appearance(cx))),
-            )
-            .child(div().w(px(1.0)).h(px(16.0)).bg(theme::rule()).mx(px(3.0)))
-            .child(
-                command_button("top-open", "Open", shortcut_label("O"))
-                    .on_click(cx.listener(|this, _, _, cx| this.open_project_prompt(cx))),
-            )
-            .child(
-                command_button(
-                    "top-save",
-                    if self.dirty { "Save •" } else { "Save" },
-                    shortcut_label("S"),
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.save_project(cx))),
-            )
-            .child(
-                primary_command_button("top-export", "Export PDF", shortcut_label("E"))
-                    .on_click(cx.listener(|this, _, _, cx| this.export_current(cx))),
-            );
-
         div()
-            .h(px(56.0))
+            .h(px(theme::TOPBAR_H))
             .flex_shrink_0()
             .flex()
             .items_center()
+            .px(px(8.0))
             .bg(theme::paper())
             .border_b_1()
             .border_color(theme::rule())
-            .child(project)
-            .child(stats)
-            .child(actions)
+            .shadow_sm()
+            .child(self.render_menubar(cx))
             .into_any_element()
-    }
-}
-
-fn shortcut_hint() -> &'static str {
-    #[cfg(target_os = "macos")]
-    {
-        "⌘S save   ⌘O open   ⌘E export"
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        "Ctrl+S save   Ctrl+O open   Ctrl+E export"
     }
 }

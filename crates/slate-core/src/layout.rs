@@ -247,6 +247,7 @@ mod tests {
             height,
             bytes: 0,
             tags: vec![],
+            rotation: 0,
         }
     }
 

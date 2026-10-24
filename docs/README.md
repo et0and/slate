@@ -1,21 +1,24 @@
 # README imagery
 
 - `example-sheet.jpg` and `example-rotated.jpg` are real PDF exports produced by
-  `cargo run -p slate-core --example sample_sheet`.
+  `cargo run -p slate-core --example sample_sheet` from the Unsplash photographs
+  in `assets/sample`.
 - `app-preview-light.jpg` and `app-preview-dark.jpg` are interface previews
   rendered from `ui-preview.html`, which mirrors the shipped GPUI layout and
-  theme. They are not live window captures: the macOS session used to build
+  theme. `menu-preview.jpg` is the same preview in One Dark with the View menu
+  open. They are not live window captures: the macOS session used to build
   this repository was locked, so macOS screen capture was unavailable.
 
-The preview HTML reads the generated photos and PDF thumbnail from
-`target/sample`. Create them first:
+The preview HTML reads photographs from `assets/sample` and the PDF thumbnail
+from `target/sample`. Create the thumbnail first:
 
 ```sh
 cargo run -p slate-core --example sample_sheet
 qlmanage -t -s 1400 -o target/sample target/sample/sample.pdf
 ```
 
-Then regenerate the interface preview with Chrome:
+The HTML loads the bundled Geist faces from `assets/fonts`. Regenerate the
+interface preview with Chrome:
 
 ```sh
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
@@ -36,4 +39,28 @@ sips -s format jpeg -s formatOptions 85 -Z 1800 \
   /tmp/slate-light.png --out docs/app-preview-light.jpg
 sips -s format jpeg -s formatOptions 85 -Z 1800 \
   /tmp/slate-dark.png --out docs/app-preview-dark.jpg
+```
+
+Capture the open View menu in One Dark:
+
+```sh
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --disable-gpu --hide-scrollbars \
+  --force-device-scale-factor=2 --window-size=1440,1120 \
+  --allow-file-access-from-files \
+  --screenshot=/tmp/slate-menu.png \
+  "file://$PWD/docs/ui-preview.html?theme=one-dark&menu=view"
+
+sips -s format jpeg -s formatOptions 85 -Z 1800 \
+  /tmp/slate-menu.png --out docs/menu-preview.jpg
+```
+
+Convert the example PDFs to the README JPEGs:
+
+```sh
+qlmanage -t -s 1400 -o target/sample target/sample/sample-rotated.pdf
+sips -s format jpeg -s formatOptions 88 \
+  target/sample/sample.pdf.png --out docs/example-sheet.jpg
+sips -s format jpeg -s formatOptions 88 \
+  target/sample/sample-rotated.pdf.png --out docs/example-rotated.jpg
 ```

@@ -12,15 +12,21 @@ and save the project or a sheet preset to export again later.
 
 ![Slate Desktop in dark mode](docs/app-preview-dark.jpg)
 
-The workspace in light and dark modes: library grid, tag filters, batch rename,
-live page preview and sheet controls.
+The workspace in light and dark modes: project and filters, the library grid,
+batch rename, live page preview and sheet controls. The first panel starts with
+the project name, file path and selected count; the topbar is only the menu bar.
+All global commands live there, so the panels do not repeat action buttons.
+
+![View menu in One Dark](docs/menu-preview.jpg)
+
+*The View menu with Light, Dark, One Dark, Monokai and Catppuccin. File, Edit,
+History and Help sit beside it; all global commands are in the menu bar.*
 
 ## Sheet output
 
 ![Example exported contact sheet](docs/example-sheet.jpg)
 
-*Real PDF output, using synthetic frames from the included `sample_sheet`
-example.*
+*Real PDF output, using the Unsplash sample photographs in `assets/sample`.*
 
 ![A4 landscape sheet with rotate to fit](docs/example-rotated.jpg)
 
@@ -31,8 +37,21 @@ example.*
 - **Bulk import** files and folders, recursively. Drag and drop works too.
 - **Batch operations** on the current selection: pattern rename on disk, add and
   remove tags, clear tags, remove photos from the project.
+- **Undo and redo** for project edits and sheet settings, up to 40 steps.
+  Renames clear the history because disk changes cannot be reversed safely.
+- **Desktop menu bar** with File, Edit, View, History and Help menus: open,
+  save and save as, import, export, save sheet, undo and redo, selection,
+  themes, reset panel widths, session history and about. There are no duplicate
+  toolbar buttons for these commands.
+- **Palettes**: Light and Dark are the monochrome defaults and follow the system
+  appearance at launch. One Dark, Monokai and Catppuccin are available under
+  View; their accent colours appear only in selected states and primary
+  controls.
 - **Filter** by tag or filename and switch between all, tagged and untagged
   images.
+- **Per-photo rotation** from the control on each thumbnail, left of the
+  selection tick. Quarter turns are stored in the project and applied to the
+  preview and PDF.
 - **Sheet editor** with a live page preview: paper, orientation, columns, rows,
   margins, gutters, filenames, index numbers, rotate-to-fit, header and footer.
 - **Resizable panels**: drag the vertical dividers to widen the library or sheet
@@ -41,11 +60,11 @@ example.*
   size. No layers, no transparency.
 - **Projects and saved sheets** stored as plain JSON (`.contactsheet`), so a
   sheet can be reopened and exported later.
-- **Light and dark modes**, monochrome and high contrast. The app follows the
-  system appearance at launch and switches from the masthead.
-- **One-window, keyboard-first workflow**: open, save and export shortcuts, plus
-  import, select-all and dismiss. macOS uses `⌘`; Windows and Linux use `Ctrl`.
-  The status bar shows the active platform's shortcuts.
+- **Local catalogue** in SQLite for recent projects: name, path, photo count and
+  last update time. The catalogue never replaces the portable project file.
+- **One-window, keyboard-first workflow**: open, save, save as, export and undo
+  shortcuts, plus import, select-all and dismiss. macOS uses `⌘`; Windows and
+  Linux use `Ctrl`. Menus show the active platform's hints.
 
 ## Run
 
@@ -69,7 +88,7 @@ Generate a sample project and two exported sheets for a design check:
 
 ```sh
 cargo run -p slate-core --example sample_sheet
-inspect the outputs in target/sample
+# outputs are in target/sample
 ```
 
 ## Releases
@@ -95,14 +114,14 @@ git push origin v0.1.0
 
 ## Workflow
 
-1. **Import** with **Import files**, **Import folder**, or by dropping photos
-   into the window. Imported photos are selected automatically and previews
-   build in the background.
+1. **Import** from **File > Import files** / **Import folder**, or by dropping
+   photos into the window. Imported photos are selected automatically and
+   previews build in the background.
 2. **Filter and select.** With no explicit selection, collated sheets use every
-   visible photo. **All**, **None** and **Invert** change the explicit
-   selection.
+   visible photo. **Edit > Select all visible**, **Deselect all** and
+   **Invert selection** change the explicit selection.
 3. **Tag and rename.** Batch operations apply to the selection, or to every
-   visible photo when nothing is selected. Rename shows a full before/after list
+   visible photo when nothing is selected. Review shows a full before/after list
    and refuses to apply when a target already exists.
 4. **Build the sheet** in the right rail. The preview updates immediately,
    including rotate-to-fit.
@@ -135,14 +154,29 @@ On macOS, HEIC/HEIF and camera RAW (DNG, CR2, CR3, NEF, ARW, RAF, RW2, ORF, PEF,
 SRW, 3FR) are decoded through ImageIO via `sips`, including embedded previews
 and orientation.
 
-A file that cannot be decoded is still imported. It appears as a
-“No preview” cell and prints as a “Missing” placeholder, so a batch is never
-silently dropped.
+A file that cannot be decoded is still imported. It gets a placeholder icon in
+the grid and prints as a “Missing” placeholder, so a batch is never silently
+dropped.
+
+## Local metadata
+
+Projects stay as portable `.contactsheet` documents. The app also keeps a local
+SQLite catalogue of the projects it has opened or saved: name, path, photo count
+and last update. **File** lists those recent projects. The database lives in the
+platform data directory:
+
+- macOS: `~/Library/Application Support/slate-desktop/metadata.sqlite3`
+- Windows: `%APPDATA%\slate-desktop\metadata.sqlite3`
+- Linux: `$XDG_DATA_HOME/slate-desktop/metadata.sqlite3` or
+  `~/.local/share/slate-desktop/metadata.sqlite3`
+
+Set `SLATE_DATA_DIR` to override the directory for development or tests.
 
 ## Data and safety notes
 
 - Renames are real filesystem renames, conflict-checked before applying. There
-  is no undo.
+  is no undo for the disk operation; the project history is cleared after a
+  successful rename.
 - Tags are stored in the project file, not written into EXIF/IPTC metadata.
 - “Remove from project” never deletes files from disk.
 - Project files store absolute photo paths.
@@ -155,13 +189,17 @@ silently dropped.
 ## Design
 
 The interface is monochrome and high contrast, with a terminal-inspired,
-dense table language: one monospaced family, hairline rules, square controls and
-no rounded corners. Restrained shadows lift only the paper preview and the
-confirmation modal. Labels use sentence case throughout; no copy is forced to
-uppercase. Shortcut hints sit in the action bar and status line, and the library
-and sheet rails are drag-resizable. Light and dark modes follow the system appearance at launch and can
-be switched from the masthead. The PDF stays paper-white with a technical
-caption strip, hairline grid and compact header/footer.
+dense table language: Geist for names and actions, Geist Mono for data and
+shortcut hints, hairline rules, square controls, SVG icons and no rounded
+corners. Shadows lift the topbar, menus, photo frames, paper preview and
+modals. Labels use sentence case throughout; no copy is forced to uppercase and
+no label or action is repeated on screen. The menubar exposes the global
+command set; the left, centre and right rails have no panel headings and no
+duplicate action buttons. Selected counts live with the project. The library
+and sheet rails are drag-resizable. Light and Dark are monochrome; One Dark,
+Monokai and Catppuccin add their palette accent only to selected states and
+primary controls. The PDF stays paper-white with a technical caption strip,
+hairline grid and compact header/footer.
 
 ## Architecture
 
@@ -172,6 +210,7 @@ crates/slate-core/     GUI-free engine
   batch.rs             rename planning/apply, tag normalisation
   layout.rs            page geometry and pagination
   pdf.rs               flat PDF renderer
+  store.rs             local SQLite project catalogue
 crates/slate-app/      GPUI desktop shell
   app.rs               state, async workflows, dialogs, selection
   text_field.rs        single-line text field (IME, selection, clipboard)
@@ -179,7 +218,12 @@ crates/slate-app/      GPUI desktop shell
   sidebar.rs           filters, tags, batch rename, log
   inspector.rs         page preview and sheet settings
   overlay.rs           rename confirmation
-  chrome.rs            masthead and status bar
+  chrome.rs            menubar container and status bar
+  menubar.rs           File, Edit, View, History and Help menus
+  history.rs           bounded undo and redo snapshots
+  panels.rs            resizable rail geometry
+  widgets.rs           shared controls and type styles
+  assets.rs            bundled Geist fonts and SVG icons
   theme.rs             colours and type scale
 ```
 
@@ -197,10 +241,19 @@ cargo fmt --all -- --check
 ## Limits
 
 - GPUI is pinned to `0.2.2`, the latest crates.io release.
-- No undo history, multi-window support or EXIF writing yet.
+- Undo is bounded to 40 project snapshots. A file rename clears it.
+- Theme choice applies to the current session.
+- No multi-window support or EXIF writing yet.
 - HEIC/RAW support is macOS-only.
 - macOS releases are ad-hoc signed, not notarized.
 - Saved sheets reference photo IDs; missing files export as placeholders.
+
+## Bundled assets
+
+- Geist and Geist Mono are bundled under the SIL Open Font License. See
+  `assets/OFL.txt`.
+- Sample photographs in `assets/sample` are from Unsplash under the Unsplash
+  License. See `assets/sample/ATTRIBUTION.md`.
 
 ## License
 

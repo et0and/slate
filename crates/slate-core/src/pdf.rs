@@ -229,15 +229,14 @@ fn draw_header(
         rule_y,
         layout.page_w_mm - layout.margin_mm,
         rule_y,
-        0.6,
-        (0.04, 0.04, 0.04),
+        0.4,
+        HAIRLINE,
     ));
 }
 
 fn draw_footer(
     ops: &mut Vec<Op>,
     layout: &SheetLayout,
-    settings: &SheetSettings,
     project_name: &str,
     page: usize,
     page_count: usize,
@@ -253,13 +252,7 @@ fn draw_footer(
         HAIRLINE,
     ));
 
-    let project_label = ascii_lossy(project_name);
-    let sheet_label = ascii_lossy(settings.title_or(project_name));
-    let label = if project_label == sheet_label {
-        project_label
-    } else {
-        format!("{project_label}   /   {sheet_label}")
-    };
+    let label = ascii_lossy(project_name);
     let label_width = layout.page_w_mm - layout.margin_mm * 2.0 - 40.0;
     let label = truncate_courier(&label, label_width, 6.0);
     ops.extend(text_op(
@@ -330,11 +323,13 @@ fn draw_photo(
         }
     };
 
-    let image = if placement.rotated {
-        image.rotate90()
-    } else {
-        image
-    };
+    let mut image = image;
+    for _ in 0..photo.rotation() {
+        image = image.rotate90();
+    }
+    if placement.rotated {
+        image = image.rotate90();
+    }
 
     let target_w = ((placement.image_w_mm * DPI) / 25.4).ceil() as u32;
     let target_h = ((placement.image_h_mm * DPI) / 25.4).ceil() as u32;
@@ -460,7 +455,6 @@ pub fn export_pdf(
             draw_footer(
                 &mut ops,
                 &plan.layout,
-                settings,
                 project_name,
                 page.number,
                 page_count,
@@ -542,6 +536,7 @@ mod tests {
             height,
             bytes: 1,
             tags: vec![],
+            rotation: 0,
         }
     }
 

@@ -34,6 +34,9 @@ pub struct Photo {
     pub bytes: u64,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// User rotation in clockwise quarter turns.
+    #[serde(default)]
+    pub rotation: u8,
 }
 
 impl Photo {
@@ -51,11 +54,28 @@ impl Photo {
             .unwrap_or_default()
     }
 
+    pub fn rotation(&self) -> u8 {
+        self.rotation % 4
+    }
+
+    pub fn rotate_clockwise(&mut self) {
+        self.rotation = (self.rotation + 1) % 4;
+    }
+
+    pub fn oriented_size(&self) -> (u32, u32) {
+        if self.rotation().is_multiple_of(2) {
+            (self.width, self.height)
+        } else {
+            (self.height, self.width)
+        }
+    }
+
     pub fn aspect(&self) -> f32 {
-        if self.height == 0 {
+        let (width, height) = self.oriented_size();
+        if height == 0 {
             1.0
         } else {
-            self.width as f32 / self.height as f32
+            width as f32 / height as f32
         }
     }
 
@@ -64,7 +84,8 @@ impl Photo {
     }
 
     pub fn is_portrait(&self) -> bool {
-        self.height > self.width
+        let (width, height) = self.oriented_size();
+        height > width
     }
 }
 
@@ -259,6 +280,7 @@ impl Project {
             height,
             bytes,
             tags: Vec::new(),
+            rotation: 0,
         });
         id
     }
@@ -363,6 +385,9 @@ impl Project {
         for sheet in &mut self.saved_sheets {
             sheet.settings.normalize();
         }
+        for photo in &mut self.photos {
+            photo.rotation %= 4;
+        }
         self.next_photo_id = self.next_photo_id.max(
             self.photos
                 .iter()
@@ -458,6 +483,7 @@ mod tests {
         let id = project.photos[0].id;
         project.photos[0].tags.push("street".into());
         project.photos[1].tags.push("street".into());
+        project.photos[0].rotation = 1;
         project.sheet.columns = 5;
         project.upsert_saved_sheet("street".into(), project.sheet.clone(), vec![id]);
 
@@ -471,6 +497,21 @@ mod tests {
         assert_eq!(loaded.sheet.columns, 5);
         assert_eq!(loaded.saved_sheets.len(), 1);
         assert_eq!(loaded.saved_sheets[0].photo_ids, vec![id]);
+        assert_eq!(loaded.photos[0].rotation, 1);
+    }
+
+    #[test]
+    fn rotation_swaps_the_display_aspect() {
+        let mut project = project_with_photos();
+        let photo = &mut project.photos[0];
+        assert!(photo.aspect() > 1.0);
+        photo.rotate_clockwise();
+        assert!(photo.aspect() < 1.0);
+        assert_eq!(photo.oriented_size(), (3000, 4000));
+        for _ in 0..4 {
+            photo.rotate_clockwise();
+        }
+        assert_eq!(photo.rotation(), 1);
     }
 
     #[test]

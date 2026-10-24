@@ -632,7 +632,11 @@ impl Render for TextField {
             .overflow_hidden()
             .bg(theme::surface())
             .border_1()
-            .border_color(if focused { theme::ink() } else { theme::rule() })
+            .border_color(if focused {
+                theme::accent()
+            } else {
+                theme::rule()
+            })
             .px(px(9.0))
             .font_family(theme::FONT_UI)
             .text_size(px(11.5))

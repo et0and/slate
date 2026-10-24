@@ -15,10 +15,12 @@ use image::{Frame, RgbaImage};
 use slate_core::PreviewImage;
 use slate_core::batch::{self, RenameOptions, RenamePlan};
 use slate_core::import::{self, Probe};
-use slate_core::layout::{self, SheetLayout};
 use slate_core::model::{Filter, Photo, PhotoId, Project, SheetId, SheetSettings};
 use slate_core::pdf::{self, ExportSummary};
+use slate_core::store::{LocalStore, RecentProject};
 
+use crate::history::{History, Snapshot};
+use crate::panels::{DIVIDER_W, PanelLayout, ResizeTarget};
 use crate::text_field::TextField;
 use crate::theme;
 
@@ -28,11 +30,14 @@ actions!(
         Quit,
         OpenProject,
         SaveProject,
+        SaveAs,
         ExportSheet,
         ImportFiles,
         ImportFolder,
         SelectAllPhotos,
         DeselectPhotos,
+        Undo,
+        Redo,
         Dismiss,
     ]
 );
@@ -42,18 +47,6 @@ pub enum ThumbState {
     Ready(Arc<RenderImage>),
     Failed(String),
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ResizeTarget {
-    Left,
-    Right,
-}
-
-const LEFT_MIN: f32 = 230.0;
-const LEFT_MAX: f32 = 430.0;
-const RIGHT_MIN: f32 = 320.0;
-const RIGHT_MAX: f32 = 520.0;
-const CENTER_MIN: f32 = 420.0;
 
 #[derive(Debug, Default)]
 pub struct ImportState {
@@ -76,10 +69,7 @@ pub struct ContactSheet {
     pub(crate) thumb_queue: VecDeque<(PhotoId, PathBuf)>,
     pub(crate) thumbs_in_flight: usize,
     pub(crate) thumbs_queued: HashSet<PhotoId>,
-    pub(crate) rotated: HashMap<PhotoId, Arc<RenderImage>>,
-    pub(crate) rotate_queue: VecDeque<(PhotoId, PathBuf)>,
-    pub(crate) rotate_in_flight: usize,
-    pub(crate) rotate_queued: HashSet<PhotoId>,
+    pub(crate) rotated_thumbs: HashMap<(PhotoId, u8), Arc<RenderImage>>,
 
     pub(crate) import_queue: VecDeque<PathBuf>,
     pub(crate) importing_paths: HashSet<PathBuf>,
@@ -95,12 +85,14 @@ pub struct ContactSheet {
     pub(crate) log: VecDeque<String>,
     pub(crate) focus: FocusHandle,
     pub(crate) focused_once: bool,
-    pub(crate) window_title: String,
-    pub(crate) dark: bool,
+    pub(crate) theme: theme::Theme,
     pub(crate) appearance_initialized: bool,
-    pub(crate) left_width: f32,
-    pub(crate) right_width: f32,
-    pub(crate) resizing: Option<ResizeTarget>,
+    pub(crate) panels: PanelLayout,
+    pub(crate) menu_open: Option<crate::menubar::MenuId>,
+    pub(crate) about_open: bool,
+    pub(crate) history: History,
+    pub(crate) store: LocalStore,
+    pub(crate) recent_projects: Vec<RecentProject>,
 
     pub(crate) search_field: gpui::Entity<TextField>,
     pub(crate) title_field: gpui::Entity<TextField>,
@@ -115,11 +107,11 @@ impl ContactSheet {
 
         let search_field = cx.new(|cx| {
             let weak = weak.clone();
-            TextField::new(cx, "Filter file names").on_change(move |value, app| {
+            TextField::new(cx, "File name").on_change(move |value, app| {
                 let _ = weak.update(app, |this, cx| {
                     this.search = value.to_string();
                     this.preview_page = 0;
-                    this.refresh_preview(cx);
+                    this.refresh_preview();
                     cx.notify();
                 });
             })
@@ -138,7 +130,7 @@ impl ContactSheet {
 
         let prefix_field = cx.new(|cx| {
             let weak = weak.clone();
-            TextField::new(cx, "Prefix").on_change(move |value, app| {
+            TextField::new(cx, "walk-").on_change(move |value, app| {
                 let _ = weak.update(app, |this, cx| {
                     this.rename_options.prefix = value.to_string();
                     cx.notify();
@@ -149,7 +141,7 @@ impl ContactSheet {
         let suffix_field = cx.new(|cx| {
             let change_weak = weak.clone();
             let submit_weak = weak.clone();
-            TextField::new(cx, "Suffix")
+            TextField::new(cx, "-web")
                 .on_change(move |value, app| {
                     let _ = change_weak.update(app, |this, cx| {
                         this.rename_options.suffix = value.to_string();
@@ -171,6 +163,8 @@ impl ContactSheet {
 
         let mut log = VecDeque::new();
         log.push_back("Session ready".to_string());
+        let store = LocalStore::default_location();
+        let recent_projects = store.recent_projects(5).unwrap_or_default();
 
         Self {
             project: Project::new("Untitled"),
@@ -184,10 +178,7 @@ impl ContactSheet {
             thumb_queue: VecDeque::new(),
             thumbs_in_flight: 0,
             thumbs_queued: HashSet::new(),
-            rotated: HashMap::new(),
-            rotate_queue: VecDeque::new(),
-            rotate_in_flight: 0,
-            rotate_queued: HashSet::new(),
+            rotated_thumbs: HashMap::new(),
             import_queue: VecDeque::new(),
             importing_paths: HashSet::new(),
             imports_in_flight: 0,
@@ -196,16 +187,18 @@ impl ContactSheet {
             rename_pending: None,
             rename_options: RenameOptions::default(),
             exporting: None,
-            status: "Import files or a folder to begin".to_string(),
+            status: "Ready".to_string(),
             log,
             focus: cx.focus_handle(),
             focused_once: false,
-            window_title: String::new(),
-            dark: false,
+            theme: theme::Theme::Light,
             appearance_initialized: false,
-            left_width: 256.0,
-            right_width: 344.0,
-            resizing: None,
+            panels: PanelLayout::default(),
+            menu_open: None,
+            about_open: false,
+            history: History::default(),
+            store,
+            recent_projects,
             search_field,
             title_field,
             prefix_field,
@@ -220,20 +213,8 @@ impl ContactSheet {
         self.project.filter_indices(&self.filter, &self.search)
     }
 
-    pub(crate) fn visible_count(&self) -> usize {
-        self.visible_indices().len()
-    }
-
     pub(crate) fn working_count(&self) -> usize {
-        if self.selected.is_empty() {
-            self.visible_count()
-        } else {
-            self.project
-                .photos
-                .iter()
-                .filter(|photo| self.selected.contains(&photo.id))
-                .count()
-        }
+        self.scope_ids().len()
     }
 
     pub(crate) fn page_count(&self) -> usize {
@@ -242,38 +223,13 @@ impl ContactSheet {
             .max(1)
     }
 
-    pub(crate) fn display_page_count(&self) -> usize {
-        if self.working_count() == 0 {
-            0
-        } else {
-            self.page_count()
-        }
-    }
-
     pub(crate) fn current_page(&self) -> usize {
         self.preview_page.min(self.page_count().saturating_sub(1))
     }
 
     /// Explicit selection wins. With no selection, every visible photo is the
     /// working set, so import -> export needs no extra step.
-    pub(crate) fn export_photos(&self) -> Vec<Photo> {
-        let selected = if self.selected.is_empty() {
-            self.visible_indices()
-                .into_iter()
-                .map(|index| self.project.photos[index].id)
-                .collect::<HashSet<_>>()
-        } else {
-            self.selected.clone()
-        };
-        self.project
-            .photos
-            .iter()
-            .filter(|photo| selected.contains(&photo.id))
-            .cloned()
-            .collect()
-    }
-
-    pub(crate) fn target_ids(&self) -> Vec<PhotoId> {
+    pub(crate) fn scope_ids(&self) -> Vec<PhotoId> {
         if self.selected.is_empty() {
             self.visible_indices()
                 .into_iter()
@@ -289,25 +245,14 @@ impl ContactSheet {
         }
     }
 
-    pub(crate) fn filter_label(&self) -> String {
-        match &self.filter {
-            Filter::All => "All images".to_string(),
-            Filter::Untagged => "Untagged".to_string(),
-            Filter::Tag(tag) => format!("#{tag}"),
-        }
-    }
-
-    pub(crate) fn summary(&self) -> String {
-        let photos = self.working_count();
-        let layout = SheetLayout::from_settings(&self.project.sheet);
-        let pages = self.page_count();
-        format!(
-            "{} photos / {} page{} / {} per page",
-            photos,
-            pages,
-            if pages == 1 { "" } else { "s" },
-            layout.per_page()
-        )
+    pub(crate) fn export_photos(&self) -> Vec<Photo> {
+        let scope: HashSet<_> = self.scope_ids().into_iter().collect();
+        self.project
+            .photos
+            .iter()
+            .filter(|photo| scope.contains(&photo.id))
+            .cloned()
+            .collect()
     }
 
     // ----- status --------------------------------------------------------
@@ -323,47 +268,33 @@ impl ContactSheet {
         self.status = text.into();
     }
 
-    fn clamp_panel_widths(&mut self, window: &Window) {
-        let total = f32::from(window.viewport_size().width);
-        let max_left = (total - self.right_width - CENTER_MIN).clamp(LEFT_MIN, LEFT_MAX);
-        self.left_width = self.left_width.clamp(LEFT_MIN, max_left);
-        let max_right = (total - self.left_width - CENTER_MIN).clamp(RIGHT_MIN, RIGHT_MAX);
-        self.right_width = self.right_width.clamp(RIGHT_MIN, max_right);
-    }
-
     fn begin_resize(&mut self, target: ResizeTarget, cx: &mut Context<Self>) {
-        self.resizing = Some(target);
+        self.panels.begin(target);
         cx.notify();
     }
 
     fn resize_move(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(target) = self.resizing else {
+        let Some(target) = self.panels.resizing() else {
             return;
         };
         let total = f32::from(window.viewport_size().width);
         let x = f32::from(event.position.x);
-        match target {
-            ResizeTarget::Left => {
-                let max = (total - self.right_width - CENTER_MIN).clamp(LEFT_MIN, LEFT_MAX);
-                self.left_width = x.clamp(LEFT_MIN, max);
-            }
-            ResizeTarget::Right => {
-                let max = (total - self.left_width - CENTER_MIN).clamp(RIGHT_MIN, RIGHT_MAX);
-                self.right_width = (total - x).clamp(RIGHT_MIN, max);
-            }
-        }
+        self.panels.resize(target, x, total);
         cx.notify();
     }
 
     fn end_resize(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.resizing.take().is_some() {
+        if self.panels.end() {
             cx.notify();
         }
     }
 
-    pub(crate) fn toggle_appearance(&mut self, cx: &mut Context<Self>) {
-        self.dark = !self.dark;
-        theme::set_dark(self.dark);
+    pub(crate) fn set_theme(&mut self, theme: theme::Theme, cx: &mut Context<Self>) {
+        if self.theme == theme {
+            return;
+        }
+        self.theme = theme;
+        theme::set_theme(theme);
         let fields = [
             self.search_field.clone(),
             self.title_field.clone(),
@@ -377,9 +308,104 @@ impl ContactSheet {
         cx.notify();
     }
 
-    pub(crate) fn refresh_preview(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_preview(&mut self) {
         self.preview_page = self.preview_page.min(self.page_count().saturating_sub(1));
-        self.schedule_preview_rotations(cx);
+    }
+
+    fn refresh_and_notify(&mut self, cx: &mut Context<Self>) {
+        self.refresh_preview();
+        cx.notify();
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            project: self.project.clone(),
+            selected: self.selected.clone(),
+            dirty: self.dirty,
+        }
+    }
+
+    fn checkpoint(&mut self) {
+        self.history.checkpoint(self.snapshot());
+    }
+
+    fn remember_current_project(&mut self) {
+        let Some(path) = self.project_path.clone() else {
+            return;
+        };
+        match self.store.remember_project(&path, &self.project) {
+            Ok(()) => {
+                self.recent_projects = self.store.recent_projects(5).unwrap_or_default();
+            }
+            Err(error) => self.log(format!("Catalog / {error}")),
+        }
+    }
+
+    fn restore(&mut self, snapshot: Snapshot, cx: &mut Context<Self>) {
+        self.generation = self.generation.wrapping_add(1);
+        self.import_queue.clear();
+        self.importing_paths.clear();
+        self.imports_in_flight = 0;
+        self.import_state = None;
+        self.thumbs.clear();
+        self.thumbs_queued.clear();
+        self.thumb_queue.clear();
+        self.thumbs_in_flight = 0;
+        self.rotated_thumbs.clear();
+        self.project = snapshot.project;
+        self.selected = snapshot.selected;
+        self.dirty = snapshot.dirty;
+        self.preview_page = 0;
+        self.rename_pending = None;
+        self.title_field.update(cx, |field, cx| {
+            field.set_value(self.project.sheet.title.clone(), cx);
+        });
+        self.schedule_thumbs(cx);
+        self.refresh_and_notify(cx);
+    }
+
+    fn editing_text(&self, window: &Window, cx: &App) -> bool {
+        [
+            &self.search_field,
+            &self.title_field,
+            &self.prefix_field,
+            &self.suffix_field,
+            &self.tag_field,
+        ]
+        .iter()
+        .any(|field| field.read(cx).focus_handle(cx).is_focused(window))
+    }
+
+    pub(crate) fn undo(&mut self, cx: &mut Context<Self>) {
+        if self.about_open {
+            return;
+        }
+        if self.rename_pending.is_some() {
+            self.set_status("Finish or cancel the rename first");
+        } else if let Some(previous) = self.history.undo(self.snapshot()) {
+            self.restore(previous, cx);
+            self.set_status("Undone");
+            self.log("Undo");
+        } else {
+            self.set_status("Nothing to undo");
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn redo(&mut self, cx: &mut Context<Self>) {
+        if self.about_open {
+            return;
+        }
+        if self.rename_pending.is_some() {
+            self.set_status("Finish or cancel the rename first");
+        } else if let Some(next) = self.history.redo(self.snapshot()) {
+            self.restore(next, cx);
+            self.set_status("Redone");
+            self.log("Redo");
+        } else {
+            self.set_status("Nothing to redo");
+        }
+        cx.notify();
     }
 
     // ----- selection -----------------------------------------------------
@@ -388,16 +414,14 @@ impl ContactSheet {
         if !self.selected.remove(&id) {
             self.selected.insert(id);
         }
-        self.refresh_preview(cx);
-        cx.notify();
+        self.refresh_and_notify(cx);
     }
 
     pub(crate) fn select_all_visible(&mut self, cx: &mut Context<Self>) {
         for index in self.visible_indices() {
             self.selected.insert(self.project.photos[index].id);
         }
-        self.refresh_preview(cx);
-        cx.notify();
+        self.refresh_and_notify(cx);
     }
 
     pub(crate) fn clear_filters(&mut self, cx: &mut Context<Self>) {
@@ -405,14 +429,12 @@ impl ContactSheet {
         self.search.clear();
         self.search_field
             .update(cx, |field, cx| field.set_value("", cx));
-        self.refresh_preview(cx);
-        cx.notify();
+        self.refresh_and_notify(cx);
     }
 
     pub(crate) fn deselect_all(&mut self, cx: &mut Context<Self>) {
         self.selected.clear();
-        self.refresh_preview(cx);
-        cx.notify();
+        self.refresh_and_notify(cx);
     }
 
     pub(crate) fn invert_visible(&mut self, cx: &mut Context<Self>) {
@@ -422,36 +444,36 @@ impl ContactSheet {
                 self.selected.insert(id);
             }
         }
-        self.refresh_preview(cx);
-        cx.notify();
+        self.refresh_and_notify(cx);
     }
 
     pub(crate) fn remove_selected(&mut self, cx: &mut Context<Self>) {
         if self.selected.is_empty() {
-            self.set_status("Select photos to remove from the project");
+            self.set_status("Nothing selected");
             cx.notify();
             return;
         }
-        let ids = self.target_ids();
+        let ids = self.scope_ids();
         if ids.is_empty() {
-            self.set_status("Select photos first");
+            self.set_status("Nothing selected");
             cx.notify();
             return;
         }
+        self.checkpoint();
         let removed = self.project.remove_photos(&ids);
         for id in &ids {
             self.selected.remove(id);
             self.thumbs.remove(id);
             self.thumbs_queued.remove(id);
-            self.rotated.remove(id);
         }
+        self.rotated_thumbs
+            .retain(|(photo_id, _), _| !ids.contains(photo_id));
         self.dirty = true;
         self.log(format!("Removed {removed} photos from the project"));
         self.set_status(format!(
             "Removed {removed} from the project / files untouched"
         ));
-        self.refresh_preview(cx);
-        cx.notify();
+        self.refresh_and_notify(cx);
     }
 
     // ----- tags ----------------------------------------------------------
@@ -467,7 +489,7 @@ impl ContactSheet {
         cx: &mut Context<Self>,
         clear_field: bool,
     ) {
-        let ids = self.target_ids();
+        let ids = self.scope_ids();
         let tag = tag.trim().to_string();
         if tag.is_empty() {
             self.set_status("Type a tag first");
@@ -479,9 +501,12 @@ impl ContactSheet {
             cx.notify();
             return;
         }
+        self.checkpoint();
         let changed = batch::add_tag(&mut self.project, &ids, &tag);
         if changed > 0 {
             self.dirty = true;
+        } else {
+            self.history.discard_last();
         }
         if clear_field {
             self.tag_field
@@ -493,16 +518,19 @@ impl ContactSheet {
     }
 
     pub(crate) fn remove_tag(&mut self, cx: &mut Context<Self>) {
-        let ids = self.target_ids();
+        let ids = self.scope_ids();
         let tag = self.tag_field.read(cx).value().trim().to_string();
         if tag.is_empty() {
             self.set_status("Type the tag to remove");
             cx.notify();
             return;
         }
+        self.checkpoint();
         let changed = batch::remove_tag(&mut self.project, &ids, &tag);
         if changed > 0 {
             self.dirty = true;
+        } else {
+            self.history.discard_last();
         }
         self.tag_field
             .update(cx, |field, cx| field.set_value("", cx));
@@ -512,21 +540,23 @@ impl ContactSheet {
     }
 
     pub(crate) fn clear_tags(&mut self, cx: &mut Context<Self>) {
-        let ids = self.target_ids();
+        let ids = self.scope_ids();
+        self.checkpoint();
         let changed = batch::clear_tags(&mut self.project, &ids);
         if changed > 0 {
             self.dirty = true;
+        } else {
+            self.history.discard_last();
         }
         self.set_status(format!("Cleared tags on {changed} photo(s)"));
         self.log(format!("Tags cleared / {changed} photo(s)"));
-        self.refresh_preview(cx);
-        cx.notify();
+        self.refresh_and_notify(cx);
     }
 
     // ----- rename --------------------------------------------------------
 
     pub(crate) fn preview_rename(&mut self, cx: &mut Context<Self>) {
-        let ids = self.target_ids();
+        let ids = self.scope_ids();
         if ids.is_empty() {
             self.set_status("Select photos to rename");
             cx.notify();
@@ -562,6 +592,8 @@ impl ContactSheet {
         let report = batch::apply_rename(&mut self.project, &plan);
         if report.renamed_count() > 0 {
             self.dirty = true;
+            self.history.clear();
+            self.log("History cleared after rename");
         }
         for (_, error) in &report.errors {
             self.log(format!("Rename error: {error}"));
@@ -601,81 +633,86 @@ impl ContactSheet {
     pub(crate) fn mark_sheet_changed(&mut self, cx: &mut Context<Self>) {
         self.project.sheet.normalize();
         self.dirty = true;
-        self.refresh_preview(cx);
-        cx.notify();
+        self.refresh_and_notify(cx);
     }
 
     pub(crate) fn cycle_paper(&mut self, cx: &mut Context<Self>) {
+        self.checkpoint();
         self.project.sheet.paper = self.project.sheet.paper.next();
         self.mark_sheet_changed(cx);
     }
 
     pub(crate) fn toggle_orientation(&mut self, cx: &mut Context<Self>) {
+        self.checkpoint();
         self.project.sheet.orientation = self.project.sheet.orientation.toggled();
         self.mark_sheet_changed(cx);
     }
 
     pub(crate) fn nudge_columns(&mut self, delta: i8, cx: &mut Context<Self>) {
+        self.checkpoint();
         let value = (i16::from(self.project.sheet.columns) + i16::from(delta)).clamp(1, 12);
         self.project.sheet.columns = value as u8;
         self.mark_sheet_changed(cx);
     }
 
     pub(crate) fn nudge_rows(&mut self, delta: i8, cx: &mut Context<Self>) {
+        self.checkpoint();
         let value = (i16::from(self.project.sheet.rows) + i16::from(delta)).clamp(1, 12);
         self.project.sheet.rows = value as u8;
         self.mark_sheet_changed(cx);
     }
 
     pub(crate) fn nudge_margin(&mut self, delta: f32, cx: &mut Context<Self>) {
+        self.checkpoint();
         self.project.sheet.margin_mm = (self.project.sheet.margin_mm + delta).clamp(2.0, 40.0);
         self.mark_sheet_changed(cx);
     }
 
     pub(crate) fn nudge_gutter(&mut self, delta: f32, cx: &mut Context<Self>) {
+        self.checkpoint();
         self.project.sheet.gutter_mm = (self.project.sheet.gutter_mm + delta).clamp(0.0, 20.0);
         self.mark_sheet_changed(cx);
     }
 
-    pub(crate) fn toggle_captions(&mut self, cx: &mut Context<Self>) {
-        self.project.sheet.captions = !self.project.sheet.captions;
+    fn update_sheet(&mut self, update: impl FnOnce(&mut SheetSettings), cx: &mut Context<Self>) {
+        self.checkpoint();
+        update(&mut self.project.sheet);
         self.mark_sheet_changed(cx);
+    }
+
+    pub(crate) fn toggle_captions(&mut self, cx: &mut Context<Self>) {
+        self.update_sheet(|sheet| sheet.captions = !sheet.captions, cx);
     }
 
     pub(crate) fn toggle_index(&mut self, cx: &mut Context<Self>) {
-        self.project.sheet.index = !self.project.sheet.index;
-        self.mark_sheet_changed(cx);
+        self.update_sheet(|sheet| sheet.index = !sheet.index, cx);
     }
 
     pub(crate) fn toggle_rotate(&mut self, cx: &mut Context<Self>) {
-        self.project.sheet.rotate = !self.project.sheet.rotate;
-        self.rotated.clear();
-        self.mark_sheet_changed(cx);
+        self.update_sheet(|sheet| sheet.rotate = !sheet.rotate, cx);
     }
 
     pub(crate) fn toggle_header(&mut self, cx: &mut Context<Self>) {
-        self.project.sheet.header = !self.project.sheet.header;
-        self.mark_sheet_changed(cx);
+        self.update_sheet(|sheet| sheet.header = !sheet.header, cx);
     }
 
     pub(crate) fn toggle_footer(&mut self, cx: &mut Context<Self>) {
-        self.project.sheet.footer = !self.project.sheet.footer;
-        self.mark_sheet_changed(cx);
+        self.update_sheet(|sheet| sheet.footer = !sheet.footer, cx);
     }
 
     pub(crate) fn goto_page(&mut self, page: usize, cx: &mut Context<Self>) {
         self.preview_page = page.min(self.page_count().saturating_sub(1));
-        self.refresh_preview(cx);
-        cx.notify();
+        self.refresh_and_notify(cx);
     }
 
     pub(crate) fn save_sheet(&mut self, cx: &mut Context<Self>) {
-        let ids = self.target_ids();
+        let ids = self.scope_ids();
         if ids.is_empty() {
             self.set_status("No photos in scope");
             cx.notify();
             return;
         }
+        self.checkpoint();
         let name = if self.project.sheet.title.trim().is_empty() {
             format!("Sheet {:02}", self.project.saved_sheets.len() + 1)
         } else {
@@ -684,18 +721,21 @@ impl ContactSheet {
         self.project
             .upsert_saved_sheet(name.clone(), self.project.sheet.clone(), ids.clone());
         self.dirty = true;
-        self.set_status(format!("Saved sheet / {name} / {} photos", ids.len()));
+        self.set_status(format!("Layout written / {name} / {} photos", ids.len()));
         self.log(format!("Sheet saved / {name} / {} photo(s)", ids.len()));
         cx.notify();
     }
 
     pub(crate) fn delete_sheet(&mut self, id: SheetId, cx: &mut Context<Self>) {
         let before = self.project.saved_sheets.len();
+        self.checkpoint();
         self.project.saved_sheets.retain(|sheet| sheet.id != id);
         if self.project.saved_sheets.len() != before {
             self.dirty = true;
             self.log("Sheet deleted");
             self.set_status("Sheet deleted / project unsaved");
+        } else {
+            self.history.discard_last();
         }
         cx.notify();
     }
@@ -710,6 +750,7 @@ impl ContactSheet {
         else {
             return;
         };
+        self.checkpoint();
         self.project.sheet = sheet.settings.clone();
         if self.project.sheet.title.trim().is_empty() {
             self.project.sheet.title = sheet.name.clone();
@@ -726,8 +767,7 @@ impl ContactSheet {
         self.dirty = true;
         self.set_status(format!("Loaded sheet / {}", sheet.name));
         self.log(format!("Sheet loaded / {}", sheet.name));
-        self.refresh_preview(cx);
-        cx.notify();
+        self.refresh_and_notify(cx);
     }
 
     // ----- project files -------------------------------------------------
@@ -782,12 +822,9 @@ impl ContactSheet {
                 self.import_state = None;
                 self.thumbs.clear();
                 self.thumbs_queued.clear();
-                self.rotated.clear();
+                self.rotated_thumbs.clear();
                 self.thumb_queue.clear();
-                self.rotate_queue.clear();
-                self.rotate_queued.clear();
                 self.thumbs_in_flight = 0;
-                self.rotate_in_flight = 0;
                 self.selected = project.photo_ids().into_iter().collect();
                 self.filter = Filter::All;
                 self.search.clear();
@@ -804,9 +841,11 @@ impl ContactSheet {
                 self.project = project;
                 self.project_path = Some(path.clone());
                 self.dirty = false;
+                self.history.clear();
                 self.preview_page = 0;
                 self.rename_pending = None;
-                self.log(format!("Opened {}", path.display()));
+                self.remember_current_project();
+                self.log("File loaded");
                 self.set_status(format!(
                     "Opened {} photos{}",
                     self.project.photos.len(),
@@ -817,7 +856,7 @@ impl ContactSheet {
                     }
                 ));
                 self.schedule_thumbs(cx);
-                self.refresh_preview(cx);
+                self.refresh_preview();
                 cx.notify();
             }
             Err(error) => {
@@ -836,7 +875,7 @@ impl ContactSheet {
         }
     }
 
-    fn save_project_as(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn save_project_as(&mut self, cx: &mut Context<Self>) {
         let directory = self.default_directory();
         let suggested = self.suggested_file_name("contactsheet");
         cx.spawn(async move |this, cx| {
@@ -859,8 +898,10 @@ impl ContactSheet {
             Ok(()) => {
                 self.project_path = Some(path.clone());
                 self.dirty = false;
-                self.log(format!("Saved {}", path.display()));
-                self.set_status(format!("Saved / {}", path.display()));
+                self.history.mark_saved();
+                self.remember_current_project();
+                self.log("Write complete");
+                self.set_status(format!("Project written / {}", path.display()));
             }
             Err(error) => {
                 self.log(format!("Save failed: {error}"));
@@ -934,6 +975,7 @@ impl ContactSheet {
             return;
         }
 
+        self.checkpoint();
         if is_untitled(&self.project.name)
             && let Some(name) = new_paths[0].parent().and_then(|parent| parent.file_name())
         {
@@ -1053,8 +1095,7 @@ impl ContactSheet {
         self.import_queue.clear();
         self.importing_paths.clear();
         self.imports_in_flight = 0;
-        self.refresh_preview(cx);
-        cx.notify();
+        self.refresh_and_notify(cx);
     }
 
     // ----- thumbnails ----------------------------------------------------
@@ -1108,76 +1149,42 @@ impl ContactSheet {
         }
     }
 
-    fn schedule_preview_rotations(&mut self, cx: &mut Context<Self>) {
-        if !self.project.sheet.rotate {
-            return;
-        }
-        let photos = self.export_photos();
-        if photos.is_empty() {
-            return;
-        }
-        let sheet_layout = SheetLayout::from_settings(&self.project.sheet);
-        let page = layout::plan_page(
-            &self.project.sheet,
-            &sheet_layout,
-            &photos,
-            self.current_page(),
-        );
-        for placement in &page.placements {
-            if !placement.rotated {
-                continue;
-            }
-            let Some(photo) = photos.get(placement.photo_index) else {
-                continue;
+    pub(crate) fn thumb_image(&mut self, id: PhotoId, turns: u8) -> Option<Arc<RenderImage>> {
+        let turns = turns % 4;
+        if turns == 0 {
+            return match self.thumbs.get(&id) {
+                Some(ThumbState::Ready(image)) => Some(image.clone()),
+                _ => None,
             };
-            if self.rotated.contains_key(&photo.id) || self.rotate_queued.contains(&photo.id) {
-                continue;
-            }
-            self.rotate_queued.insert(photo.id);
-            self.rotate_queue.push_back((photo.id, photo.path.clone()));
         }
-        self.pump_rotations(cx);
+        if let Some(image) = self.rotated_thumbs.get(&(id, turns)) {
+            return Some(image.clone());
+        }
+        let base = match self.thumbs.get(&id) {
+            Some(ThumbState::Ready(image)) => image.clone(),
+            _ => return None,
+        };
+        let rotated = rotate_render_image(&base, turns)?;
+        if self.rotated_thumbs.len() >= 128 {
+            self.rotated_thumbs.clear();
+        }
+        self.rotated_thumbs.insert((id, turns), rotated.clone());
+        Some(rotated)
     }
 
-    fn pump_rotations(&mut self, cx: &mut Context<Self>) {
-        while self.rotate_in_flight < 2 {
-            let Some((id, path)) = self.rotate_queue.pop_front() else {
-                break;
-            };
-            self.rotate_in_flight += 1;
-            let generation = self.generation;
-            cx.spawn(async move |this, cx| {
-                let result = cx
-                    .background_spawn(async move { import::preview(&path, 320) })
-                    .await;
-                let _ = this.update(cx, |this, cx| {
-                    if this.generation != generation {
-                        return;
-                    }
-                    this.rotate_in_flight = this.rotate_in_flight.saturating_sub(1);
-                    this.rotate_queued.remove(&id);
-                    if this.project.photo(id).is_some()
-                        && let Ok(preview) = result
-                    {
-                        let rotated = preview.rotated_clockwise();
-                        if this.rotated.len() >= 256 {
-                            this.rotated.clear();
-                        }
-                        this.rotated.insert(id, render_image(rotated));
-                    }
-                    this.pump_rotations(cx);
-                    cx.notify();
-                });
-            })
-            .detach();
-        }
-    }
-
-    pub(crate) fn thumb_image(&self, id: PhotoId) -> Option<Arc<RenderImage>> {
-        match self.thumbs.get(&id) {
-            Some(ThumbState::Ready(image)) => Some(image.clone()),
-            _ => None,
-        }
+    pub(crate) fn rotate_photo(&mut self, id: PhotoId, cx: &mut Context<Self>) {
+        let Some(name) = self.project.photo(id).map(|photo| photo.file_name()) else {
+            return;
+        };
+        self.checkpoint();
+        let Some(photo) = self.project.photo_mut(id) else {
+            return;
+        };
+        photo.rotate_clockwise();
+        let degrees = i16::from(photo.rotation()) * 90;
+        self.dirty = true;
+        self.log(format!("Rotate / {name} / {degrees}°"));
+        self.refresh_and_notify(cx);
     }
 
     pub(crate) fn thumb_failed(&self, id: PhotoId) -> Option<&str> {
@@ -1187,11 +1194,13 @@ impl ContactSheet {
         }
     }
 
-    pub(crate) fn preview_image(&self, id: PhotoId, rotated: bool) -> Option<Arc<RenderImage>> {
-        if rotated && let Some(image) = self.rotated.get(&id) {
-            return Some(image.clone());
-        }
-        self.thumb_image(id)
+    pub(crate) fn preview_image(
+        &mut self,
+        id: PhotoId,
+        user_turns: u8,
+        rotated: bool,
+    ) -> Option<Arc<RenderImage>> {
+        self.thumb_image(id, (user_turns + u8::from(rotated)) % 4)
     }
 
     // ----- export --------------------------------------------------------
@@ -1323,25 +1332,20 @@ impl Render for ContactSheet {
             self.focused_once = true;
         }
         if !self.appearance_initialized {
-            self.dark = matches!(
+            self.theme = if matches!(
                 window.appearance(),
                 WindowAppearance::Dark | WindowAppearance::VibrantDark
-            );
+            ) {
+                theme::Theme::Dark
+            } else {
+                theme::Theme::Light
+            };
             self.appearance_initialized = true;
         }
-        theme::set_dark(self.dark);
-        self.clamp_panel_widths(window);
+        theme::set_theme(self.theme);
+        self.panels.clamp_to_window(window);
 
-        let title = format!(
-            "{}{} — Contact sheet",
-            self.project.name,
-            if self.dirty { " *" } else { "" }
-        );
-        if title != self.window_title {
-            window.set_window_title(&title);
-            self.window_title = title;
-        }
-
+        let menu = self.render_menu(cx);
         let overlay = self.render_overlay(cx);
 
         div()
@@ -1353,17 +1357,59 @@ impl Render for ContactSheet {
             .bg(theme::paper())
             .text_color(theme::ink())
             .font_family(theme::FONT_UI)
-            .on_action(cx.listener(|this, _: &SaveProject, _, cx| this.save_project(cx)))
-            .on_action(cx.listener(|this, _: &OpenProject, _, cx| this.open_project_prompt(cx)))
-            .on_action(cx.listener(|this, _: &ExportSheet, _, cx| this.export_current(cx)))
-            .on_action(cx.listener(|this, _: &ImportFiles, _, cx| this.import_prompt(false, cx)))
-            .on_action(cx.listener(|this, _: &ImportFolder, _, cx| this.import_prompt(true, cx)))
-            .on_action(cx.listener(|this, _: &SelectAllPhotos, _, cx| this.select_all_visible(cx)))
-            .on_action(cx.listener(|this, _: &DeselectPhotos, _, cx| this.deselect_all(cx)))
+            .on_action(cx.listener(|this, _: &SaveProject, _, cx| {
+                this.close_menu(cx);
+                this.save_project(cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenProject, _, cx| {
+                this.close_menu(cx);
+                this.open_project_prompt(cx);
+            }))
+            .on_action(cx.listener(|this, _: &SaveAs, _, cx| {
+                this.close_menu(cx);
+                this.save_project_as(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ExportSheet, _, cx| {
+                this.close_menu(cx);
+                this.export_current(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ImportFiles, _, cx| {
+                this.close_menu(cx);
+                this.import_prompt(false, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ImportFolder, _, cx| {
+                this.close_menu(cx);
+                this.import_prompt(true, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SelectAllPhotos, _, cx| {
+                this.close_menu(cx);
+                this.select_all_visible(cx);
+            }))
+            .on_action(cx.listener(|this, _: &DeselectPhotos, _, cx| {
+                this.close_menu(cx);
+                this.deselect_all(cx);
+            }))
+            .on_action(cx.listener(|this, _: &Undo, window, cx| {
+                this.close_menu(cx);
+                if !this.editing_text(window, cx) {
+                    this.undo(cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &Redo, window, cx| {
+                this.close_menu(cx);
+                if !this.editing_text(window, cx) {
+                    this.redo(cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
-                if this.rename_pending.is_some() {
+                if this.about_open {
+                    this.about_open = false;
+                } else if this.menu_open.is_some() {
+                    this.menu_open = None;
+                } else if this.rename_pending.is_some() {
                     this.cancel_rename(cx);
                 }
+                cx.notify();
             }))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 this.begin_import(paths.paths().to_vec(), cx)
@@ -1377,36 +1423,22 @@ impl Render for ContactSheet {
                     .flex_1()
                     .min_h(px(0.0))
                     .child(self.render_sidebar(window, cx))
-                    .child(divider(
-                        "resize-left",
-                        ResizeTarget::Left,
-                        self.resizing == Some(ResizeTarget::Left),
-                        cx,
-                    ))
+                    .child(divider("resize-left", ResizeTarget::Left, cx))
                     .child(self.render_library(window, cx))
-                    .child(divider(
-                        "resize-right",
-                        ResizeTarget::Right,
-                        self.resizing == Some(ResizeTarget::Right),
-                        cx,
-                    ))
+                    .child(divider("resize-right", ResizeTarget::Right, cx))
                     .child(self.render_inspector(window, cx)),
             )
             .child(self.render_statusbar())
+            .children(menu)
             .children(overlay)
     }
 }
 
-fn divider(
-    id: &'static str,
-    target: ResizeTarget,
-    active: bool,
-    cx: &mut Context<ContactSheet>,
-) -> AnyElement {
-    let line = if active { theme::ink() } else { theme::rule() };
+fn divider(id: &'static str, target: ResizeTarget, cx: &mut Context<ContactSheet>) -> AnyElement {
     div()
         .id(id)
-        .w(px(6.0))
+        .relative()
+        .w(px(DIVIDER_W))
         .h_full()
         .flex_shrink_0()
         .cursor(CursorStyle::ResizeColumn)
@@ -1415,8 +1447,27 @@ fn divider(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| this.begin_resize(target, cx)),
         )
-        .child(div().w(px(1.0)).h_full().bg(line))
+        .child(
+            div()
+                .absolute()
+                .top(px(0.0))
+                .left(px(3.5))
+                .w(px(1.0))
+                .h_full()
+                .bg(theme::rule()),
+        )
         .into_any_element()
+}
+
+fn rotate_render_image(image: &RenderImage, turns: u8) -> Option<Arc<RenderImage>> {
+    let size = image.size(0);
+    let bytes = image.as_bytes(0)?;
+    let mut buffer =
+        RgbaImage::from_raw(size.width.0 as u32, size.height.0 as u32, bytes.to_vec())?;
+    for _ in 0..(turns % 4) {
+        buffer = image::imageops::rotate90(&buffer);
+    }
+    Some(Arc::new(RenderImage::new(vec![Frame::new(buffer)])))
 }
 
 fn render_image(preview: PreviewImage) -> Arc<RenderImage> {

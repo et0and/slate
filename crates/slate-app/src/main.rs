@@ -1,23 +1,27 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod app;
+mod assets;
 mod chrome;
+mod history;
 mod inspector;
 mod library;
+mod menubar;
 mod overlay;
+mod panels;
 mod sidebar;
 mod text_field;
 mod theme;
 mod widgets;
 
 use gpui::{
-    App, Application, Bounds, KeyBinding, Menu, MenuItem, SystemMenuType, TitlebarOptions,
-    WindowBounds, WindowOptions, prelude::*, px, size,
+    App, Application, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, prelude::*,
+    px, size,
 };
 
 use app::{
     ContactSheet, DeselectPhotos, Dismiss, ExportSheet, ImportFiles, ImportFolder, OpenProject,
-    Quit, SaveProject, SelectAllPhotos,
+    Quit, Redo, SaveAs, SaveProject, SelectAllPhotos, Undo,
 };
 
 #[cfg(target_os = "macos")]
@@ -30,94 +34,75 @@ fn primary(keys: &str) -> String {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bindings = vec![
-            KeyBinding::new(&primary("q"), Quit, None),
-            KeyBinding::new(&primary("o"), OpenProject, None),
-            KeyBinding::new(&primary("s"), SaveProject, None),
-            KeyBinding::new(&primary("e"), ExportSheet, None),
-            KeyBinding::new(&primary("i"), ImportFiles, None),
-            KeyBinding::new(&primary("shift-i"), ImportFolder, None),
-            KeyBinding::new(&primary("shift-a"), SelectAllPhotos, None),
-            KeyBinding::new(&primary("shift-d"), DeselectPhotos, None),
-            KeyBinding::new("escape", Dismiss, None),
-            KeyBinding::new("backspace", text_field::Backspace, Some("TextField")),
-            KeyBinding::new("delete", text_field::Delete, Some("TextField")),
-            KeyBinding::new("left", text_field::Left, Some("TextField")),
-            KeyBinding::new("right", text_field::Right, Some("TextField")),
-            KeyBinding::new("shift-left", text_field::SelectLeft, Some("TextField")),
-            KeyBinding::new("shift-right", text_field::SelectRight, Some("TextField")),
-            KeyBinding::new(&primary("a"), text_field::SelectAll, Some("TextField")),
-            KeyBinding::new(&primary("c"), text_field::Copy, Some("TextField")),
-            KeyBinding::new(&primary("x"), text_field::Cut, Some("TextField")),
-            KeyBinding::new(&primary("v"), text_field::Paste, Some("TextField")),
-            KeyBinding::new("home", text_field::Home, Some("TextField")),
-            KeyBinding::new("end", text_field::End, Some("TextField")),
-            KeyBinding::new("enter", text_field::Submit, Some("TextField")),
-        ];
-        #[cfg(target_os = "macos")]
-        let bindings = {
-            let mut bindings = bindings;
-            bindings.push(KeyBinding::new(
-                "ctrl-cmd-space",
-                text_field::ShowCharacterPalette,
-                Some("TextField"),
-            ));
-            bindings
-        };
-        cx.bind_keys(bindings);
+    Application::new()
+        .with_assets(assets::Assets)
+        .run(|cx: &mut App| {
+            assets::install_fonts(cx);
+            let bindings = vec![
+                KeyBinding::new(&primary("q"), Quit, None),
+                KeyBinding::new(&primary("z"), Undo, None),
+                KeyBinding::new(&primary("shift-z"), Redo, None),
+                KeyBinding::new(&primary("o"), OpenProject, None),
+                KeyBinding::new(&primary("s"), SaveProject, None),
+                KeyBinding::new(&primary("shift-s"), SaveAs, None),
+                KeyBinding::new(&primary("e"), ExportSheet, None),
+                KeyBinding::new(&primary("i"), ImportFiles, None),
+                KeyBinding::new(&primary("shift-i"), ImportFolder, None),
+                KeyBinding::new(&primary("shift-a"), SelectAllPhotos, None),
+                KeyBinding::new(&primary("shift-d"), DeselectPhotos, None),
+                KeyBinding::new("escape", Dismiss, None),
+                KeyBinding::new("backspace", text_field::Backspace, Some("TextField")),
+                KeyBinding::new("delete", text_field::Delete, Some("TextField")),
+                KeyBinding::new("left", text_field::Left, Some("TextField")),
+                KeyBinding::new("right", text_field::Right, Some("TextField")),
+                KeyBinding::new("shift-left", text_field::SelectLeft, Some("TextField")),
+                KeyBinding::new("shift-right", text_field::SelectRight, Some("TextField")),
+                KeyBinding::new(&primary("a"), text_field::SelectAll, Some("TextField")),
+                KeyBinding::new(&primary("c"), text_field::Copy, Some("TextField")),
+                KeyBinding::new(&primary("x"), text_field::Cut, Some("TextField")),
+                KeyBinding::new(&primary("v"), text_field::Paste, Some("TextField")),
+                KeyBinding::new("home", text_field::Home, Some("TextField")),
+                KeyBinding::new("end", text_field::End, Some("TextField")),
+                KeyBinding::new("enter", text_field::Submit, Some("TextField")),
+            ];
+            #[cfg(target_os = "macos")]
+            let bindings = {
+                let mut bindings = bindings;
+                bindings.push(KeyBinding::new(
+                    "ctrl-cmd-space",
+                    text_field::ShowCharacterPalette,
+                    Some("TextField"),
+                ));
+                bindings
+            };
+            cx.bind_keys(bindings);
 
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.set_menus(vec![
-            Menu {
-                name: "File".into(),
-                items: vec![
-                    MenuItem::action("Open project…", OpenProject),
-                    MenuItem::action("Save project", SaveProject),
-                    MenuItem::separator(),
-                    MenuItem::action("Export PDF…", ExportSheet),
-                    MenuItem::separator(),
-                    MenuItem::os_submenu("Services", SystemMenuType::Services),
-                    MenuItem::separator(),
-                    MenuItem::action("Quit", Quit),
-                ],
-            },
-            Menu {
-                name: "Photos".into(),
-                items: vec![
-                    MenuItem::action("Import files…", ImportFiles),
-                    MenuItem::action("Import folder…", ImportFolder),
-                    MenuItem::separator(),
-                    MenuItem::action("Select all visible", SelectAllPhotos),
-                    MenuItem::action("Deselect all", DeselectPhotos),
-                ],
-            },
-        ]);
+            cx.on_action(|_: &Quit, cx| cx.quit());
 
-        let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(1080.0), px(720.0))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Contact sheet".into()),
-                    appears_transparent: false,
+            let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(1080.0), px(720.0))),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("Contact sheet".into()),
+                        appears_transparent: false,
+                        ..Default::default()
+                    }),
+                    focus: true,
                     ..Default::default()
-                }),
-                focus: true,
-                ..Default::default()
-            },
-            |_, cx| {
-                let view = cx.new(ContactSheet::new);
-                if let Some(path) = std::env::args().nth(1) {
-                    view.update(cx, |this, cx| {
-                        this.open_project(std::path::PathBuf::from(path), cx)
-                    });
-                }
-                view
-            },
-        )
-        .unwrap();
-        cx.activate(true);
-    });
+                },
+                |_, cx| {
+                    let view = cx.new(ContactSheet::new);
+                    if let Some(path) = std::env::args().nth(1) {
+                        view.update(cx, |this, cx| {
+                            this.open_project(std::path::PathBuf::from(path), cx)
+                        });
+                    }
+                    view
+                },
+            )
+            .unwrap();
+            cx.activate(true);
+        });
 }

@@ -275,6 +275,7 @@ mod tests {
             height: 100,
             bytes: 0,
             tags: vec![],
+            rotation: 0,
         }
     }
 
@@ -328,6 +329,7 @@ mod tests {
             height: 10,
             bytes: 1,
             tags: vec![],
+            rotation: 0,
         });
         let options = RenameOptions {
             prefix: "same".into(),
@@ -357,6 +359,7 @@ mod tests {
             height: 10,
             bytes: 1,
             tags: vec![],
+            rotation: 0,
         }];
         let options = RenameOptions {
             prefix: "TARGET".into(),
@@ -396,6 +399,7 @@ mod tests {
                 height: 10,
                 bytes: 1,
                 tags: vec![],
+                rotation: 0,
             },
             Photo {
                 id: PhotoId(2),
@@ -404,6 +408,7 @@ mod tests {
                 height: 10,
                 bytes: 1,
                 tags: vec![],
+                rotation: 0,
             },
         ];
 
@@ -435,6 +440,7 @@ mod tests {
             height: 10,
             bytes: 1,
             tags: vec![],
+            rotation: 0,
         }];
         let options = RenameOptions {
             prefix: "SHOT".into(),

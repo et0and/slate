@@ -24,18 +24,28 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - One file per domain in core. Do not add GPUI dependencies to `slate-core`.
 - `slate-app` owns all dialogs, async tasks, thumbnails and interaction state.
 - Keep the app single-window unless the whole state model is reworked.
-- `left_width`, `right_width` and `resizing` in `app.rs` drive the drag-resizable
-  rails. Keep the centre at `CENTER_MIN` and clamp the widths on every render.
+- `panels.rs` owns the drag-resizable rail geometry. Keep the centre at
+  `CENTER_MIN` and clamp the widths on every render.
+- `menubar.rs` owns every in-window menu. Do not add native duplicate menus.
+- `history.rs` snapshots project and selection before mutating actions. A
+  successful file rename clears history; a save marks older snapshots dirty.
+  Keep both invariants when adding commands.
+- `slate-core/store.rs` is a local SQLite catalogue only; `.contactsheet` files
+  stay portable. Remember a project after open/save and keep the recent list
+  bounded.
 
 ## Rules
 
 - Sheet geometry must come from `layout::plan_sheet`; the preview and PDF must
   never compute their own cells.
+- `Photo.rotation` is clockwise quarter turns. `Photo::aspect` and
+  `oriented_size` account for it; PDF export applies the same turns. Never
+  mutate the stored pixel width/height for rotation.
 - New project fields need `#[serde(default)]` and `Project::normalize` coverage
   so old `.contactsheet` files keep opening.
-- Async project replacement increments `generation`; every thumbnail, import and
-  rotation task checks it before touching state.
-- Keep background concurrency bounded: 3 import/thumbnail jobs, 2 rotation jobs.
+- Async project replacement increments `generation`; every thumbnail and import
+  task checks it before touching state.
+- Keep background concurrency bounded: 3 import/thumbnail jobs.
 - Text field callbacks must not read or update the same field from inside its
   own event handler (GPUI entity re-borrow panic). Pass values through the
   callback instead.
@@ -49,19 +59,34 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 
 ## Style
 
-Monochrome and high contrast, terminal-inspired: one monospaced family, true
-black and white with neutral greys, 1 px rules, square controls, no rounded
-corners, no colour accent and no decorative gradients.
-Restrained shadows are allowed only for the paper preview and modal. Light and
-dark modes live in `theme.rs` (`set_dark`/`is_dark`); the sheet preview and PDF
-stay paper-white via the `sheet_*` tokens.
+High contrast, terminal-inspired: bundled Geist for names and actions, bundled
+Geist Mono for data and shortcut hints, 1 px rules, square controls, SVG icons,
+no rounded corners and no decorative gradients. Light and Dark are monochrome.
+One Dark, Monokai and Catppuccin use their palette accent only for selected
+badges, checkboxes, focused fields and primary controls; do not add other
+colour uses. Theme choices live under View only. Use shadows to lift the topbar, menus, photo frames, paper preview
+and modals; do not add glass or blur.
 
 Sentence case everywhere. Do not add uppercase copy, `to_uppercase()` calls or
 CSS `text-transform: uppercase`. Acronyms such as PDF, RGB and DPI are fine.
-Use the platform UI/mono font constants. Dense, not sparse. The masthead
-starts with the project name; do not add a wordmark, logo or tagline.
+Dense, not sparse. Do not add a wordmark, logo or tagline.
 
-Use `theme.rs` tokens and `widgets.rs` controls instead of one-off styles.
+Do not repeat a label or action on screen. Each panel has a distinct job:
+project and filters on the left, the library in the centre, the sheet on the
+right. Do not add Project, Library or Sheet headings; the content is
+self-evident. If two surfaces need the same concept, give one a different
+purpose or use an icon. Use SVG icons for utility actions; reserve text for
+primary actions. Put every global command in the menu bar; do not duplicate
+export, save, import, selection or theme controls in the panels.
+
+The first panel starts with the compact project name and path and carries the
+selected count. The masthead carries only the menu bar; do not repeat the
+project name or add action buttons there. Menu boxes start at an 8 px inset so
+their labels sit on the same 16 px text gutter as the panels; hover fills the
+full topbar height. Do not switch menus on hover.
+
+Use `theme.rs` tokens, `widgets.rs` controls and `assets.rs` icons instead of
+one-off styles. Load Geist in `main.rs`; never fall back to a system font.
 
 ## Automation
 

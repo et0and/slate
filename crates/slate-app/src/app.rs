@@ -48,7 +48,7 @@ actions!(
 );
 
 const THUMB_CACHE: usize = 32;
-const THUMB_EDGE: u32 = 256;
+const THUMB_EDGE: u32 = 224;
 const THUMB_QUEUE_LIMIT: usize = 512;
 
 #[derive(Debug, Clone)]

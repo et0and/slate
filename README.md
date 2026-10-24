@@ -1,4 +1,5 @@
-<img alt="hero" align="center" src="https://github.com/user-attachments/assets/66d4a3cc-ea82-4c80-b5ee-9f2a1146a20c" />
+<img width="1090" height="481" alt="slate" src="https://github.com/user-attachments/assets/73da4be4-91fc-4fbe-8e07-505b6420fdfe" />
+
 
 <h1 align="center">Slate</h1>
 
@@ -47,16 +48,6 @@ Slate supports popular colour themes, with support for custom themes coming soon
 <img src="docs/app-preview-dark.jpg" width="49%" alt="Slate in dark mode"> <img src="docs/menu-preview.jpg" width="49%" alt="The View menu in One Dark">
 
 *Dark mode and the View menu. Themes: Light, Dark, One Dark, Monokai, Catppuccin.*
-
-## Output
-
-![Example contact sheet](docs/example-sheet.jpg)
-
-*A4 portrait, 3 × 4, 12 photos.*
-
-![Rotated contact sheet](docs/example-rotated.jpg)
-
-*A4 landscape, 4 × 3, rotate-to-fit.*
 
 ## Get started
 

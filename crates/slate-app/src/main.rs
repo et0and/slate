@@ -20,17 +20,26 @@ use app::{
     Quit, SaveProject, SelectAllPhotos,
 };
 
+#[cfg(target_os = "macos")]
+const PRIMARY_MODIFIER: &str = "cmd";
+#[cfg(not(target_os = "macos"))]
+const PRIMARY_MODIFIER: &str = "ctrl";
+
+fn primary(keys: &str) -> String {
+    format!("{PRIMARY_MODIFIER}-{keys}")
+}
+
 fn main() {
     Application::new().run(|cx: &mut App| {
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-o", OpenProject, None),
-            KeyBinding::new("cmd-s", SaveProject, None),
-            KeyBinding::new("cmd-e", ExportSheet, None),
-            KeyBinding::new("cmd-i", ImportFiles, None),
-            KeyBinding::new("cmd-shift-i", ImportFolder, None),
-            KeyBinding::new("cmd-shift-a", SelectAllPhotos, None),
-            KeyBinding::new("cmd-shift-d", DeselectPhotos, None),
+        let bindings = vec![
+            KeyBinding::new(&primary("q"), Quit, None),
+            KeyBinding::new(&primary("o"), OpenProject, None),
+            KeyBinding::new(&primary("s"), SaveProject, None),
+            KeyBinding::new(&primary("e"), ExportSheet, None),
+            KeyBinding::new(&primary("i"), ImportFiles, None),
+            KeyBinding::new(&primary("shift-i"), ImportFolder, None),
+            KeyBinding::new(&primary("shift-a"), SelectAllPhotos, None),
+            KeyBinding::new(&primary("shift-d"), DeselectPhotos, None),
             KeyBinding::new("escape", Dismiss, None),
             KeyBinding::new("backspace", text_field::Backspace, Some("TextField")),
             KeyBinding::new("delete", text_field::Delete, Some("TextField")),
@@ -38,19 +47,25 @@ fn main() {
             KeyBinding::new("right", text_field::Right, Some("TextField")),
             KeyBinding::new("shift-left", text_field::SelectLeft, Some("TextField")),
             KeyBinding::new("shift-right", text_field::SelectRight, Some("TextField")),
-            KeyBinding::new("cmd-a", text_field::SelectAll, Some("TextField")),
-            KeyBinding::new("cmd-c", text_field::Copy, Some("TextField")),
-            KeyBinding::new("cmd-x", text_field::Cut, Some("TextField")),
-            KeyBinding::new("cmd-v", text_field::Paste, Some("TextField")),
+            KeyBinding::new(&primary("a"), text_field::SelectAll, Some("TextField")),
+            KeyBinding::new(&primary("c"), text_field::Copy, Some("TextField")),
+            KeyBinding::new(&primary("x"), text_field::Cut, Some("TextField")),
+            KeyBinding::new(&primary("v"), text_field::Paste, Some("TextField")),
             KeyBinding::new("home", text_field::Home, Some("TextField")),
             KeyBinding::new("end", text_field::End, Some("TextField")),
             KeyBinding::new("enter", text_field::Submit, Some("TextField")),
-            KeyBinding::new(
+        ];
+        #[cfg(target_os = "macos")]
+        let bindings = {
+            let mut bindings = bindings;
+            bindings.push(KeyBinding::new(
                 "ctrl-cmd-space",
                 text_field::ShowCharacterPalette,
                 Some("TextField"),
-            ),
-        ]);
+            ));
+            bindings
+        };
+        cx.bind_keys(bindings);
 
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.set_menus(vec![

@@ -41,8 +41,9 @@ example.*
   sheet can be reopened and exported later.
 - **Light and dark modes**, monochrome and high contrast. The app follows the
   system appearance at launch and switches from the masthead.
-- **One-window, keyboard-first workflow**: `⌘O` open, `⌘S` save, `⌘E` export,
-  `⌘I` import files, `⇧⌘I` import folder, `Esc` dismiss.
+- **One-window, keyboard-first workflow**: open, save and export shortcuts, plus
+  import, select-all and dismiss. macOS uses `⌘`; Windows and Linux use `Ctrl`.
+  The status bar shows the active platform's shortcuts.
 
 ## Run
 

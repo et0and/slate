@@ -61,7 +61,7 @@ impl ContactSheet {
                                 "Project not saved"
                             }),
                     )
-                    .child(micro("⌘S save   ⌘O open   ⌘E export")),
+                    .child(micro(shortcut_hint())),
             )
             .into_any_element()
     }
@@ -150,5 +150,16 @@ impl ContactSheet {
             .child(stats)
             .child(actions)
             .into_any_element()
+    }
+}
+
+fn shortcut_hint() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "⌘S save   ⌘O open   ⌘E export"
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "Ctrl+S save   Ctrl+O open   Ctrl+E export"
     }
 }

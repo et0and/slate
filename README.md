@@ -1,36 +1,39 @@
-# Slate Desktop
+<h1 align="center">Slate</h1>
 
-Contact sheets for photographers. Rust + GPUI.
+<p align="center">Contact sheets for photographers who want to get back to shooting.</p>
 
-![Slate Desktop in light mode](docs/app-preview-light.jpg)
+<p align="center">Local-first. Built in Rust. Print-ready.</p>
 
-![Slate Desktop in dark mode](docs/app-preview-dark.jpg)
+<p align="center">
+  <a href="https://tom.so/work/slate">Website</a>
+  ·
+  <a href="https://github.com/et0and/slate-desktop">Source</a>
+  ·
+  <a href="https://github.com/et0and/slate-desktop/issues">Issues</a>
+  ·
+  <a href="docs/README.md">Docs</a>
+</p>
 
-![The View menu in One Dark](docs/menu-preview.jpg)
+<img src="docs/app-preview-light.jpg" alt="Slate desktop app showing a contact sheet project">
 
-*Light, Dark, and the View menu in One Dark.*
+Slate is a desktop contact-sheet builder for photographers. It turns a folder of photos into a print-ready PDF without uploading a single original. Import a shoot, tag selects, rotate frames, and export. The `.slate` project stays portable, and the photos stay where they are.
 
-## Core
+No account. No upload. No browser tab.
 
-- Import folders, files, or drops. Tag, search, filter, batch rename, and
-  remove from the project without touching the originals.
-- Per-photo rotation from each thumbnail, left of the selection tick.
-- Live contact-sheet layout: paper, orientation, grid, margins, gutters,
-  captions, index numbers, rotate-to-fit, header and footer.
-- Flat PDF export at up to 300 DPI per cell.
-- Undo and redo for project edits; file renames clear the history.
-- Menubar-only commands: File, Edit, View, History, Help. No duplicate action
-  buttons in the panels.
-- Themes under View: Light, Dark, One Dark, Monokai, Catppuccin.
-- `.slate` project files and saved sheets. A local SQLite catalogue powers
-  recent projects.
-- Resizable rails and a virtualised grid for large libraries.
-- macOS HEIC/RAW import through ImageIO; standard formats elsewhere.
+Use Slate for client proofs, portfolio edits, archive indexes, and the first pass through a shoot.
+
+## Why Slate
+
+- **Built for the cull.** Import folders or drops, search by name, tag, batch rename on disk, and rotate each frame from its thumbnail.
+- **Fast on real libraries.** The grid is virtualised and only visible thumbnails load. A 10,000-photo project opens in about 0.2 seconds warm and stays around 137 MB.
+- **Your files stay yours.** Slate reads originals in place. `.slate` files hold layout, tags, rotation, and saved sheets — never copies of your photos.
+- **One sheet, no noise.** Five menus, five themes, zero toolbars. Commands live in File, Edit, View, History, and Help.
+- **Print-ready by default.** A4, A3, Letter, and Tabloid sheets export as flat PDFs at up to 300 DPI per cell.
+- **Undo that keeps up.** Project and selection snapshots share data, so stepping through layout changes does not copy the whole library.
 
 ## Performance
 
-10,000 photos, A4 portrait, 3 × 4, one image per cell. Release build on macOS
-26.5, Apple M5, 24 GB.
+A 10,000-photo project should not feel like a browser tab. Release build on macOS 26.5, Apple M5, 24 GB.
 
 | Metric | Result |
 | --- | ---: |
@@ -42,20 +45,21 @@ Contact sheets for photographers. Rust + GPUI.
 | Batch rename plan, 10,000 files | 20 ms |
 | Thumbnail cache | 256 images |
 
-The grid is virtualised: only visible rows render and only visible thumbnails
-load. PDF export is on demand and pixel-bound; those 10,000 photos become 834 A4
-pages at 12 up.
+PDF export is on demand and pixel-bound; those 10,000 photos become 834 A4 pages at 12 up.
 
-The stress example writes the 10,000-photo project used for the metadata,
-planning and rename rows.
-
-Reproduce the core side with:
+Reproduce the core numbers with:
 
 ```sh
 cargo run --release -p slate-core --example stress
 ```
 
-## Sheet output
+## Interface
+
+<img src="docs/app-preview-dark.jpg" width="49%" alt="Slate in dark mode"> <img src="docs/menu-preview.jpg" width="49%" alt="The View menu in One Dark">
+
+*Dark mode and the View menu. Themes: Light, Dark, One Dark, Monokai, Catppuccin.*
+
+## Output
 
 ![Example contact sheet](docs/example-sheet.jpg)
 
@@ -65,24 +69,29 @@ cargo run --release -p slate-core --example stress
 
 *A4 landscape, 4 × 3, rotate-to-fit.*
 
-## Run
+## Get started
 
-Rust 1.99.1. macOS 11+, Windows 10/11, or Linux with X11/Wayland.
+Build from source with Rust 1.99.1 on macOS 11+, Windows 10/11, or Linux with X11/Wayland.
 
 ```sh
 cargo run --release
 cargo run --release -- ~/Pictures/project.slate
 ```
 
-Build and verify:
+Then:
+
+1. Drop in a folder of photos.
+2. Tag selects, rotate frames, and tune the sheet.
+3. Save the `.slate` project.
+4. Export the PDF.
+
+Verify:
 
 ```sh
-cargo build --release
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 ## License and credits
 
-MIT. Bundled Geist and Geist Mono are under the SIL Open Font License. Sample
-photographs are from Unsplash. SQLite is public domain.
+MIT. Bundled Geist and Geist Mono are under the SIL Open Font License. Sample photographs are from Unsplash. SQLite is public domain.

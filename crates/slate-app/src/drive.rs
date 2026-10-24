@@ -286,6 +286,7 @@ fn wait_for_code(
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
                 let mut buffer = [0_u8; 8192];
                 let read = stream.read(&mut buffer).unwrap_or(0);
                 if read == 0 {
@@ -300,7 +301,10 @@ fn wait_for_code(
                     respond(&mut stream, "400 Bad Request", "Invalid callback.");
                     continue;
                 };
-                let url = Url::parse(&format!("http://127.0.0.1{target}"))?;
+                let Ok(url) = Url::parse(&format!("http://127.0.0.1{target}")) else {
+                    respond(&mut stream, "400 Bad Request", "Invalid callback.");
+                    continue;
+                };
                 if url.path() != CALLBACK_PATH {
                     respond(&mut stream, "404 Not Found", "Not found.");
                     continue;

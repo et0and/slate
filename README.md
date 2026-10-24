@@ -1,5 +1,7 @@
 <p align="center"><img src="docs/hero.png" alt="Slate" width="420"></p>
 
+<h1 align="center">Slate</h1>
+
 <p align="center">Contact sheets for photographers who want to get back to shooting.</p>
 
 <p align="center">Local-first. Built in Rust. Print-ready.</p>

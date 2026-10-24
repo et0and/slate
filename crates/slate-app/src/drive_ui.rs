@@ -393,6 +393,7 @@ impl ContactSheet {
         let generation = self.generation;
         if crate::app::is_untitled(&self.project.name) && !folder_name.is_empty() {
             self.project.name = folder_name.clone();
+            self.dirty = true;
         }
         self.drive_picker = None;
         self.drive_download = Some(DriveDownload { total });

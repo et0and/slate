@@ -1,6 +1,6 @@
 //! Local SQLite catalogue for projects and recent files.
 //!
-//! `.contactsheet` files remain portable documents. This catalogue stores only
+//! `.slate` files remain portable documents. This catalogue stores only
 //! local metadata: project name, path, photo count and last update time.
 
 use std::path::{Path, PathBuf};
@@ -125,19 +125,19 @@ mod tests {
         second.add_photo(PathBuf::from("/tmp/second.jpg"), 10, 10, 1);
 
         store
-            .remember_project(Path::new("/tmp/first.contactsheet"), &first)
+            .remember_project(Path::new("/tmp/first.slate"), &first)
             .unwrap();
         store
-            .remember_project(Path::new("/tmp/second.contactsheet"), &second)
+            .remember_project(Path::new("/tmp/second.slate"), &second)
             .unwrap();
         store
-            .remember_project(Path::new("/tmp/first.contactsheet"), &first)
+            .remember_project(Path::new("/tmp/first.slate"), &first)
             .unwrap();
 
         let recent = store.recent_projects(4).unwrap();
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].name, "First");
-        assert_eq!(recent[0].path, Path::new("/tmp/first.contactsheet"));
+        assert_eq!(recent[0].path, Path::new("/tmp/first.slate"));
         assert_eq!(recent[1].name, "Second");
     }
 }

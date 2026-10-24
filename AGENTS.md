@@ -5,7 +5,7 @@ Slate Desktop: a cross-platform desktop contact-sheet builder in Rust + GPUI 0.2
 ## Commands
 
 - `cargo run --release` — launch
-- `cargo run --release -- path/to/file.contactsheet` — launch with a project
+- `cargo run --release -- path/to/file.slate` — launch with a project
 - `cargo test --workspace` — core + app tests
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo fmt --all`
@@ -30,7 +30,7 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - `history.rs` snapshots project and selection before mutating actions. A
   successful file rename clears history; a save marks older snapshots dirty.
   Keep both invariants when adding commands.
-- `slate-core/store.rs` is a local SQLite catalogue only; `.contactsheet` files
+- `slate-core/store.rs` is a local SQLite catalogue only; `.slate` files
   stay portable. Remember a project after open/save and keep the recent list
   bounded.
 
@@ -42,10 +42,13 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   `oriented_size` account for it; PDF export applies the same turns. Never
   mutate the stored pixel width/height for rotation.
 - New project fields need `#[serde(default)]` and `Project::normalize` coverage
-  so old `.contactsheet` files keep opening.
+  so existing project files keep opening.
 - Async project replacement increments `generation`; every thumbnail and import
   task checks it before touching state.
 - Keep background concurrency bounded: 3 import/thumbnail jobs.
+- The library uses `uniform_list`; never build all photo cells. Schedule thumbs
+  only for the rendered range and keep the cache at `THUMB_CACHE`. The 10,000
+  photo path must stay virtualised.
 - Text field callbacks must not read or update the same field from inside its
   own event handler (GPUI entity re-borrow panic). Pass values through the
   callback instead.

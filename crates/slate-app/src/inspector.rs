@@ -25,6 +25,12 @@ impl ContactSheet {
         let photos = self.export_photos();
         let sheet_layout = layout::SheetLayout::from_settings(&self.project.sheet);
         let page = layout::plan_page(&self.project.sheet, &sheet_layout, &photos, current);
+        let page_ids = page
+            .placements
+            .iter()
+            .filter_map(|placement| photos.get(placement.photo_index).map(|photo| photo.id))
+            .collect::<Vec<_>>();
+        self.schedule_thumb_ids(page_ids, cx);
         let scale = PREVIEW_WIDTH / sheet_layout.page_w_mm;
         let preview_height = sheet_layout.page_h_mm * scale;
         let empty = photos.is_empty();

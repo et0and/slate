@@ -578,7 +578,7 @@ mod tests {
         project.sheet.title = "Keep Me".into();
         project.upsert_saved_sheet("Keep Me".into(), project.sheet.clone(), vec![first_id]);
 
-        let project_path = directory.path().join("saved.contactsheet");
+        let project_path = directory.path().join("saved.slate");
         project.save(&project_path).unwrap();
         let loaded = Project::load(&project_path).unwrap();
         let sheet = loaded.saved_sheets.first().unwrap().clone();

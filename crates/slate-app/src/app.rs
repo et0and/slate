@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, Context, CursorStyle, ExternalPaths, FocusHandle, Focusable, MouseButton,
-    MouseMoveEvent, MouseUpEvent, PathPromptOptions, Render, RenderImage, Window, WindowAppearance,
-    actions, div, prelude::*, px,
+    MouseMoveEvent, MouseUpEvent, PathPromptOptions, Render, RenderImage, UniformListScrollHandle,
+    Window, WindowAppearance, actions, div, prelude::*, px,
 };
 use image::{Frame, RgbaImage};
 use slate_core::PreviewImage;
@@ -42,6 +42,8 @@ actions!(
     ]
 );
 
+const THUMB_CACHE: usize = 256;
+
 #[derive(Debug, Clone)]
 pub enum ThumbState {
     Ready(Arc<RenderImage>),
@@ -69,7 +71,9 @@ pub struct ContactSheet {
     pub(crate) thumb_queue: VecDeque<(PhotoId, PathBuf)>,
     pub(crate) thumbs_in_flight: usize,
     pub(crate) thumbs_queued: HashSet<PhotoId>,
+    pub(crate) thumb_order: VecDeque<PhotoId>,
     pub(crate) rotated_thumbs: HashMap<(PhotoId, u8), Arc<RenderImage>>,
+    pub(crate) grid_scroll: UniformListScrollHandle,
 
     pub(crate) import_queue: VecDeque<PathBuf>,
     pub(crate) importing_paths: HashSet<PathBuf>,
@@ -178,7 +182,9 @@ impl ContactSheet {
             thumb_queue: VecDeque::new(),
             thumbs_in_flight: 0,
             thumbs_queued: HashSet::new(),
+            thumb_order: VecDeque::new(),
             rotated_thumbs: HashMap::new(),
+            grid_scroll: UniformListScrollHandle::default(),
             import_queue: VecDeque::new(),
             importing_paths: HashSet::new(),
             imports_in_flight: 0,
@@ -349,9 +355,11 @@ impl ContactSheet {
         self.import_state = None;
         self.thumbs.clear();
         self.thumbs_queued.clear();
+        self.thumb_order.clear();
         self.thumb_queue.clear();
         self.thumbs_in_flight = 0;
         self.rotated_thumbs.clear();
+        self.grid_scroll = UniformListScrollHandle::default();
         self.project = snapshot.project;
         self.selected = snapshot.selected;
         self.dirty = snapshot.dirty;
@@ -360,7 +368,6 @@ impl ContactSheet {
         self.title_field.update(cx, |field, cx| {
             field.set_value(self.project.sheet.title.clone(), cx);
         });
-        self.schedule_thumbs(cx);
         self.refresh_and_notify(cx);
     }
 
@@ -466,6 +473,7 @@ impl ContactSheet {
             self.thumbs.remove(id);
             self.thumbs_queued.remove(id);
         }
+        self.thumb_order.retain(|id| !ids.contains(id));
         self.rotated_thumbs
             .retain(|(photo_id, _), _| !ids.contains(photo_id));
         self.dirty = true;
@@ -796,7 +804,7 @@ impl ContactSheet {
                     files: true,
                     directories: false,
                     multiple: false,
-                    prompt: Some("Open contact sheet".into()),
+                    prompt: Some("Open .slate project".into()),
                 })
             }) else {
                 return;
@@ -822,9 +830,11 @@ impl ContactSheet {
                 self.import_state = None;
                 self.thumbs.clear();
                 self.thumbs_queued.clear();
+                self.thumb_order.clear();
                 self.rotated_thumbs.clear();
                 self.thumb_queue.clear();
                 self.thumbs_in_flight = 0;
+                self.grid_scroll = UniformListScrollHandle::default();
                 self.selected = project.photo_ids().into_iter().collect();
                 self.filter = Filter::All;
                 self.search.clear();
@@ -855,7 +865,6 @@ impl ContactSheet {
                         String::new()
                     }
                 ));
-                self.schedule_thumbs(cx);
                 self.refresh_preview();
                 cx.notify();
             }
@@ -877,7 +886,7 @@ impl ContactSheet {
 
     pub(crate) fn save_project_as(&mut self, cx: &mut Context<Self>) {
         let directory = self.default_directory();
-        let suggested = self.suggested_file_name("contactsheet");
+        let suggested = self.suggested_file_name("slate");
         cx.spawn(async move |this, cx| {
             let Ok(receiver) =
                 cx.update(|app| app.prompt_for_new_path(&directory, Some(&suggested)))
@@ -887,7 +896,7 @@ impl ContactSheet {
             let Ok(Ok(Some(path))) = receiver.await else {
                 return;
             };
-            let path = ensure_extension(path, "contactsheet");
+            let path = ensure_extension(path, "slate");
             let _ = this.update(cx, |this, cx| this.write_project(path, cx));
         })
         .detach();
@@ -1042,8 +1051,7 @@ impl ContactSheet {
                 let id =
                     self.project
                         .add_photo(path.clone(), probe.width, probe.height, probe.bytes);
-                self.thumbs
-                    .insert(id, ThumbState::Ready(render_image(probe.preview)));
+                self.insert_thumb(id, ThumbState::Ready(render_image(probe.preview)));
                 id
             }
             Err(error) => {
@@ -1060,8 +1068,7 @@ impl ContactSheet {
                             .unwrap_or_default()
                     ));
                 }
-                self.thumbs
-                    .insert(id, ThumbState::Failed(error.to_string()));
+                self.insert_thumb(id, ThumbState::Failed(error.to_string()));
                 id
             }
         };
@@ -1100,16 +1107,47 @@ impl ContactSheet {
 
     // ----- thumbnails ----------------------------------------------------
 
-    pub(crate) fn schedule_thumbs(&mut self, cx: &mut Context<Self>) {
-        for photo in &self.project.photos {
-            if self.thumbs.contains_key(&photo.id) {
+    fn insert_thumb(&mut self, id: PhotoId, state: ThumbState) {
+        if !self.thumbs.contains_key(&id)
+            && self.thumbs.len() >= THUMB_CACHE
+            && let Some(oldest) = self.thumb_order.pop_front()
+        {
+            self.thumbs.remove(&oldest);
+            self.rotated_thumbs
+                .retain(|(photo_id, _), _| *photo_id != oldest);
+            self.thumbs_queued.remove(&oldest);
+        }
+        self.thumb_order.retain(|existing| *existing != id);
+        self.thumb_order.push_back(id);
+        self.thumbs.insert(id, state);
+    }
+
+    pub(crate) fn schedule_visible_thumbs(
+        &mut self,
+        indices: impl IntoIterator<Item = usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let ids: Vec<PhotoId> = indices
+            .into_iter()
+            .filter_map(|index| self.project.photos.get(index).map(|photo| photo.id))
+            .collect();
+        self.schedule_thumb_ids(ids, cx);
+    }
+
+    pub(crate) fn schedule_thumb_ids(
+        &mut self,
+        ids: impl IntoIterator<Item = PhotoId>,
+        cx: &mut Context<Self>,
+    ) {
+        for id in ids {
+            if self.thumbs.contains_key(&id) || self.thumbs_queued.contains(&id) {
                 continue;
             }
-            if self.thumbs_queued.contains(&photo.id) {
+            let Some(path) = self.project.photo(id).map(|photo| photo.path.clone()) else {
                 continue;
-            }
-            self.thumbs_queued.insert(photo.id);
-            self.thumb_queue.push_back((photo.id, photo.path.clone()));
+            };
+            self.thumbs_queued.insert(id);
+            self.thumb_queue.push_back((id, path));
         }
         self.pump_thumbs(cx);
     }
@@ -1133,12 +1171,10 @@ impl ContactSheet {
                     this.thumbs_queued.remove(&id);
                     match result {
                         Ok(preview) => {
-                            this.thumbs
-                                .insert(id, ThumbState::Ready(render_image(preview)));
+                            this.insert_thumb(id, ThumbState::Ready(render_image(preview)));
                         }
                         Err(error) => {
-                            this.thumbs
-                                .insert(id, ThumbState::Failed(error.to_string()));
+                            this.insert_thumb(id, ThumbState::Failed(error.to_string()));
                         }
                     }
                     this.pump_thumbs(cx);

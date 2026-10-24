@@ -1,6 +1,6 @@
 //! Project data: photos, sheet settings and saved sheets.
 //!
-//! Everything in this module serializes to the on-disk `.contactsheet` file,
+//! Everything in this module serializes to the on-disk `.slate` file,
 //! so a project can always be reopened and exported later.
 
 use std::collections::BTreeMap;
@@ -488,7 +488,7 @@ mod tests {
         project.upsert_saved_sheet("street".into(), project.sheet.clone(), vec![id]);
 
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("test.contactsheet");
+        let path = directory.path().join("test.slate");
         project.save(&path).unwrap();
         let loaded = Project::load(&path).unwrap();
 
@@ -575,7 +575,7 @@ mod tests {
     #[test]
     fn relative_photo_paths_resolve_against_the_project_file() {
         let directory = tempfile::tempdir().unwrap();
-        let project_path = directory.path().join("relative.contactsheet");
+        let project_path = directory.path().join("relative.slate");
         let json = r#"{
             "name": "Relative",
             "photos": [
@@ -594,7 +594,7 @@ mod tests {
     #[test]
     fn newer_schema_is_rejected() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("future.contactsheet");
+        let path = directory.path().join("future.slate");
         let mut project = Project::new("Future");
         project.schema = SCHEMA_VERSION + 1;
         project.save(&path).unwrap();

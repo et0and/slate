@@ -34,7 +34,7 @@ fn main() -> anyhow::Result<()> {
     let ids = project.photo_ids();
     let _ = batch::add_tag(&mut project, &ids[0..3], "select");
 
-    let project_path = root.join("sample.contactsheet");
+    let project_path = root.join("sample.slate");
     project.save(&project_path)?;
     let pdf_path = root.join("sample.pdf");
     let summary = export_pdf(&project.name, &project.sheet, &project.photos, &pdf_path)?;

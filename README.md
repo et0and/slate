@@ -1,8 +1,5 @@
 <img width="1090" height="481" alt="slate" src="https://github.com/user-attachments/assets/73da4be4-91fc-4fbe-8e07-505b6420fdfe" />
 
-
-<h1 align="center">Slate</h1>
-
 <p align="center">Photo management for the rest of us</p>
 
 <p align="center">

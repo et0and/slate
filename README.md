@@ -15,7 +15,7 @@
   <a href="docs/README.md">Docs</a>
 </p>
 
-<img src="docs/app-preview-light.jpg" alt="Slate desktop app showing a contact sheet project">
+<img width="1916" height="1076" alt="Screenshot 2026-10-25 at 11 50 43 AM" src="https://github.com/user-attachments/assets/007a6003-ad82-4051-9a47-4787d2f7a0ee" />
 
 Slate turns a folder of photos into a print-ready contact sheet. Save layouts/"slates" that you like for future projects as a .slate file. Import photos from your local storage, or connect your Google Drive account to add (more integrations coming). 
 

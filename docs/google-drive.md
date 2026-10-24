@@ -51,7 +51,10 @@ For development, you can set `SLATE_GOOGLE_CLIENT_ID` and
 at build time; the local file still wins.
 
 Save the file, then choose **Drive → Link Google Drive**. The browser opens, and
-the callback returns to the app. Drive → Unlink removes the stored refresh token.
+the callback returns to the app. Drive → Unlink removes the stored refresh token;
+revoke the grant at
+[myaccount.google.com/permissions](https://myaccount.google.com/permissions) to
+remove Slate from the account entirely.
 
 ## What Slate stores
 

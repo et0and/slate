@@ -23,6 +23,7 @@ macro_rules! icons {
 icons! {
     CHECK => "icons/check.svg",
     CHEVRON_LEFT => "icons/chevron-left.svg",
+    CHEVRON_DOWN => "icons/chevron-down.svg",
     CHEVRON_RIGHT => "icons/chevron-right.svg",
     PLUS => "icons/plus.svg",
     MINUS => "icons/minus.svg",

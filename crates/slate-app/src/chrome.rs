@@ -1,6 +1,6 @@
 //! Window chrome: primary commands and status.
 
-use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
+use gpui::{AnyElement, Context, div, prelude::*, px};
 
 use crate::app::ContactSheet;
 use crate::theme;
@@ -37,29 +37,18 @@ impl ContactSheet {
             .justify_between()
             .px(px(18.0))
             .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .items_center()
-                    .gap(px(9.0))
-                    .child(
-                        div()
-                            .font_family(theme::FONT_MONO)
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(theme::TEXT_BODY))
-                            .text_color(if self.exporting.is_some() {
-                                theme::muted()
-                            } else {
-                                theme::ink()
-                            })
-                            .child(">"),
+                div().flex().flex_1().min_w(px(0.0)).items_center().child(
+                    ui_text(
+                        theme::TEXT_LABEL,
+                        if self.exporting.is_some() {
+                            theme::muted()
+                        } else {
+                            theme::ink()
+                        },
                     )
-                    .child(
-                        ui_text(theme::TEXT_META, theme::muted())
-                            .truncate()
-                            .child(left),
-                    ),
+                    .truncate()
+                    .child(left),
+                ),
             )
             .child(ui_text(theme::TEXT_META, theme::faint()).child(saved))
             .into_any_element()

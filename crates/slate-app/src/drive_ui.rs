@@ -594,7 +594,7 @@ impl ContactSheet {
                     .gap(px(8.0))
                     .children(notice.lines.into_iter().map(|line| {
                         ui_text(theme::TEXT_META + 0.5, theme::muted())
-                            .line_height(px(18.0))
+                            .line_height(px(20.0))
                             .child(line)
                             .into_any_element()
                     })),
@@ -677,7 +677,7 @@ impl ContactSheet {
             }
         }
 
-        let list_height = (entries.len() as f32 * 46.0).clamp(1.0, 380.0);
+        let list_height = (entries.len() as f32 * 48.0).clamp(1.0, 380.0);
         let list: AnyElement = if loading {
             centered_message("Loading Google Drive…")
         } else if let Some(error) = error {
@@ -729,7 +729,7 @@ impl ContactSheet {
                                         "drive-row-{}",
                                         entry.id
                                     ))))
-                                    .h(px(46.0))
+                                    .h(px(48.0))
                                     .px(px(16.0))
                                     .flex()
                                     .items_center()
@@ -759,7 +759,7 @@ impl ContactSheet {
                                         } else {
                                             assets::IMAGE
                                         },
-                                        14.0,
+                                        15.0,
                                         theme::muted(),
                                     ))
                                     .child(
@@ -858,9 +858,9 @@ impl ContactSheet {
                             .flex_col()
                             .gap(px(4.0))
                             .child(
-                                ui_text(16.0, theme::ink())
+                                ui_text(18.0, theme::ink())
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .line_height(px(21.0))
+                                    .line_height(px(23.0))
                                     .child(mode.title()),
                             )
                             .child(

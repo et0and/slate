@@ -305,6 +305,33 @@ mod tests {
     }
 
     #[test]
+    fn custom_paper_uses_free_entry_dimensions() {
+        let settings = SheetSettings {
+            paper: Paper::Custom,
+            custom_paper_width_mm: 120.0,
+            custom_paper_height_mm: 180.0,
+            ..Default::default()
+        };
+        let layout = SheetLayout::from_settings(&settings);
+        assert!((layout.page_w_mm - 120.0).abs() < 0.01);
+        assert!((layout.page_h_mm - 180.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn custom_paper_respects_orientation() {
+        let settings = SheetSettings {
+            paper: Paper::Custom,
+            custom_paper_width_mm: 120.0,
+            custom_paper_height_mm: 180.0,
+            orientation: Orientation::Landscape,
+            ..Default::default()
+        };
+        let (width, height) = settings.paper_mm();
+        assert!((width - 180.0).abs() < 0.01);
+        assert!((height - 120.0).abs() < 0.01);
+    }
+
+    #[test]
     fn landscape_swap_is_exact() {
         let settings = SheetSettings {
             paper: Paper::Letter,

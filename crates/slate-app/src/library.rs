@@ -7,13 +7,13 @@ use gpui::{
 use crate::app::ContactSheet;
 use crate::assets;
 use crate::theme;
-use crate::widgets::{button_with_icon, icon, mono_text, rule, ui_text};
+use crate::widgets::{button_with_icon, icon, mono_text, ui_text};
 
-const CELL_W: f32 = 185.0;
-const THUMB_H: f32 = 136.0;
-const GAP: f32 = 14.0;
-const ROW_H: f32 = 216.0;
-const GRID_PAD: f32 = 20.0;
+const CELL_W: f32 = 200.0;
+const THUMB_H: f32 = 150.0;
+const GAP: f32 = 16.0;
+const ROW_H: f32 = 236.0;
+const GRID_PAD: f32 = 24.0;
 
 impl ContactSheet {
     pub(crate) fn render_library(
@@ -151,9 +151,9 @@ impl ContactSheet {
                 id.0
             ))))
             .absolute()
-            .top(px(9.0))
-            .right(px(35.0))
-            .size(px(20.0))
+            .top(px(10.0))
+            .right(px(38.0))
+            .size(px(22.0))
             .bg(theme::surface())
             .border_1()
             .border_color(theme::rule())
@@ -167,20 +167,20 @@ impl ContactSheet {
                 cx.stop_propagation();
                 this.rotate_photo(id, cx);
             }))
-            .child(icon(assets::ROTATE, 12.0, theme::muted()));
+            .child(icon(assets::ROTATE, 13.0, theme::muted()));
 
         let badge = selected.then(|| {
             div()
                 .absolute()
-                .top(px(9.0))
-                .right(px(9.0))
-                .size(px(20.0))
+                .top(px(10.0))
+                .right(px(10.0))
+                .size(px(22.0))
                 .bg(theme::accent())
                 .shadow_sm()
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(icon(assets::CHECK, 11.0, theme::accent_text()))
+                .child(icon(assets::CHECK, 13.0, theme::accent_text()))
         });
 
         div()
@@ -225,7 +225,7 @@ impl ContactSheet {
                             } else {
                                 gpui::FontWeight::NORMAL
                             })
-                            .line_height(px(15.0))
+                            .line_height(px(19.0))
                             .truncate()
                             .child(name),
                     )
@@ -244,7 +244,7 @@ impl ContactSheet {
                     )
                     .children(tags.map(|tags| {
                         ui_text(theme::TEXT_MICRO, theme::muted())
-                            .line_height(px(12.0))
+                            .line_height(px(14.0))
                             .truncate()
                             .child(tags)
                     })),
@@ -261,40 +261,21 @@ impl ContactSheet {
             .p(px(48.0))
             .child(
                 div()
-                    .w(px(440.0))
+                    .w_full()
+                    .max_w(px(460.0))
                     .flex()
                     .flex_col()
-                    .gap(px(16.0))
-                    .child(
-                        div()
-                            .size(px(34.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .border_1()
-                            .border_color(theme::rule())
-                            .bg(theme::surface())
-                            .shadow_sm()
-                            .child(icon(assets::IMAGE, 17.0, theme::muted())),
-                    )
+                    .gap(px(8.0))
                     .child(
                         ui_text(26.0, theme::ink())
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .line_height(px(32.0))
-                            .child("No photos yet."),
+                            .child("Add some photos here"),
                     )
                     .child(
-                        ui_text(12.0, theme::muted())
-                            .line_height(px(18.0))
-                            .child(
-                                "Drop photos anywhere, or import from the menu. Tag and rename in bulk, then lay out the sheet.",
-                            ),
-                    )
-                    .child(rule())
-                    .child(
-                        mono_text(theme::TEXT_MICRO, theme::faint())
-                            .line_height(px(15.0))
-                            .child("JPEG · PNG · TIFF · WebP · HEIC · RAW"),
+                        ui_text(theme::TEXT_BODY, theme::muted())
+                            .line_height(px(20.0))
+                            .child("Drag and drop or import from a folder"),
                     ),
             )
             .into_any_element()
@@ -315,14 +296,14 @@ impl ContactSheet {
                     .gap(px(14.0))
                     .child(
                         div()
-                            .size(px(34.0))
+                            .size(px(36.0))
                             .flex()
                             .items_center()
                             .justify_center()
                             .border_1()
                             .border_color(theme::rule())
                             .bg(theme::surface())
-                            .child(icon(assets::SEARCH_X, 17.0, theme::muted())),
+                            .child(icon(assets::SEARCH_X, 18.0, theme::muted())),
                     )
                     .child(
                         ui_text(24.0, theme::ink())
@@ -331,8 +312,8 @@ impl ContactSheet {
                             .child("No matches."),
                     )
                     .child(
-                        ui_text(11.5, theme::muted())
-                            .line_height(px(17.0))
+                        ui_text(theme::TEXT_BODY, theme::muted())
+                            .line_height(px(19.0))
                             .child("Try another file name or tag."),
                     )
                     .child(

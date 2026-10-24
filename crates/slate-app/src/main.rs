@@ -25,7 +25,7 @@ use gpui::{
 
 use app::{
     ContactSheet, DeselectPhotos, Dismiss, ExportSheet, HideOthers, HideSlate, ImportFiles,
-    ImportFolder, OpenProject, Quit, Redo, SaveAs, SaveProject, SelectAllPhotos, Undo,
+    ImportFolder, NewProject, OpenProject, Quit, Redo, SaveAs, SaveProject, SelectAllPhotos, Undo,
 };
 
 #[cfg(target_os = "macos")]
@@ -44,6 +44,7 @@ fn main() {
             assets::install_fonts(cx);
             let bindings = vec![
                 KeyBinding::new(&primary("q"), Quit, None),
+                KeyBinding::new(&primary("n"), NewProject, None),
                 KeyBinding::new(&primary("z"), Undo, None),
                 KeyBinding::new(&primary("shift-z"), Redo, None),
                 KeyBinding::new(&primary("o"), OpenProject, None),
@@ -92,7 +93,7 @@ fn main() {
                     window_min_size: Some(size(px(1080.0), px(720.0))),
                     titlebar: Some(TitlebarOptions {
                         title: Some("".into()),
-                        appears_transparent: false,
+                        appears_transparent: true,
                         ..Default::default()
                     }),
                     focus: true,

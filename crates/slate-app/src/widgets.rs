@@ -39,10 +39,6 @@ pub fn label(value: impl Into<SharedString>) -> Div {
         .child(value.into())
 }
 
-pub fn rule() -> Div {
-    div().h(px(1.0)).w_full().bg(theme::rule())
-}
-
 pub fn group_label(text: &str) -> Div {
     ui_text(theme::TEXT_LABEL, theme::muted())
         .font_weight(FontWeight::SEMIBOLD)
@@ -121,7 +117,7 @@ pub fn button_with_icon(
     text: impl Into<SharedString>,
 ) -> Stateful<Div> {
     button_frame(id, ButtonKind::Outline)
-        .child(icon(icon_path, 14.0, theme::muted()))
+        .child(icon(icon_path, 15.0, theme::muted()))
         .child(text.into())
 }
 
@@ -148,6 +144,20 @@ pub fn disabled_button(text: impl Into<SharedString>) -> Div {
 pub fn icon_button(id: impl Into<ElementId>, icon_path: &'static str) -> Stateful<Div> {
     div()
         .id(id)
+        .size(px(30.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .text_color(theme::muted())
+        .hover(|style| style.bg(theme::accent_soft()).text_color(theme::ink()))
+        .active(|style| style.opacity(0.72))
+        .child(icon(icon_path, 15.0, theme::muted()))
+}
+
+pub fn mini_button(id: impl Into<ElementId>, icon_path: &'static str) -> Stateful<Div> {
+    div()
+        .id(id)
         .size(px(28.0))
         .flex()
         .items_center()
@@ -156,28 +166,14 @@ pub fn icon_button(id: impl Into<ElementId>, icon_path: &'static str) -> Statefu
         .text_color(theme::muted())
         .hover(|style| style.bg(theme::accent_soft()).text_color(theme::ink()))
         .active(|style| style.opacity(0.72))
-        .child(icon(icon_path, 14.0, theme::muted()))
-}
-
-pub fn mini_button(id: impl Into<ElementId>, icon_path: &'static str) -> Stateful<Div> {
-    div()
-        .id(id)
-        .size(px(24.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .text_color(theme::muted())
-        .hover(|style| style.bg(theme::accent_soft()).text_color(theme::ink()))
-        .active(|style| style.opacity(0.72))
-        .child(icon(icon_path, 12.0, theme::muted()))
+        .child(icon(icon_path, 13.0, theme::muted()))
 }
 
 pub fn text_button(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Stateful<Div> {
     div()
         .id(id)
-        .h(px(24.0))
-        .px(px(8.0))
+        .h(px(28.0))
+        .px(px(9.0))
         .flex()
         .items_center()
         .justify_center()
@@ -194,7 +190,7 @@ pub fn text_button(id: impl Into<ElementId>, text: impl Into<SharedString>) -> S
 pub fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
     div()
         .id(id)
-        .size(px(20.0))
+        .size(px(22.0))
         .flex()
         .items_center()
         .justify_center()
@@ -207,7 +203,7 @@ pub fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
             theme::surface()
         })
         .active(|style| style.opacity(0.72))
-        .children(on.then(|| icon(assets::CHECK, 11.0, theme::accent_text())))
+        .children(on.then(|| icon(assets::CHECK, 13.0, theme::accent_text())))
 }
 
 pub fn stepper(
@@ -224,7 +220,7 @@ pub fn stepper(
         .child(mini_button(minus_id, assets::MINUS).on_click(on_minus))
         .child(
             mono_text(theme::TEXT_BODY, theme::ink())
-                .w(px(48.0))
+                .w(px(52.0))
                 .text_align(gpui::TextAlign::Center)
                 .child(value),
         )

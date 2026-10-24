@@ -9,9 +9,9 @@ use gpui::{
 
 use crate::app::{
     About, ContactSheet, DeselectPhotos, ExportDrive, ExportSheet, HideOthers, HideSlate,
-    ImportDrive, ImportFiles, ImportFolder, InvertSelection, LinkDrive, OpenProject, OpenRecent,
-    OpenWebsite, Quit, Redo, RemoveSelected, ReportIssue, ResetPanels, SaveAs, SaveProject,
-    SaveSheet, SelectAllPhotos, SetTheme, Undo, UnlinkDrive,
+    ImportDrive, ImportFiles, ImportFolder, InvertSelection, LinkDrive, NewProject, OpenProject,
+    OpenRecent, OpenWebsite, Quit, Redo, RemoveSelected, ReportIssue, ResetPanels, SaveAs,
+    SaveProject, SaveSheet, SelectAllPhotos, SetTheme, Undo, UnlinkDrive,
 };
 use crate::assets;
 use crate::drive_ui::DriveMode;
@@ -186,6 +186,18 @@ impl ContactSheet {
 
     fn file_menu(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut rows = vec![
+            menu_item(
+                "menu-new",
+                assets::FILE_PLUS,
+                "New project",
+                Some(shortcut_label("N")),
+                true,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.close_menu(cx);
+                this.new_project(cx);
+            }))
+            .into_any_element(),
             menu_item(
                 "menu-open",
                 assets::FOLDER,
@@ -402,14 +414,7 @@ impl ContactSheet {
     }
 
     fn view_menu(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let themes = [
-            theme::Theme::Light,
-            theme::Theme::Dark,
-            theme::Theme::OneDark,
-            theme::Theme::Monokai,
-            theme::Theme::Catppuccin,
-        ];
-        let mut rows: Vec<AnyElement> = themes
+        let mut rows: Vec<AnyElement> = theme::Theme::ALL
             .into_iter()
             .map(|choice| self.theme_menu_item(choice, cx))
             .collect();
@@ -636,7 +641,10 @@ impl ContactSheet {
             ],
         };
 
-        let mut file_items = vec![MenuItem::action("Open project…", OpenProject)];
+        let mut file_items = vec![
+            MenuItem::action("New project", NewProject),
+            MenuItem::action("Open project…", OpenProject),
+        ];
         if !self.recent_projects.is_empty() {
             file_items.push(MenuItem::submenu(Menu {
                 name: "Recent".into(),
@@ -678,14 +686,7 @@ impl ContactSheet {
             MenuItem::action("Remove from project", RemoveSelected),
         ];
 
-        let themes = [
-            theme::Theme::Light,
-            theme::Theme::Dark,
-            theme::Theme::OneDark,
-            theme::Theme::Monokai,
-            theme::Theme::Catppuccin,
-        ];
-        let mut view_items: Vec<MenuItem> = themes
+        let mut view_items: Vec<MenuItem> = theme::Theme::ALL
             .into_iter()
             .map(|choice| {
                 let label = if self.theme == choice {

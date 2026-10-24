@@ -16,7 +16,9 @@ use image::{Frame, RgbaImage};
 use slate_core::PreviewImage;
 use slate_core::batch::{self, RenameOptions, RenamePlan};
 use slate_core::import::{self, Probe};
-use slate_core::model::{Filter, Photo, PhotoId, Project, QuarterTurns, SheetId, SheetSettings};
+use slate_core::model::{
+    Filter, Paper, Photo, PhotoId, Project, QuarterTurns, SheetId, SheetSettings,
+};
 use slate_core::pdf::{self, ExportSummary};
 use slate_core::store::{LocalStore, RecentProject};
 
@@ -33,6 +35,7 @@ actions!(
     contact_sheet_actions,
     [
         Quit,
+        NewProject,
         OpenProject,
         SaveProject,
         SaveAs,
@@ -116,6 +119,8 @@ pub struct ContactSheet {
     pub(crate) last_import_render: Instant,
 
     pub(crate) preview_page: usize,
+    pub(crate) preview_modal_open: bool,
+    pub(crate) paper_menu_open: bool,
     pub(crate) rename_pending: Option<Arc<RenamePlan>>,
     pub(crate) rename_options: RenameOptions,
     pub(crate) exporting: Option<String>,
@@ -140,6 +145,8 @@ pub struct ContactSheet {
 
     pub(crate) search_field: gpui::Entity<TextField>,
     pub(crate) title_field: gpui::Entity<TextField>,
+    pub(crate) custom_width_field: gpui::Entity<TextField>,
+    pub(crate) custom_height_field: gpui::Entity<TextField>,
     pub(crate) prefix_field: gpui::Entity<TextField>,
     pub(crate) suffix_field: gpui::Entity<TextField>,
     pub(crate) tag_field: gpui::Entity<TextField>,
@@ -206,12 +213,26 @@ impl ContactSheet {
             })
         });
 
+        let custom_width_field = cx.new(|cx| {
+            let weak = weak.clone();
+            TextField::new(cx, "Width").on_change(move |value, app| {
+                let _ = weak.update(app, |this, cx| this.set_custom_paper_width(value, cx));
+            })
+        });
+
+        let custom_height_field = cx.new(|cx| {
+            let weak = weak.clone();
+            TextField::new(cx, "Height").on_change(move |value, app| {
+                let _ = weak.update(app, |this, cx| this.set_custom_paper_height(value, cx));
+            })
+        });
+
         let mut log = VecDeque::new();
         log.push_back("Session ready".to_string());
         let store = LocalStore::default_location();
         let recent_projects = store.recent_projects(5).unwrap_or_default();
 
-        let this = Self {
+        let mut this = Self {
             project: Project::new("Untitled"),
             project_path: None,
             dirty: false,
@@ -234,6 +255,8 @@ impl ContactSheet {
             import_state: None,
             last_import_render: Instant::now(),
             preview_page: 0,
+            preview_modal_open: false,
+            paper_menu_open: false,
             rename_pending: None,
             rename_options: RenameOptions::default(),
             exporting: None,
@@ -256,10 +279,13 @@ impl ContactSheet {
             recent_projects,
             search_field,
             title_field,
+            custom_width_field,
+            custom_height_field,
             prefix_field,
             suffix_field,
             tag_field,
         };
+        this.sync_paper_fields(cx);
         this.sync_native_menus(cx);
         this
     }
@@ -366,10 +392,13 @@ impl ContactSheet {
         }
         self.theme = theme;
         theme::set_theme(theme);
+        theme::apply_native_appearance(theme);
         self.sync_native_menus(cx);
         let fields = [
             self.search_field.clone(),
             self.title_field.clone(),
+            self.custom_width_field.clone(),
+            self.custom_height_field.clone(),
             self.prefix_field.clone(),
             self.suffix_field.clone(),
             self.tag_field.clone(),
@@ -387,6 +416,63 @@ impl ContactSheet {
     fn refresh_and_notify(&mut self, cx: &mut Context<Self>) {
         self.refresh_preview();
         cx.notify();
+    }
+
+    fn sync_paper_fields(&mut self, cx: &mut Context<Self>) {
+        let width = paper_mm_text(self.project.sheet.custom_paper_width_mm);
+        let height = paper_mm_text(self.project.sheet.custom_paper_height_mm);
+        self.custom_width_field
+            .update(cx, |field, cx| field.set_value(width, cx));
+        self.custom_height_field
+            .update(cx, |field, cx| field.set_value(height, cx));
+    }
+
+    pub(crate) fn toggle_paper_menu(&mut self, cx: &mut Context<Self>) {
+        self.paper_menu_open = !self.paper_menu_open;
+        cx.notify();
+    }
+
+    pub(crate) fn set_paper(&mut self, paper: Paper, cx: &mut Context<Self>) {
+        self.paper_menu_open = false;
+        if self.project.sheet.paper == paper {
+            cx.notify();
+            return;
+        }
+        self.checkpoint();
+        self.project.sheet.paper = paper;
+        self.sync_paper_fields(cx);
+        self.mark_sheet_changed(cx);
+    }
+
+    pub(crate) fn set_custom_paper_width(&mut self, value: &str, cx: &mut Context<Self>) {
+        self.set_custom_paper_dimension(value, true, cx);
+    }
+
+    pub(crate) fn set_custom_paper_height(&mut self, value: &str, cx: &mut Context<Self>) {
+        self.set_custom_paper_dimension(value, false, cx);
+    }
+
+    fn set_custom_paper_dimension(&mut self, value: &str, width: bool, cx: &mut Context<Self>) {
+        let Ok(mm) = value.trim().parse::<f32>() else {
+            return;
+        };
+        if !mm.is_finite() {
+            return;
+        }
+        let mm = mm.clamp(50.0, 2000.0);
+        if width {
+            if self.project.sheet.custom_paper_width_mm == mm {
+                return;
+            }
+            self.project.sheet.custom_paper_width_mm = mm;
+        } else {
+            if self.project.sheet.custom_paper_height_mm == mm {
+                return;
+            }
+            self.project.sheet.custom_paper_height_mm = mm;
+        }
+        self.dirty = true;
+        self.refresh_and_notify(cx);
     }
 
     fn snapshot(&self) -> Snapshot {
@@ -442,6 +528,7 @@ impl ContactSheet {
         self.title_field.update(cx, |field, cx| {
             field.set_value(self.project.sheet.title.clone(), cx);
         });
+        self.sync_paper_fields(cx);
         self.refresh_and_notify(cx);
     }
 
@@ -449,6 +536,8 @@ impl ContactSheet {
         [
             &self.search_field,
             &self.title_field,
+            &self.custom_width_field,
+            &self.custom_height_field,
             &self.prefix_field,
             &self.suffix_field,
             &self.tag_field,
@@ -736,12 +825,6 @@ impl ContactSheet {
         self.refresh_and_notify(cx);
     }
 
-    pub(crate) fn cycle_paper(&mut self, cx: &mut Context<Self>) {
-        self.checkpoint();
-        self.project.sheet.paper = self.project.sheet.paper.next();
-        self.mark_sheet_changed(cx);
-    }
-
     pub(crate) fn toggle_orientation(&mut self, cx: &mut Context<Self>) {
         self.checkpoint();
         self.project.sheet.orientation = self.project.sheet.orientation.toggled();
@@ -870,6 +953,7 @@ impl ContactSheet {
         self.selection_changed();
         self.title_field
             .update(cx, |field, cx| field.set_value(sheet.name.clone(), cx));
+        self.sync_paper_fields(cx);
         self.dirty = true;
         self.set_status(format!("Loaded sheet / {}", sheet.name));
         self.log(format!("Sheet loaded / {}", sheet.name));
@@ -893,6 +977,64 @@ impl ContactSheet {
             self.project.name.clone()
         };
         format!("{}.{extension}", slug(&base))
+    }
+
+    pub(crate) fn new_project(&mut self, cx: &mut Context<Self>) {
+        if self.exporting.is_some() {
+            self.set_status("Finish the export first");
+            cx.notify();
+            return;
+        }
+
+        self.generation = self.generation.wrapping_add(1);
+        self.project = Project::new("Untitled");
+        self.project_path = None;
+        self.dirty = false;
+        self.selected = Arc::new(HashSet::new());
+        self.filter = Filter::All;
+        self.search.clear();
+        self.thumbs.clear();
+        self.thumbs_queued.clear();
+        self.thumb_order.clear();
+        self.thumb_queue.clear();
+        self.thumbs_in_flight = 0;
+        self.rotated_thumbs.clear();
+        self.grid_scroll = UniformListScrollHandle::default();
+        self.import_queue.clear();
+        self.importing_paths.clear();
+        self.imports_in_flight = 0;
+        self.import_state = None;
+        self.drive_picker = None;
+        self.drive_notice = None;
+        self.drive_download = None;
+        self.rename_pending = None;
+        self.rename_options = RenameOptions::default();
+        self.preview_page = 0;
+        self.preview_modal_open = false;
+        self.paper_menu_open = false;
+        self.about_open = false;
+        self.history.clear();
+
+        self.search_field
+            .update(cx, |field, cx| field.set_value("", cx));
+        self.title_field
+            .update(cx, |field, cx| field.set_value("", cx));
+        self.tag_field
+            .update(cx, |field, cx| field.set_value("", cx));
+        self.prefix_field
+            .update(cx, |field, cx| field.set_value("", cx));
+        self.suffix_field
+            .update(cx, |field, cx| field.set_value("", cx));
+        self.sync_paper_fields(cx);
+
+        self.project_changed();
+        self.selection_changed();
+        self.filter_changed();
+        self.refresh_preview();
+        self.set_status("New project / add photos to begin");
+        self.log("New project");
+        memory::release_free_pages();
+        cx.notify();
     }
 
     pub(crate) fn open_project_prompt(&mut self, cx: &mut Context<Self>) {
@@ -944,10 +1086,13 @@ impl ContactSheet {
                     field.set_value(project.sheet.title.clone(), cx)
                 });
                 self.project = project;
+                self.sync_paper_fields(cx);
                 self.project_path = Some(path.clone());
                 self.dirty = false;
                 self.history.clear();
                 self.preview_page = 0;
+                self.preview_modal_open = false;
+                self.paper_menu_open = false;
                 self.rename_pending = None;
                 self.project_changed();
                 self.selection_changed();
@@ -1501,12 +1646,14 @@ impl Render for ContactSheet {
                 theme::Theme::Light
             };
             self.appearance_initialized = true;
+            theme::configure_window_chrome();
+            theme::apply_native_appearance(self.theme);
         }
         theme::set_theme(self.theme);
         self.panels.clamp_to_window(window);
 
         let menu = self.render_menu(cx);
-        let overlay = self.render_overlay(cx);
+        let overlay = self.render_overlay(window, cx);
 
         div()
             .key_context("ContactSheet")
@@ -1520,6 +1667,10 @@ impl Render for ContactSheet {
             .on_action(cx.listener(|this, _: &SaveProject, _, cx| {
                 this.close_menu(cx);
                 this.save_project(cx);
+            }))
+            .on_action(cx.listener(|this, _: &NewProject, _, cx| {
+                this.close_menu(cx);
+                this.new_project(cx);
             }))
             .on_action(cx.listener(|this, _: &OpenProject, _, cx| {
                 this.close_menu(cx);
@@ -1627,7 +1778,11 @@ impl Render for ContactSheet {
                 cx.open_url("https://github.com/et0and/slate-desktop/issues");
             }))
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
-                if this.drive_notice.is_some() {
+                if this.preview_modal_open {
+                    this.preview_modal_open = false;
+                } else if this.paper_menu_open {
+                    this.paper_menu_open = false;
+                } else if this.drive_notice.is_some() {
                     this.drive_notice = None;
                 } else if this.drive_picker.is_some() {
                     this.drive_picker = None;
@@ -1706,6 +1861,11 @@ fn render_image(preview: PreviewImage) -> Arc<RenderImage> {
     let buffer = RgbaImage::from_raw(width, height, bgra)
         .expect("preview width and height match its pixel buffer");
     Arc::new(RenderImage::new(vec![Frame::new(buffer)]))
+}
+
+fn paper_mm_text(mm: f32) -> String {
+    let text = format!("{mm:.1}");
+    text.strip_suffix(".0").unwrap_or(&text).to_string()
 }
 
 pub(crate) fn is_untitled(name: &str) -> bool {

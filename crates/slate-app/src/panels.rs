@@ -4,10 +4,10 @@ use gpui::Window;
 
 pub const DIVIDER_W: f32 = 8.0;
 
-const LEFT_MIN: f32 = 230.0;
-const LEFT_MAX: f32 = 430.0;
-const RIGHT_MIN: f32 = 332.0;
-const RIGHT_MAX: f32 = 520.0;
+const LEFT_MIN: f32 = 250.0;
+const LEFT_MAX: f32 = 460.0;
+const RIGHT_MIN: f32 = 360.0;
+const RIGHT_MAX: f32 = 560.0;
 const CENTER_MIN: f32 = 420.0;
 const GUTTERS: f32 = DIVIDER_W * 2.0;
 
@@ -26,8 +26,8 @@ pub struct PanelLayout {
 impl Default for PanelLayout {
     fn default() -> Self {
         Self {
-            left: 256.0,
-            right: 344.0,
+            left: 272.0,
+            right: 376.0,
             resizing: None,
         }
     }
@@ -120,9 +120,9 @@ mod tests {
     #[test]
     fn dragging_never_crosses_the_centre() {
         let mut panels = PanelLayout::default();
-        panels.resize(ResizeTarget::Left, 1400.0, 1440.0);
+        panels.resize(ResizeTarget::Left, 1600.0, 1600.0);
         assert_eq!(panels.left(), LEFT_MAX);
-        panels.resize(ResizeTarget::Right, 0.0, 1440.0);
+        panels.resize(ResizeTarget::Right, 0.0, 1600.0);
         assert_eq!(panels.right(), RIGHT_MAX);
     }
 }

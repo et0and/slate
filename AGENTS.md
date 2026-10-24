@@ -48,7 +48,9 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   `oriented_size` account for it; PDF export applies the same turns. Never
   mutate the stored pixel width/height for rotation.
 - New project fields need `#[serde(default)]` and `Project::normalize` coverage
-  so existing project files keep opening.
+  so existing project files keep opening. Custom paper stores its free-entry
+  width and height on `SheetSettings`; read the final page size through
+  `paper_mm()`, never `Paper::mm()` directly.
 - Async project replacement increments `generation`; every thumbnail and import
   task checks it before touching state.
 - Keep background concurrency bounded: 3 import/thumbnail jobs.
@@ -87,17 +89,21 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   Linux. Remove the patch when `zed-async-tar` stops pulling xattr 0.2.
 
 - The macOS window title stays empty. Use the native app menu and native
-  command menus; do not set a visible window title.
+  command menus; do not set a visible window title. The titlebar is
+  transparent, so the sidebar, library and inspector backgrounds run to the
+  window edge. Keep `theme::WINDOW_CHROME_TOP` clear for the traffic lights and
+  use the sidebar strip as the window drag region.
 
 ## Style
 
 High contrast, terminal-inspired: bundled Geist for names and actions, bundled
 Geist Mono for data and shortcut hints, 1 px rules, square controls, SVG icons,
 no rounded corners and no decorative gradients. Light and Dark are monochrome.
-One Dark, Monokai and Catppuccin use their palette accent only for selected
-badges, checkboxes, focused fields and primary controls; do not add other
-colour uses. Theme choices live under View only. Use shadows to lift the topbar, menus, photo frames, paper preview
-and modals; do not add glass or blur.
+Palette themes use their accent only for selected badges, checkboxes, focused
+fields and primary controls; do not add other colour uses. Theme choices live
+under View only and iterate `Theme::ALL`. Use the `TEXT_*` tokens; body copy is
+13 pt, labels 11 pt and metadata 10 pt. Use shadows to lift menus, photo frames,
+paper preview and modals; do not add glass or blur.
 
 Sentence case everywhere. Do not add uppercase copy, `to_uppercase()` calls or
 CSS `text-transform: uppercase`. Acronyms such as PDF, RGB and DPI are fine.
@@ -112,10 +118,11 @@ primary actions. Put every global command in the menu bar; do not duplicate
 export, save, import, selection or theme controls in the panels.
 
 The first panel starts with the compact project name and path and carries the
-selected count. The masthead carries only the menu bar; do not repeat the
-project name or add action buttons there. Menu boxes start at an 8 px inset so
-their labels sit on the same 16 px text gutter as the panels; hover fills the
-full topbar height. Do not switch menus on hover.
+selected count. On Windows and Linux the masthead carries only the in-window
+menu bar; on macOS the native menu bar replaces it. Do not repeat the project
+name or add action buttons there. Menu boxes start at an 8 px inset so their
+labels sit on the same 16 px text gutter as the panels; hover fills the full
+topbar height. Do not switch menus on hover.
 
 Use `theme.rs` tokens, `widgets.rs` controls and `assets.rs` icons instead of
 one-off styles. Load Geist in `main.rs`; never fall back to a system font.

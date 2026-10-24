@@ -1,6 +1,8 @@
 //! Left rail: import, search, tags, rename and activity.
 
-use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, prelude::*, px, rgba};
+use gpui::{
+    AnyElement, Context, ElementId, MouseButton, SharedString, Window, div, prelude::*, px, rgba,
+};
 
 use slate_core::batch;
 use slate_core::model::Filter;
@@ -224,6 +226,16 @@ impl ContactSheet {
             .flex()
             .flex_col()
             .bg(theme::panel())
+            .child(
+                div()
+                    .h(px(theme::WINDOW_CHROME_TOP))
+                    .w_full()
+                    .flex_shrink_0()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, _, window, _| window.start_window_move()),
+                    ),
+            )
             .child(
                 div()
                     .id("sidebar-scroll")

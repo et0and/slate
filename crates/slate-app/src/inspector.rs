@@ -515,14 +515,12 @@ impl ContactSheet {
             .child(export_button);
 
         div()
-            .w(px(344.0))
+            .w(px(self.right_width))
             .flex_shrink_0()
             .h_full()
             .flex()
             .flex_col()
             .bg(theme::panel())
-            .border_l_1()
-            .border_color(theme::rule())
             .child(section_header(
                 "03",
                 "Sheet",
@@ -546,8 +544,11 @@ impl ContactSheet {
 
 fn group_label(text: &str) -> AnyElement {
     div()
+        .mt(px(2.0))
         .pt(px(8.0))
-        .pb(px(2.0))
+        .pb(px(3.0))
+        .border_t_1()
+        .border_color(theme::rule())
         .font_family(theme::FONT_UI)
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_size(px(9.0))
@@ -562,6 +563,8 @@ fn setting_row(text: &str, control: impl IntoElement) -> AnyElement {
         .items_center()
         .justify_between()
         .min_h(px(30.0))
+        .border_b_1()
+        .border_color(theme::rule())
         .child(
             div()
                 .font_family(theme::FONT_UI)

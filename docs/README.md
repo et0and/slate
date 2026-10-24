@@ -7,7 +7,15 @@
   theme. They are not live window captures: the macOS session used to build
   this repository was locked, so macOS screen capture was unavailable.
 
-To regenerate the interface preview with Chrome:
+The preview HTML reads the generated photos and PDF thumbnail from
+`target/sample`. Create them first:
+
+```sh
+cargo run -p slate-core --example sample_sheet
+qlmanage -t -s 1400 -o target/sample target/sample/sample.pdf
+```
+
+Then regenerate the interface preview with Chrome:
 
 ```sh
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \

@@ -35,6 +35,8 @@ example.*
   images.
 - **Sheet editor** with a live page preview: paper, orientation, columns, rows,
   margins, gutters, filenames, index numbers, rotate-to-fit, header and footer.
+- **Resizable panels**: drag the vertical dividers to widen the library or sheet
+  rail. The centre adapts and the grid reflows.
 - **Flat PDF export** with one image per cell, at up to 300 DPI for the cell
   size. No layers, no transparency.
 - **Projects and saved sheets** stored as plain JSON (`.contactsheet`), so a
@@ -152,12 +154,12 @@ silently dropped.
 
 ## Design
 
-The interface is monochrome and high contrast: true black and white, neutral
-greys, hairline rules, no rounded corners and no decorative gradients. Restrained
-shadows lift only the paper preview and the confirmation modal. Labels use
-sentence case throughout; no copy is forced to uppercase.
-Metadata is monospaced and dense, while sheet titles and photo names carry the
-hierarchy. Light and dark modes follow the system appearance at launch and can
+The interface is monochrome and high contrast, with a terminal-inspired,
+dense table language: one monospaced family, hairline rules, square controls and
+no rounded corners. Restrained shadows lift only the paper preview and the
+confirmation modal. Labels use sentence case throughout; no copy is forced to
+uppercase. Shortcut hints sit in the action bar and status line, and the library
+and sheet rails are drag-resizable. Light and dark modes follow the system appearance at launch and can
 be switched from the masthead. The PDF stays paper-white with a technical
 caption strip, hairline grid and compact header/footer.
 

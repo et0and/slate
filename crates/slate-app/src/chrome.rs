@@ -4,7 +4,9 @@ use gpui::{AnyElement, Context, div, prelude::*, px};
 
 use crate::app::ContactSheet;
 use crate::theme;
-use crate::widgets::{button, metric, micro, primary_button, text_button};
+use crate::widgets::{
+    command_button, metric, micro, primary_command_button, shortcut_label, text_button,
+};
 
 impl ContactSheet {
     pub(crate) fn render_statusbar(&self) -> AnyElement {
@@ -126,15 +128,19 @@ impl ContactSheet {
             )
             .child(div().w(px(1.0)).h(px(16.0)).bg(theme::rule()).mx(px(3.0)))
             .child(
-                text_button("top-open", "Open")
+                command_button("top-open", "Open", shortcut_label("O"))
                     .on_click(cx.listener(|this, _, _, cx| this.open_project_prompt(cx))),
             )
             .child(
-                button("top-save", if self.dirty { "Save •" } else { "Save" })
-                    .on_click(cx.listener(|this, _, _, cx| this.save_project(cx))),
+                command_button(
+                    "top-save",
+                    if self.dirty { "Save •" } else { "Save" },
+                    shortcut_label("S"),
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.save_project(cx))),
             )
             .child(
-                primary_button("top-export", "Export PDF")
+                primary_command_button("top-export", "Export PDF", shortcut_label("E"))
                     .on_click(cx.listener(|this, _, _, cx| this.export_current(cx))),
             );
 

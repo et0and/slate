@@ -5,11 +5,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gpui::{Rgba, rgb};
 
 #[cfg(target_os = "macos")]
-pub const FONT_UI: &str = "Helvetica Neue";
+pub const FONT_UI: &str = "Menlo";
 #[cfg(target_os = "windows")]
-pub const FONT_UI: &str = "Segoe UI";
+pub const FONT_UI: &str = "Consolas";
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub const FONT_UI: &str = "DejaVu Sans";
+pub const FONT_UI: &str = "DejaVu Sans Mono";
 
 #[cfg(target_os = "macos")]
 pub const FONT_MONO: &str = "Menlo";

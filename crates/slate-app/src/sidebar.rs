@@ -52,6 +52,9 @@ impl ContactSheet {
             .child(
                 div()
                     .mt(px(12.0))
+                    .pt(px(9.0))
+                    .border_t_1()
+                    .border_color(theme::rule())
                     .flex()
                     .items_start()
                     .gap(px(20.0))
@@ -394,14 +397,12 @@ impl ContactSheet {
             }));
 
         div()
-            .w(px(256.0))
+            .w(px(self.left_width))
             .flex_shrink_0()
             .h_full()
             .flex()
             .flex_col()
             .bg(theme::panel())
-            .border_r_1()
-            .border_color(theme::rule())
             .child(section_header("01", "Library", format!("{photo_count:04}")))
             .child(
                 div()
@@ -438,6 +439,8 @@ fn filter_row(
         .font_family(theme::FONT_UI)
         .text_size(px(10.0))
         .text_color(if active { theme::ink() } else { theme::muted() })
+        .border_b_1()
+        .border_color(theme::rule())
         .bg(if active {
             theme::accent_soft()
         } else {

@@ -43,6 +43,13 @@ pub fn section_header(index: &str, title: &str, meta: impl Into<SharedString>) -
                 .child(
                     div()
                         .font_family(theme::FONT_MONO)
+                        .text_size(px(10.0))
+                        .text_color(theme::faint())
+                        .child("▾"),
+                )
+                .child(
+                    div()
+                        .font_family(theme::FONT_MONO)
                         .text_size(px(9.0))
                         .text_color(theme::faint())
                         .child(index.to_string()),
@@ -175,5 +182,81 @@ pub fn toggle(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
                 .h(px(16.0))
                 .ml(px(if on { 14.0 } else { 0.0 }))
                 .bg(if on { theme::paper() } else { theme::faint() }),
+        )
+}
+
+pub fn shortcut_label(key: &str) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        format!("⌘{key}")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        format!("Ctrl+{key}")
+    }
+}
+
+pub fn command_button(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    hint: String,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .h(px(28.0))
+        .px(px(10.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(8.0))
+        .border_1()
+        .border_color(theme::rule())
+        .bg(theme::surface())
+        .cursor_pointer()
+        .font_family(theme::FONT_MONO)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_size(px(10.0))
+        .text_color(theme::ink())
+        .hover(|style| style.bg(theme::accent_soft()).border_color(theme::faint()))
+        .child(text.into())
+        .child(
+            div()
+                .font_family(theme::FONT_MONO)
+                .text_size(px(8.5))
+                .text_color(theme::faint())
+                .child(hint),
+        )
+}
+
+pub fn primary_command_button(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    hint: String,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .h(px(28.0))
+        .px(px(11.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(8.0))
+        .border_1()
+        .border_color(theme::ink())
+        .bg(theme::ink())
+        .cursor_pointer()
+        .font_family(theme::FONT_MONO)
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_size(px(10.0))
+        .text_color(theme::paper())
+        .hover(|style| style.opacity(0.84))
+        .child(text.into())
+        .child(
+            div()
+                .font_family(theme::FONT_MONO)
+                .text_size(px(8.5))
+                .text_color(theme::paper())
+                .opacity(0.7)
+                .child(hint),
         )
 }

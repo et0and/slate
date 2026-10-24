@@ -24,6 +24,8 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - One file per domain in core. Do not add GPUI dependencies to `slate-core`.
 - `slate-app` owns all dialogs, async tasks, thumbnails and interaction state.
 - Keep the app single-window unless the whole state model is reworked.
+- `left_width`, `right_width` and `resizing` in `app.rs` drive the drag-resizable
+  rails. Keep the centre at `CENTER_MIN` and clamp the widths on every render.
 
 ## Rules
 
@@ -47,8 +49,9 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 
 ## Style
 
-Monochrome and high contrast: true black and white with neutral greys, 1 px
-rules, no rounded corners, no colour accent and no decorative gradients.
+Monochrome and high contrast, terminal-inspired: one monospaced family, true
+black and white with neutral greys, 1 px rules, square controls, no rounded
+corners, no colour accent and no decorative gradients.
 Restrained shadows are allowed only for the paper preview and modal. Light and
 dark modes live in `theme.rs` (`set_dark`/`is_dark`); the sheet preview and PDF
 stay paper-white via the `sheet_*` tokens.

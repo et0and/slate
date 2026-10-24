@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui::{
-    App, Context, ExternalPaths, FocusHandle, Focusable, PathPromptOptions, Render, RenderImage,
-    Window, WindowAppearance, actions, div, prelude::*, px,
+    AnyElement, App, Context, CursorStyle, ExternalPaths, FocusHandle, Focusable, MouseButton,
+    MouseMoveEvent, MouseUpEvent, PathPromptOptions, Render, RenderImage, Window, WindowAppearance,
+    actions, div, prelude::*, px,
 };
 use image::{Frame, RgbaImage};
 use slate_core::PreviewImage;
@@ -41,6 +42,18 @@ pub enum ThumbState {
     Ready(Arc<RenderImage>),
     Failed(String),
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResizeTarget {
+    Left,
+    Right,
+}
+
+const LEFT_MIN: f32 = 230.0;
+const LEFT_MAX: f32 = 430.0;
+const RIGHT_MIN: f32 = 320.0;
+const RIGHT_MAX: f32 = 520.0;
+const CENTER_MIN: f32 = 420.0;
 
 #[derive(Debug, Default)]
 pub struct ImportState {
@@ -85,6 +98,9 @@ pub struct ContactSheet {
     pub(crate) window_title: String,
     pub(crate) dark: bool,
     pub(crate) appearance_initialized: bool,
+    pub(crate) left_width: f32,
+    pub(crate) right_width: f32,
+    pub(crate) resizing: Option<ResizeTarget>,
 
     pub(crate) search_field: gpui::Entity<TextField>,
     pub(crate) title_field: gpui::Entity<TextField>,
@@ -187,6 +203,9 @@ impl ContactSheet {
             window_title: String::new(),
             dark: false,
             appearance_initialized: false,
+            left_width: 256.0,
+            right_width: 344.0,
+            resizing: None,
             search_field,
             title_field,
             prefix_field,
@@ -302,6 +321,44 @@ impl ContactSheet {
 
     pub(crate) fn set_status(&mut self, text: impl Into<String>) {
         self.status = text.into();
+    }
+
+    fn clamp_panel_widths(&mut self, window: &Window) {
+        let total = f32::from(window.viewport_size().width);
+        let max_left = (total - self.right_width - CENTER_MIN).clamp(LEFT_MIN, LEFT_MAX);
+        self.left_width = self.left_width.clamp(LEFT_MIN, max_left);
+        let max_right = (total - self.left_width - CENTER_MIN).clamp(RIGHT_MIN, RIGHT_MAX);
+        self.right_width = self.right_width.clamp(RIGHT_MIN, max_right);
+    }
+
+    fn begin_resize(&mut self, target: ResizeTarget, cx: &mut Context<Self>) {
+        self.resizing = Some(target);
+        cx.notify();
+    }
+
+    fn resize_move(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.resizing else {
+            return;
+        };
+        let total = f32::from(window.viewport_size().width);
+        let x = f32::from(event.position.x);
+        match target {
+            ResizeTarget::Left => {
+                let max = (total - self.right_width - CENTER_MIN).clamp(LEFT_MIN, LEFT_MAX);
+                self.left_width = x.clamp(LEFT_MIN, max);
+            }
+            ResizeTarget::Right => {
+                let max = (total - self.left_width - CENTER_MIN).clamp(RIGHT_MIN, RIGHT_MAX);
+                self.right_width = (total - x).clamp(RIGHT_MIN, max);
+            }
+        }
+        cx.notify();
+    }
+
+    fn end_resize(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.resizing.take().is_some() {
+            cx.notify();
+        }
     }
 
     pub(crate) fn toggle_appearance(&mut self, cx: &mut Context<Self>) {
@@ -1273,6 +1330,7 @@ impl Render for ContactSheet {
             self.appearance_initialized = true;
         }
         theme::set_dark(self.dark);
+        self.clamp_panel_widths(window);
 
         let title = format!(
             "{}{} — Contact sheet",
@@ -1310,6 +1368,8 @@ impl Render for ContactSheet {
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 this.begin_import(paths.paths().to_vec(), cx)
             }))
+            .on_mouse_move(cx.listener(Self::resize_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::end_resize))
             .child(self.render_topbar(cx))
             .child(
                 div()
@@ -1317,12 +1377,46 @@ impl Render for ContactSheet {
                     .flex_1()
                     .min_h(px(0.0))
                     .child(self.render_sidebar(window, cx))
+                    .child(divider(
+                        "resize-left",
+                        ResizeTarget::Left,
+                        self.resizing == Some(ResizeTarget::Left),
+                        cx,
+                    ))
                     .child(self.render_library(window, cx))
+                    .child(divider(
+                        "resize-right",
+                        ResizeTarget::Right,
+                        self.resizing == Some(ResizeTarget::Right),
+                        cx,
+                    ))
                     .child(self.render_inspector(window, cx)),
             )
             .child(self.render_statusbar())
             .children(overlay)
     }
+}
+
+fn divider(
+    id: &'static str,
+    target: ResizeTarget,
+    active: bool,
+    cx: &mut Context<ContactSheet>,
+) -> AnyElement {
+    let line = if active { theme::ink() } else { theme::rule() };
+    div()
+        .id(id)
+        .w(px(6.0))
+        .h_full()
+        .flex_shrink_0()
+        .cursor(CursorStyle::ResizeColumn)
+        .hover(|style| style.bg(theme::accent_soft()))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| this.begin_resize(target, cx)),
+        )
+        .child(div().w(px(1.0)).h_full().bg(line))
+        .into_any_element()
 }
 
 fn render_image(preview: PreviewImage) -> Arc<RenderImage> {

@@ -16,9 +16,7 @@
 
 <img src="docs/app-preview-light.jpg" alt="Slate desktop app showing a contact sheet project">
 
-Slate is a desktop contact-sheet builder for photographers. It turns a folder of photos into a print-ready PDF without uploading a single original. Import a shoot, tag selects, rotate frames, and export. The `.slate` project stays portable, and the photos stay where they are.
-
-No account. No upload. No browser tab.
+Slate turns a folder of photos into a print-ready contact sheet. No upload, no account, no browser tab. Import a shoot, tag selects, rotate frames, and export a flat PDF. The `.slate` project stays portable; the photos stay where they are.
 
 Use Slate for client proofs, portfolio edits, archive indexes, and the first pass through a shoot.
 
@@ -29,7 +27,7 @@ Use Slate for client proofs, portfolio edits, archive indexes, and the first pas
 - **Your files stay yours.** Slate reads originals in place. `.slate` files hold layout, tags, rotation, and saved sheets — never copies of your photos.
 - **One sheet, no noise.** Five menus, five themes, zero toolbars. Commands live in File, Edit, View, History, and Help.
 - **Print-ready by default.** A4, A3, Letter, and Tabloid sheets export as flat PDFs at up to 300 DPI per cell.
-- **Undo that keeps up.** Project and selection snapshots share data, so stepping through layout changes does not copy the whole library.
+- **Undo that keeps up.** Every layout change is undoable without copying the whole library.
 
 ## Performance
 
@@ -37,15 +35,15 @@ A 10,000-photo project should not feel like a browser tab. Release build on macO
 
 | Metric | Result |
 | --- | ---: |
-| Project file | 2.2 MB |
-| Launch to loaded project | 0.2 s warm / 0.8 s cold |
-| Resident memory, project loaded | ~137 MB |
+| Project file size | 2.2 MB |
+| Launch with a 10k project | 0.2 s warm / 0.8 s cold |
+| Memory, project open | ~137 MB |
 | Metadata load | 5 ms |
-| Plan 834 pages | 3 ms |
-| Batch rename plan, 10,000 files | 20 ms |
+| Plan an 834-page sheet | 3 ms |
+| Rename plan, 10k files | 20 ms |
 | Thumbnail cache | 256 images |
 
-PDF export is on demand and pixel-bound; those 10,000 photos become 834 A4 pages at 12 up.
+Export is on demand. At 12 up, 10,000 photos become 834 A4 pages.
 
 Reproduce the core numbers with:
 
@@ -71,7 +69,7 @@ cargo run --release -p slate-core --example stress
 
 ## Get started
 
-Build from source with Rust 1.99.1 on macOS 11+, Windows 10/11, or Linux with X11/Wayland.
+Build Slate with Rust 1.99.1. It runs on macOS 11+, Windows 10/11, and Linux with X11/Wayland.
 
 ```sh
 cargo run --release

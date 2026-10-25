@@ -1,3 +1,10 @@
+## [0.0.5](https://github.com/et0and/slate/compare/v0.0.4...v0.0.5) (2026-10-25)
+
+
+### Performance Improvements
+
+* **pdf:** embed JPEGs directly and use xref streams ([9a91e43](https://github.com/et0and/slate/commit/9a91e433233e49f4c65d3b68ed29da8d017fcd84))
+
 ## [0.0.4](https://github.com/et0and/slate/compare/v0.0.3...v0.0.4) (2026-10-25)
 
 

@@ -608,8 +608,7 @@ impl ContactSheet {
             menu_item("menu-about", assets::INFO, "About", None, true)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.menu_open = None;
-                    this.about_open = true;
-                    cx.notify();
+                    this.open_about_window(cx);
                 }))
                 .into_any_element(),
         ]

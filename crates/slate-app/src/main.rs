@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod about_window;
 mod app;
 mod assets;
 mod chrome;
@@ -12,6 +13,7 @@ mod memory;
 mod menubar;
 mod overlay;
 mod panels;
+mod preview_window;
 mod sidebar;
 mod text_field;
 mod theme;
@@ -27,6 +29,7 @@ use app::{
     ContactSheet, DeselectPhotos, Dismiss, ExportSheet, HideOthers, HideSlate, ImportFiles,
     ImportFolder, NewProject, OpenProject, Quit, Redo, SaveAs, SaveProject, SelectAllPhotos, Undo,
 };
+use preview_window::{ClosePreview, NextPage, PreviousPage};
 
 #[cfg(target_os = "macos")]
 const PRIMARY_MODIFIER: &str = "cmd";
@@ -56,6 +59,9 @@ fn main() {
                 KeyBinding::new(&primary("shift-a"), SelectAllPhotos, None),
                 KeyBinding::new(&primary("shift-d"), DeselectPhotos, None),
                 KeyBinding::new("escape", Dismiss, None),
+                KeyBinding::new("left", PreviousPage, Some("PreviewWindow")),
+                KeyBinding::new("right", NextPage, Some("PreviewWindow")),
+                KeyBinding::new("escape", ClosePreview, Some("PreviewWindow")),
                 KeyBinding::new("backspace", text_field::Backspace, Some("TextField")),
                 KeyBinding::new("delete", text_field::Delete, Some("TextField")),
                 KeyBinding::new("left", text_field::Left, Some("TextField")),

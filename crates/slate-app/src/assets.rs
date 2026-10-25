@@ -46,6 +46,7 @@ icons! {
     REDO => "icons/redo.svg",
     CLOCK => "icons/clock.svg",
     INFO => "icons/info.svg",
+    PENCIL => "icons/pencil.svg",
     LAYOUT => "icons/layout.svg",
 }
 

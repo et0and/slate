@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result};
+use chrono::{DateTime, Local};
 use exif::{In, Reader as ExifReader, Tag};
 use image::{DynamicImage, ImageReader, RgbaImage, imageops};
 use jpeg_decoder::{Decoder as JpegDecoder, PixelFormat};
@@ -61,6 +62,8 @@ pub struct Probe {
     pub height: u32,
     pub bytes: u64,
     pub preview: PreviewImage,
+    /// EXIF capture time, or the file modified time when EXIF is absent.
+    pub captured_at: Option<String>,
 }
 
 pub fn is_supported(path: &Path) -> bool {
@@ -148,6 +151,7 @@ pub fn probe(path: &Path, max_edge: u32) -> Result<Probe> {
         height,
         bytes,
         preview,
+        captured_at: capture_datetime(path),
     })
 }
 
@@ -155,6 +159,14 @@ pub fn preview(path: &Path, max_edge: u32) -> Result<PreviewImage> {
     load_oriented(path, Some(max_edge))
         .map(PreviewImage::from_dynamic_image)
         .with_context(|| format!("could not decode {}", path.display()))
+}
+
+/// Decode an in-memory thumbnail, such as a Google Drive preview.
+pub fn preview_bytes(bytes: &[u8], max_edge: u32) -> Result<PreviewImage> {
+    let image = image::load_from_memory(bytes).context("could not decode the thumbnail")?;
+    Ok(PreviewImage::from_dynamic_image(resize_to_edge(
+        image, max_edge,
+    )))
 }
 
 /// Decode a photo with EXIF orientation applied. `max_edge` caps the long edge
@@ -260,6 +272,64 @@ fn composite_on_white(mut rgba: RgbaImage) -> RgbaImage {
         pixel[3] = 255;
     }
     rgba
+}
+
+fn capture_datetime(path: &Path) -> Option<String> {
+    read_exif_datetime(path).or_else(|| {
+        let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+        let local: DateTime<Local> = modified.into();
+        Some(local.format("%Y-%m-%d %H:%M:%S").to_string())
+    })
+}
+
+fn read_exif_datetime(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    let exif = ExifReader::new().read_from_container(&mut reader).ok()?;
+    [Tag::DateTimeOriginal, Tag::DateTime]
+        .into_iter()
+        .find_map(|tag| {
+            exif.get_field(tag, In::PRIMARY)
+                .and_then(|field| normalize_datetime(&field.display_value().to_string()))
+        })
+}
+
+fn normalize_datetime(value: &str) -> Option<String> {
+    let value = value.trim();
+    let date = value.get(0..10)?;
+    let time = value.get(11..19)?;
+    if !date
+        .bytes()
+        .enumerate()
+        .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+        || !time
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 2 | 5) || byte.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(format!(
+        "{}-{}-{} {}:{}:{}",
+        &date[0..4],
+        &date[5..7],
+        &date[8..10],
+        &time[0..2],
+        &time[3..5],
+        &time[6..8]
+    ))
+}
+
+fn resize_to_edge(image: DynamicImage, max_edge: u32) -> DynamicImage {
+    let (width, height) = (image.width(), image.height());
+    let long_edge = width.max(height);
+    if long_edge <= max_edge || long_edge == 0 {
+        return image;
+    }
+    let scale = max_edge as f32 / long_edge as f32;
+    let width = ((width as f32 * scale).round() as u32).max(1);
+    let height = ((height as f32 * scale).round() as u32).max(1);
+    image.resize_exact(width, height, imageops::FilterType::Triangle)
 }
 
 fn read_orientation(path: &Path) -> u8 {
@@ -380,6 +450,19 @@ fn unique() -> u64 {
 mod tests {
     use super::*;
     use image::{ImageBuffer, Rgb};
+
+    #[test]
+    fn normalizes_exif_capture_times() {
+        assert_eq!(
+            normalize_datetime("2025:08:17 09:41:03").as_deref(),
+            Some("2025-08-17 09:41:03")
+        );
+        assert_eq!(
+            normalize_datetime("2025-08-17 09:41:03").as_deref(),
+            Some("2025-08-17 09:41:03")
+        );
+        assert_eq!(normalize_datetime("not a date"), None);
+    }
 
     fn write_test_jpeg(path: &Path, width: u32, height: u32) {
         let image: ImageBuffer<Rgb<u8>, _> = ImageBuffer::from_fn(width, height, |x, y| {

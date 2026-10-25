@@ -23,7 +23,9 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 
 - One file per domain in core. Do not add GPUI dependencies to `slate-core`.
 - `slate-app` owns all dialogs, async tasks, thumbnails and interaction state.
-- Keep the app single-window unless the whole state model is reworked.
+- The main editing window is single-window. Sheet preview and About are native
+  GPUI child windows; keep them as read-only views over `ContactSheet` instead
+  of drawing modal overlays.
 - `panels.rs` owns the drag-resizable rail geometry. Keep the centre at
   `CENTER_MIN` and clamp the widths on every render.
 - `menubar.rs` owns every menu. On macOS, build native menus with
@@ -37,8 +39,10 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   stay portable. Remember a project after open/save and keep the recent list
   bounded. `store::data_directory()` is the one application-data path.
 - `drive.rs` owns Google OAuth, the refresh token, Drive listing and streaming
-  transfers. `drive_ui.rs` owns the Drive browser, setup notice and the
-  import/export workflows. Keep every Drive command in the Drive menu.
+  transfers. `drive_ui.rs` owns the Drive browser, thumbnails, selected stack,
+  setup notice and the import/export workflows. Keep every Drive command in the
+  Drive menu. Drive list responses must explicitly request `size` and
+  `thumbnailLink`; thumbnails are bounded and cached.
 
 ## Rules
 
@@ -50,13 +54,16 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - New project fields need `#[serde(default)]` and `Project::normalize` coverage
   so existing project files keep opening. Custom paper stores its free-entry
   width and height on `SheetSettings`; read the final page size through
-  `paper_mm()`, never `Paper::mm()` directly.
+  `paper_mm()`, never `Paper::mm()` directly. `Photo.captured_at` is
+  `YYYY-MM-DD HH:MM:SS`; bulk rename expands its date tokens from it.
 - Async project replacement increments `generation`; every thumbnail and import
   task checks it before touching state.
 - Keep background concurrency bounded: 3 import/thumbnail jobs.
 - The library uses `uniform_list`; never build all photo cells. Schedule thumbs
   only for the rendered range and keep the cache at `THUMB_CACHE`. The 10,000
-  photo path must stay virtualised.
+  photo path must stay virtualised. A left press toggles the cell and starts a
+  marquee; dragging selects or deselects every cell in the rectangle. Right
+  press opens the single-photo rename menu. Do not add a second click toggle.
 - JPEG thumbnails and PDF images go through `jpeg-decoder`'s reduced IDCT. Do
   not decode a full-resolution JPEG just to make a preview. Call
   `memory::release_free_pages` after a project open or import drains.
@@ -88,11 +95,12 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - `vendor/xattr` is a patched 0.2.3 crate: libc 0.2.191 removed `ENOATTR` on
   Linux. Remove the patch when `zed-async-tar` stops pulling xattr 0.2.
 
-- The macOS window title stays empty. Use the native app menu and native
-  command menus; do not set a visible window title. The titlebar is
+- The macOS main-window title stays empty. Use the native app menu and native
+  command menus; do not set a visible main-window title. The titlebar is
   transparent, so the sidebar, library and inspector backgrounds run to the
   window edge. Keep `theme::WINDOW_CHROME_TOP` clear for the traffic lights and
-  use the sidebar strip as the window drag region.
+  use the sidebar strip as the drag region. Native child windows keep their
+  standard titles.
 
 ## Style
 

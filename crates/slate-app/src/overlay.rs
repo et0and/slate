@@ -8,7 +8,7 @@ use crate::app::ContactSheet;
 use crate::assets;
 use crate::theme;
 use crate::widgets::{
-    button, disabled_button, icon, icon_button, mini_button, mono_text, primary_button, ui_text,
+    button, disabled_button, icon, icon_button, mono_text, primary_button, ui_text,
 };
 
 impl ContactSheet {
@@ -17,17 +17,17 @@ impl ContactSheet {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if self.preview_modal_open {
-            return Some(self.render_preview_modal(window, cx));
+        if let Some(menu) = self.render_photo_context(window, cx) {
+            return Some(menu);
+        }
+        if self.rename_photo_target.is_some() {
+            return Some(self.render_photo_rename(cx));
         }
         if let Some(notice) = self.render_drive_notice(cx) {
             return Some(notice);
         }
         if let Some(picker) = self.render_drive_picker(cx) {
             return Some(picker);
-        }
-        if self.about_open {
-            return Some(self.render_about(cx));
         }
         let plan = self.rename_pending.clone()?;
         let entries = plan.entries.len();
@@ -219,157 +219,83 @@ impl ContactSheet {
         )
     }
 
-    fn render_preview_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let page_count = self.page_count();
-        let current = self.current_page();
-        let (paper_w, paper_h) = self.project.sheet.paper_mm();
+    fn render_photo_context(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let menu = self.photo_context.clone()?;
         let viewport = window.viewport_size();
-        let max_h = (f32::from(viewport.height) - 140.0).max(320.0);
-        let max_w = (f32::from(viewport.width) - 120.0).max(360.0);
-        let width = (max_h * paper_w / paper_h)
-            .min(max_w * 0.72)
-            .clamp(320.0, 900.0);
-        let preview = self.render_sheet_preview(width, current, false, cx);
-
-        let previous = cx.listener(|this, _, _, cx| {
-            let page = this.current_page().saturating_sub(1);
-            this.goto_page(page, cx);
-        });
-        let next = cx.listener(|this, _, _, cx| {
-            let page = (this.current_page() + 1).min(this.page_count().saturating_sub(1));
-            this.goto_page(page, cx);
-        });
-
-        let panel = div()
-            .w(px(width + 48.0))
-            .max_w(px(max_w))
-            .max_h(px(f32::from(viewport.height) - 56.0))
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .bg(theme::surface())
-            .border_1()
-            .border_color(theme::rule())
-            .shadow_2xl()
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .px(px(20.0))
-                    .py(px(14.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .border_b_1()
-                    .border_color(theme::rule())
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.0))
-                            .child(
-                                ui_text(theme::TEXT_TITLE, theme::ink())
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("Sheet preview"),
-                            )
-                            .child(
-                                mono_text(theme::TEXT_META, theme::faint())
-                                    .child(format!("Page {} of {page_count}", current + 1)),
-                            ),
-                    )
-                    .child(
-                        icon_button("preview-close-icon", assets::X).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.preview_modal_open = false;
+        let width = 196.0_f32;
+        let height = 44.0_f32;
+        let left = f32::from(menu.position.x)
+            .min(f32::from(viewport.width) - width - 8.0)
+            .max(8.0);
+        let top = f32::from(menu.position.y)
+            .min(f32::from(viewport.height) - height - 8.0)
+            .max(8.0);
+        let photo_id = menu.photo_id;
+        Some(
+            div()
+                .absolute()
+                .top(px(0.0))
+                .left(px(0.0))
+                .size_full()
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(0.0))
+                        .left(px(0.0))
+                        .size_full()
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.photo_context = None;
                                 cx.notify();
-                            },
-                        )),
-                    ),
-            )
-            .child(
-                div()
-                    .id("preview-body")
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .px(px(24.0))
-                    .py(px(18.0))
-                    .flex()
-                    .justify_center()
-                    .overflow_y_scroll()
-                    .child(preview),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .px(px(20.0))
-                    .py(px(12.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .border_t_1()
-                    .border_color(theme::rule())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(4.0))
-                            .child(
-                                mini_button("preview-prev", assets::CHEVRON_LEFT)
-                                    .on_click(previous),
-                            )
-                            .child(
-                                mono_text(theme::TEXT_META, theme::faint())
-                                    .w(px(58.0))
-                                    .text_align(gpui::TextAlign::Center)
-                                    .child(format!("{} / {}", current + 1, page_count)),
-                            )
-                            .child(
-                                mini_button("preview-next", assets::CHEVRON_RIGHT).on_click(next),
-                            ),
-                    )
-                    .child(button("preview-close", "Close").on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.preview_modal_open = false;
-                            cx.notify();
-                        },
-                    ))),
-            );
-
-        div()
-            .absolute()
-            .top(px(0.0))
-            .left(px(0.0))
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .absolute()
-                    .top(px(0.0))
-                    .left(px(0.0))
-                    .size_full()
-                    .bg(rgba(0x000000aa))
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.preview_modal_open = false;
-                            cx.notify();
-                        }),
-                    ),
-            )
-            .child(panel)
-            .into_any_element()
+                            }),
+                        ),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(top))
+                        .left(px(left))
+                        .w(px(width))
+                        .py(px(4.0))
+                        .bg(theme::surface())
+                        .border_1()
+                        .border_color(theme::rule())
+                        .shadow_2xl()
+                        .child(
+                            div()
+                                .id("photo-context-rename")
+                                .h(px(36.0))
+                                .px(px(10.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(9.0))
+                                .cursor_pointer()
+                                .hover(|style| style.bg(theme::accent_soft()))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.begin_photo_rename(photo_id, window, cx)
+                                }))
+                                .child(icon(assets::PENCIL, 15.0, theme::muted()))
+                                .child(ui_text(theme::TEXT_BODY, theme::ink()).child("Rename…")),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 
-    fn render_about(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let version = env!("CARGO_PKG_VERSION");
-        let close = cx.listener(|this, _, _, cx| {
-            this.about_open = false;
-            cx.notify();
-        });
-
+    fn render_photo_rename(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let current = self
+            .rename_photo_target
+            .and_then(|id| self.project.photo(id))
+            .map(|photo| photo.file_name())
+            .unwrap_or_default();
+        let error = self.rename_photo_error.clone();
         let panel = div()
-            .w(px(440.0))
+            .w(px(460.0))
             .flex()
             .flex_col()
             .overflow_hidden()
@@ -389,9 +315,12 @@ impl ContactSheet {
                     .child(
                         ui_text(theme::TEXT_TITLE, theme::ink())
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("About"),
+                            .child("Rename photo"),
                     )
-                    .child(icon_button("about-close-icon", assets::X).on_click(close)),
+                    .child(
+                        icon_button("photo-rename-close", assets::X)
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_photo_rename(cx))),
+                    ),
             )
             .child(
                 div()
@@ -399,42 +328,18 @@ impl ContactSheet {
                     .py(px(18.0))
                     .flex()
                     .flex_col()
-                    .gap(px(12.0))
-                    .child(
-                        ui_text(20.0, theme::ink())
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Slate Desktop"),
-                    )
+                    .gap(px(8.0))
                     .child(
                         mono_text(theme::TEXT_META, theme::faint())
-                            .child(format!("Version {version}")),
+                            .truncate()
+                            .child(current),
                     )
-                    .child(
-                        ui_text(theme::TEXT_BODY + 0.5, theme::muted())
-                            .line_height(px(20.0))
-                            .child("A monochrome contact-sheet builder for photographers."),
-                    )
-                    .child(div().h(px(1.0)).w_full().bg(theme::rule()))
-                    .child(
-                        ui_text(theme::TEXT_META + 0.5, theme::muted())
-                            .line_height(px(18.0))
-                            .child("Built with GPUI and Rust."),
-                    )
-                    .child(
-                        ui_text(theme::TEXT_META + 0.5, theme::muted())
-                            .line_height(px(18.0))
-                            .child("Geist and Geist Mono, SIL Open Font License."),
-                    )
-                    .child(
-                        ui_text(theme::TEXT_META + 0.5, theme::muted())
-                            .line_height(px(18.0))
-                            .child("Sample photographs from Unsplash."),
-                    )
-                    .child(
-                        ui_text(theme::TEXT_META + 0.5, theme::muted())
-                            .line_height(px(18.0))
-                            .child("GPLv3 License."),
-                    ),
+                    .child(self.rename_photo_field.clone())
+                    .children(error.map(|error| {
+                        ui_text(theme::TEXT_META, theme::muted())
+                            .line_height(px(16.0))
+                            .child(error)
+                    })),
             )
             .child(
                 div()
@@ -442,16 +347,18 @@ impl ContactSheet {
                     .py(px(14.0))
                     .flex()
                     .justify_end()
+                    .gap(px(8.0))
                     .border_t_1()
                     .border_color(theme::rule())
-                    .child(button("about-close", "Close").on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.about_open = false;
-                            cx.notify();
-                        },
-                    ))),
+                    .child(
+                        button("photo-rename-cancel", "Cancel")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_photo_rename(cx))),
+                    )
+                    .child(
+                        primary_button("photo-rename-apply", "Rename")
+                            .on_click(cx.listener(|this, _, _, cx| this.apply_photo_rename(cx))),
+                    ),
             );
-
         div()
             .absolute()
             .top(px(0.0))
@@ -469,10 +376,7 @@ impl ContactSheet {
                     .bg(rgba(0x00000088))
                     .on_mouse_down(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.about_open = false;
-                            cx.notify();
-                        }),
+                        cx.listener(|this, _, _, cx| this.cancel_photo_rename(cx)),
                     ),
             )
             .child(panel)

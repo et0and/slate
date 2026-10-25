@@ -4,11 +4,16 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gpui::{
-    AnyElement, Context, ElementId, SharedString, Window, div, prelude::*, px, rgba, uniform_list,
-};
+use std::sync::Arc;
 
-use crate::app::ContactSheet;
+use gpui::{
+    AnyElement, Context, ElementId, RenderImage, SharedString, Window, div, img, prelude::*, px,
+    rgba, uniform_list,
+};
+use image::{Frame, RgbaImage};
+use slate_core::import;
+
+use crate::app::{ContactSheet, render_image};
 use crate::assets;
 use crate::drive::{self, DriveEntry};
 use crate::theme;
@@ -143,6 +148,10 @@ impl ContactSheet {
                 self.drive_account = None;
                 self.drive_picker = None;
                 self.drive_notice = None;
+                self.drive_thumbs.clear();
+                self.drive_thumb_queue.clear();
+                self.drive_thumb_queued.clear();
+                self.rotated_drive_thumbs.clear();
                 self.sync_native_menus(cx);
                 self.log("Google Drive unlinked");
                 self.set_status("Google Drive unlinked");
@@ -183,6 +192,8 @@ impl ContactSheet {
 
     pub(crate) fn close_drive_picker(&mut self, cx: &mut Context<Self>) {
         if self.drive_picker.take().is_some() {
+            self.drive_thumb_queue.clear();
+            self.drive_thumb_queued.clear();
             cx.notify();
         }
     }
@@ -202,6 +213,9 @@ impl ContactSheet {
                 return;
             }
         };
+        self.drive_thumb_load_id = self.drive_thumb_load_id.wrapping_add(1);
+        self.drive_thumb_queue.clear();
+        self.drive_thumb_queued.clear();
         let Some(picker) = &mut self.drive_picker else {
             return;
         };
@@ -226,11 +240,13 @@ impl ContactSheet {
                     return;
                 }
                 picker.loading = false;
+                let mut thumb_entries = Vec::new();
                 match result {
                     Ok(mut entries) => {
                         if mode == DriveMode::Export {
                             entries.retain(|entry| entry.is_folder);
                         }
+                        thumb_entries = entries.clone();
                         picker.entries = entries;
                         picker.error = None;
                     }
@@ -239,6 +255,9 @@ impl ContactSheet {
                     }
                 }
                 cx.notify();
+                if !thumb_entries.is_empty() {
+                    this.schedule_drive_thumbs(&thumb_entries, cx);
+                }
             });
         })
         .detach();
@@ -547,6 +566,202 @@ impl ContactSheet {
         .detach();
     }
 
+    fn schedule_drive_thumbs(&mut self, entries: &[DriveEntry], cx: &mut Context<Self>) {
+        if self.drive_account.is_none() {
+            return;
+        }
+        for entry in entries {
+            if entry.is_folder || entry.thumbnail_link.is_empty() {
+                continue;
+            }
+            if self.drive_thumbs.contains_key(&entry.id) {
+                continue;
+            }
+            if self.drive_thumb_queued.insert(entry.id.clone()) {
+                self.drive_thumb_queue.push_back(entry.clone());
+            }
+        }
+        while self.drive_thumb_queue.len() > 160 {
+            if let Some(stale) = self.drive_thumb_queue.pop_back() {
+                self.drive_thumb_queued.remove(&stale.id);
+            }
+        }
+        self.pump_drive_thumbs(cx);
+    }
+
+    fn pump_drive_thumbs(&mut self, cx: &mut Context<Self>) {
+        while self.drive_thumbs_in_flight < 4 {
+            let Some(entry) = self.drive_thumb_queue.pop_front() else {
+                break;
+            };
+            if self.drive_thumbs.contains_key(&entry.id) {
+                self.drive_thumb_queued.remove(&entry.id);
+                continue;
+            }
+            let config = match drive::oauth_config() {
+                Ok(config) => config,
+                Err(error) => {
+                    self.log(format!("Drive thumbnail setup: {error:#}"));
+                    self.drive_thumb_queued.remove(&entry.id);
+                    break;
+                }
+            };
+            let Some(account) = self.drive_account.clone() else {
+                self.drive_thumb_queued.remove(&entry.id);
+                break;
+            };
+            let load_id = self.drive_thumb_load_id;
+            let link = entry.thumbnail_link.clone();
+            let id = entry.id.clone();
+            self.drive_thumbs_in_flight += 1;
+            cx.spawn(async move |this, cx| {
+                let result = cx
+                    .background_spawn(async move {
+                        drive::fetch_thumbnail(&config, &account, &link)
+                            .and_then(|bytes| import::preview_bytes(&bytes, 160).map(render_image))
+                    })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    this.drive_thumbs_in_flight = this.drive_thumbs_in_flight.saturating_sub(1);
+                    this.drive_thumb_queued.remove(&id);
+                    if this.drive_thumb_load_id == load_id
+                        && let Ok(image) = result
+                    {
+                        this.drive_thumbs.insert(id, image);
+                        if this.drive_thumbs.len() > 512 {
+                            this.drive_thumbs.clear();
+                        }
+                    }
+                    this.pump_drive_thumbs(cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+    }
+
+    fn drive_stack_image(
+        &mut self,
+        entry: &DriveEntry,
+        angle_tenths: i16,
+    ) -> Option<Arc<RenderImage>> {
+        let image = self.drive_thumbs.get(&entry.id)?.clone();
+        let key = (entry.id.clone(), angle_tenths);
+        if let Some(rotated) = self.rotated_drive_thumbs.get(&key) {
+            return Some(rotated.clone());
+        }
+        let rotated = rotate_render_image_degrees(&image, f32::from(angle_tenths) / 10.0)?;
+        if self.rotated_drive_thumbs.len() > 256 {
+            self.rotated_drive_thumbs.clear();
+        }
+        self.rotated_drive_thumbs.insert(key, rotated.clone());
+        Some(rotated)
+    }
+
+    fn render_drive_stack(&mut self, selected: &HashMap<String, DriveEntry>) -> AnyElement {
+        let mut entries: Vec<DriveEntry> = selected.values().cloned().collect();
+        entries.sort_by_cached_key(|entry| entry.name.to_lowercase());
+        let count = entries.len();
+        let visible = entries.into_iter().take(7).collect::<Vec<_>>();
+        let center = (visible.len().saturating_sub(1) as f32) / 2.0;
+        let mut stack = div().relative().w(px(210.0)).h(px(220.0));
+        for (index, entry) in visible.iter().enumerate() {
+            let angle = ((index as f32 - center) * 4.0 * 10.0).round() as i16;
+            let image = self.drive_stack_image(entry, angle);
+            let preview: AnyElement = if let Some(image) = image {
+                img(image)
+                    .object_fit(gpui::ObjectFit::Contain)
+                    .size_full()
+                    .into_any_element()
+            } else {
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(theme::photo_bg())
+                    .border_1()
+                    .border_color(theme::rule())
+                    .child(icon(assets::IMAGE, 24.0, theme::faint()))
+                    .into_any_element()
+            };
+            stack = stack.child(
+                div()
+                    .absolute()
+                    .top(px(36.0 + index as f32 * 3.0))
+                    .left(px(16.0 + index as f32 * 2.0))
+                    .w(px(180.0))
+                    .h(px(132.0))
+                    .child(preview)
+                    .into_any_element(),
+            );
+        }
+        if count == 0 {
+            stack = stack.child(
+                div()
+                    .absolute()
+                    .top(px(62.0))
+                    .left(px(38.0))
+                    .w(px(150.0))
+                    .h(px(110.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .border_1()
+                    .border_color(theme::rule())
+                    .bg(theme::surface())
+                    .child(icon(assets::IMAGE, 26.0, theme::faint()))
+                    .into_any_element(),
+            );
+        }
+        let extra = count.saturating_sub(visible.len());
+        div()
+            .w(px(232.0))
+            .flex_shrink_0()
+            .border_l_1()
+            .border_color(theme::rule())
+            .bg(theme::panel())
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .px(px(16.0))
+                    .pt(px(14.0))
+                    .pb(px(8.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        ui_text(theme::TEXT_LABEL, theme::muted())
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child("Selected"),
+                    )
+                    .child(mono_text(theme::TEXT_META, theme::faint()).child(format!("{count}"))),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(stack),
+            )
+            .child(
+                div().px(px(16.0)).pb(px(14.0)).child(
+                    mono_text(theme::TEXT_MICRO, theme::faint())
+                        .line_height(px(14.0))
+                        .child(if extra > 0 {
+                            format!("+{extra} more selected")
+                        } else if count == 0 {
+                            "Select a photo to preview it here.".to_string()
+                        } else {
+                            "Click a thumbnail to add or remove it.".to_string()
+                        }),
+                ),
+            )
+            .into_any_element()
+    }
+
     // ----- render --------------------------------------------------------
 
     pub(crate) fn render_drive_notice(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -644,6 +859,7 @@ impl ContactSheet {
             .collect();
         let selected_ids: HashSet<String> = picker.selected.keys().cloned().collect();
         let selected_count = picker.selected.len();
+        let selected_map = picker.selected.clone();
 
         let mut breadcrumb = div()
             .flex()
@@ -677,6 +893,9 @@ impl ContactSheet {
             }
         }
 
+        self.schedule_drive_thumbs(&entries, cx);
+        let selected_stack =
+            (mode == DriveMode::Import).then(|| self.render_drive_stack(&selected_map));
         let list_height = (entries.len() as f32 * 48.0).clamp(1.0, 380.0);
         let list: AnyElement = if loading {
             centered_message("Loading Google Drive…")
@@ -711,7 +930,10 @@ impl ContactSheet {
                 "drive-list",
                 entries.len(),
                 cx.processor(
-                    move |_this, range: std::ops::Range<usize>, _: &mut Window, cx| {
+                    move |this: &mut ContactSheet,
+                          range: std::ops::Range<usize>,
+                          _: &mut Window,
+                          cx| {
                         range
                             .map(|index| {
                                 let entry = rows[index].clone();
@@ -719,6 +941,7 @@ impl ContactSheet {
                                 let is_folder = entry.is_folder;
                                 let row_id = entry.id.clone();
                                 let row_name = entry.name.clone();
+                                let thumbnail = this.drive_thumbs.get(&entry.id).cloned();
                                 let details = if is_folder {
                                     "Folder".to_string()
                                 } else {
@@ -753,15 +976,41 @@ impl ContactSheet {
                                             this.toggle_drive_selection(row_id.clone(), cx);
                                         }
                                     }))
-                                    .child(icon(
-                                        if is_folder {
-                                            assets::FOLDER
-                                        } else {
-                                            assets::IMAGE
-                                        },
-                                        15.0,
-                                        theme::muted(),
-                                    ))
+                                    .child(if let Some(thumbnail) = thumbnail {
+                                        div()
+                                            .size(px(40.0))
+                                            .flex_shrink_0()
+                                            .overflow_hidden()
+                                            .bg(theme::photo_bg())
+                                            .border_1()
+                                            .border_color(theme::rule())
+                                            .child(
+                                                img(thumbnail)
+                                                    .object_fit(gpui::ObjectFit::Cover)
+                                                    .size_full(),
+                                            )
+                                            .into_any_element()
+                                    } else {
+                                        div()
+                                            .size(px(40.0))
+                                            .flex_shrink_0()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .bg(theme::photo_bg())
+                                            .border_1()
+                                            .border_color(theme::rule())
+                                            .child(icon(
+                                                if is_folder {
+                                                    assets::FOLDER
+                                                } else {
+                                                    assets::IMAGE
+                                                },
+                                                17.0,
+                                                theme::muted(),
+                                            ))
+                                            .into_any_element()
+                                    })
                                     .child(
                                         div()
                                             .flex()
@@ -884,7 +1133,13 @@ impl ContactSheet {
                     .border_color(theme::rule())
                     .child(breadcrumb),
             )
-            .child(list)
+            .child(
+                div()
+                    .flex()
+                    .min_h(px(0.0))
+                    .child(div().flex_1().min_w(px(0.0)).child(list))
+                    .children(selected_stack),
+            )
             .child(
                 div()
                     .px(px(20.0))
@@ -940,6 +1195,36 @@ fn centered_message(message: impl Into<SharedString>) -> AnyElement {
         .justify_center()
         .child(ui_text(theme::TEXT_BODY, theme::muted()).child(message.into()))
         .into_any_element()
+}
+
+fn rotate_render_image_degrees(image: &RenderImage, degrees: f32) -> Option<Arc<RenderImage>> {
+    let size = image.size(0);
+    let width = size.width.0 as u32;
+    let height = size.height.0 as u32;
+    let bytes = image.as_bytes(0)?;
+    let source = RgbaImage::from_raw(width, height, bytes.to_vec())?;
+    let mut output = RgbaImage::new(width, height);
+    let angle = degrees.to_radians();
+    let (sin, cos) = angle.sin_cos();
+    let center_x = (width as f32 - 1.0) / 2.0;
+    let center_y = (height as f32 - 1.0) / 2.0;
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as f32 - center_x;
+            let dy = y as f32 - center_y;
+            let source_x = cos * dx + sin * dy + center_x;
+            let source_y = -sin * dx + cos * dy + center_y;
+            if source_x >= 0.0
+                && source_y >= 0.0
+                && source_x < width as f32
+                && source_y < height as f32
+            {
+                let pixel = source.get_pixel(source_x as u32, source_y as u32);
+                output.put_pixel(x, y, *pixel);
+            }
+        }
+    }
+    Some(Arc::new(RenderImage::new(vec![Frame::new(output)])))
 }
 
 fn format_size(bytes: u64) -> String {

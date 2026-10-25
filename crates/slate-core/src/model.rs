@@ -188,6 +188,10 @@ pub struct Photo {
     /// User rotation in clockwise quarter turns.
     #[serde(default)]
     pub rotation: QuarterTurns,
+    /// Camera capture time as `YYYY-MM-DD HH:MM:SS`, falling back to the
+    /// file's modified time for images without EXIF metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captured_at: Option<String>,
 }
 
 impl Photo {
@@ -199,6 +203,7 @@ impl Photo {
             bytes,
             tags: Vec::new(),
             rotation: QuarterTurns::NONE,
+            captured_at: None,
         }
     }
 
@@ -886,6 +891,8 @@ mod tests {
             .tags
             .push("street".into());
         project.photo_mut(PhotoId(1)).unwrap().rotation = QuarterTurns::try_from(1).unwrap();
+        project.photo_mut(PhotoId(1)).unwrap().captured_at =
+            Some("2025-08-17 09:41:03".to_string());
         project.sheet.columns = 5;
         project.sheet.paper = Paper::Custom;
         project.sheet.custom_paper_width_mm = 120.0;
@@ -906,6 +913,10 @@ mod tests {
         assert_eq!(loaded.saved_sheets.len(), 1);
         assert_eq!(loaded.saved_sheets[0].photo_ids, vec![id]);
         assert_eq!(loaded.photos[0].rotation.turns(), 1);
+        assert_eq!(
+            loaded.photos[0].captured_at.as_deref(),
+            Some("2025-08-17 09:41:03")
+        );
     }
 
     #[test]

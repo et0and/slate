@@ -116,6 +116,7 @@ impl ContactSheet {
                         .left(px(cell_x))
                         .w(px(cell_w))
                         .h(px(cell_h))
+                        .overflow_hidden()
                         .border_1()
                         .border_color(theme::sheet_rule())
                         .child(
@@ -196,9 +197,8 @@ impl ContactSheet {
                 .id("preview-open")
                 .cursor_pointer()
                 .hover(|style| style.border_color(theme::accent()))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.preview_modal_open = true;
-                    cx.notify();
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.open_preview_window(window, cx);
                 }))
                 .into_any_element()
         } else {

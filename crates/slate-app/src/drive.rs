@@ -18,6 +18,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use google_drive::Client;
 use google_drive::about::About;
 use google_drive::files::Files;
+#[cfg(test)]
 use google_drive::types::File;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -93,6 +94,7 @@ pub struct DriveEntry {
     pub mime_type: String,
     pub size: u64,
     pub is_folder: bool,
+    pub thumbnail_link: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -593,34 +595,94 @@ pub fn list_folder(
     let account = account.clone();
     let folder_id = folder_id.to_string();
     run(async move {
-        let (client, _) = authorized_client(&config, &account).await?;
-        list_with_client(&Files::new(client), &folder_id).await
+        let (_, access_token) = authorized_client(&config, &account).await?;
+        list_with_token(&http_client(), &access_token, &folder_id).await
     })
 }
 
-async fn list_with_client(files: &Files, folder_id: &str) -> Result<Vec<DriveEntry>> {
+#[derive(Debug, Deserialize)]
+struct DriveFileList {
+    #[serde(default)]
+    files: Vec<DriveFileJson>,
+    #[serde(default, rename = "nextPageToken")]
+    next_page_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DriveFileJson {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default, rename = "mimeType")]
+    mime_type: String,
+    #[serde(default)]
+    size: Option<String>,
+    #[serde(default, rename = "thumbnailLink")]
+    thumbnail_link: String,
+}
+
+impl DriveFileJson {
+    fn into_entry(self) -> Option<DriveEntry> {
+        let is_folder = self.mime_type == FOLDER_MIME;
+        let is_image = !is_folder
+            && (self.mime_type.starts_with("image/")
+                || import::is_supported(Path::new(&self.name)));
+        if !is_folder && !is_image {
+            return None;
+        }
+        Some(DriveEntry {
+            id: self.id,
+            name: self.name,
+            mime_type: self.mime_type,
+            size: self.size.and_then(|size| size.parse().ok()).unwrap_or(0),
+            is_folder,
+            thumbnail_link: self.thumbnail_link,
+        })
+    }
+}
+
+async fn list_with_token(
+    http: &reqwest::Client,
+    access_token: &str,
+    folder_id: &str,
+) -> Result<Vec<DriveEntry>> {
     let query = format!("'{folder_id}' in parents and {FOLDER_QUERY}");
-    let response = files
-        .list_all(
-            "user",
-            "",
-            true,
-            "",
-            false,
-            "folder,name",
-            &query,
-            "",
-            true,
-            false,
-            "",
-        )
-        .await
-        .context("list the Google Drive folder")?;
-    Ok(response
-        .body
-        .into_iter()
-        .filter_map(entry_from_file)
-        .collect())
+    let mut page_token = String::new();
+    let mut entries = Vec::new();
+    loop {
+        let mut request = http.get(DOWNLOAD_BASE).bearer_auth(access_token).query(&[
+            ("q", query.as_str()),
+            (
+                "fields",
+                "nextPageToken,files(id,name,mimeType,size,thumbnailLink)",
+            ),
+            ("pageSize", "1000"),
+            ("orderBy", "folder,name"),
+            ("supportsAllDrives", "true"),
+            ("includeItemsFromAllDrives", "true"),
+        ]);
+        if !page_token.is_empty() {
+            request = request.query(&[("pageToken", page_token.as_str())]);
+        }
+        let response = request
+            .send()
+            .await
+            .context("list the Google Drive folder")?;
+        if !response.status().is_success() {
+            anyhow::bail!("Drive folder returned HTTP {}", response.status());
+        }
+        let page: DriveFileList = response
+            .json()
+            .await
+            .context("decode the Google Drive folder")?;
+        entries.extend(page.files.into_iter().filter_map(DriveFileJson::into_entry));
+        page_token = page.next_page_token;
+        if page_token.is_empty() {
+            break;
+        }
+    }
+    Ok(entries)
 }
 
 pub fn collect_folder_images(
@@ -632,35 +694,18 @@ pub fn collect_folder_images(
     let account = account.clone();
     let folder_id = folder_id.to_string();
     run(async move {
-        let (client, _) = authorized_client(&config, &account).await?;
-        let files = Files::new(client);
+        let (_, access_token) = authorized_client(&config, &account).await?;
+        let http = http_client();
         let mut pending = vec![(folder_id, 0_usize)];
         let mut images = Vec::new();
         while let Some((folder_id, depth)) = pending.pop() {
             if depth > 16 {
                 continue;
             }
-            let query = format!("'{folder_id}' in parents and {FOLDER_QUERY}");
-            let response = files
-                .list_all(
-                    "user",
-                    "",
-                    true,
-                    "",
-                    false,
-                    "folder,name",
-                    &query,
-                    "",
-                    true,
-                    false,
-                    "",
-                )
+            let entries = list_with_token(&http, &access_token, &folder_id)
                 .await
                 .with_context(|| format!("list Drive folder {folder_id}"))?;
-            for file in response.body {
-                let Some(entry) = entry_from_file(file) else {
-                    continue;
-                };
+            for entry in entries {
                 if entry.is_folder {
                     pending.push((entry.id, depth + 1));
                 } else {
@@ -670,6 +715,40 @@ pub fn collect_folder_images(
         }
         images.sort_by_cached_key(|entry| entry.name.to_lowercase());
         Ok(images)
+    })
+}
+
+/// Fetch a Drive-provided thumbnail. Google signs these URLs, so try the
+/// direct URL first and only fall back to the access token if needed.
+pub fn fetch_thumbnail(
+    config: &OAuthConfig,
+    account: &DriveAccount,
+    link: &str,
+) -> Result<Vec<u8>> {
+    let config = config.clone();
+    let account = account.clone();
+    let link = link.to_string();
+    run(async move {
+        let http = http_client();
+        let direct = http
+            .get(&link)
+            .send()
+            .await
+            .context("start the Drive thumbnail request")?;
+        if direct.status().is_success() {
+            return Ok(direct.bytes().await?.to_vec());
+        }
+        let (_, access_token) = authorized_client(&config, &account).await?;
+        let response = http
+            .get(&link)
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .context("start the authenticated Drive thumbnail request")?;
+        if !response.status().is_success() {
+            anyhow::bail!("Drive thumbnail returned HTTP {}", response.status());
+        }
+        Ok(response.bytes().await?.to_vec())
     })
 }
 
@@ -842,6 +921,7 @@ pub fn upload_pdf(
     })
 }
 
+#[cfg(test)]
 fn entry_from_file(file: File) -> Option<DriveEntry> {
     let is_folder = file.mime_type == FOLDER_MIME;
     let is_image = !is_folder
@@ -855,6 +935,7 @@ fn entry_from_file(file: File) -> Option<DriveEntry> {
         mime_type: file.mime_type,
         size: u64::try_from(file.size).unwrap_or(0),
         is_folder,
+        thumbnail_link: file.thumbnail_link,
     })
 }
 
@@ -1038,6 +1119,26 @@ mod tests {
         assert_eq!(safe_file_name("../../etc/passwd"), "passwd");
         assert_eq!(safe_file_name("a:b?.jpg"), "a-b-.jpg");
         assert_eq!(safe_file_name("..."), "image");
+    }
+
+    #[test]
+    fn reads_drive_thumbnails_and_sizes() {
+        let page: DriveFileList = serde_json::from_str(
+            r#"{
+                "files": [{
+                    "id": "photo-1",
+                    "name": "photo.jpg",
+                    "mimeType": "image/jpeg",
+                    "size": "42000",
+                    "thumbnailLink": "https://example.test/thumb"
+                }]
+            }"#,
+        )
+        .unwrap();
+        let entry = page.files.into_iter().next().unwrap().into_entry().unwrap();
+        assert_eq!(entry.size, 42_000);
+        assert_eq!(entry.thumbnail_link, "https://example.test/thumb");
+        assert!(!entry.is_folder);
     }
 
     #[test]

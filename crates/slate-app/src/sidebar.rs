@@ -214,6 +214,39 @@ impl ContactSheet {
                     ),
             )
             .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(label("Date tokens"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .child(text_button("rename-date-token", "{date}").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.append_rename_token("{date}", cx)
+                                }),
+                            ))
+                            .child(text_button("rename-time-token", "{time}").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.append_rename_token("{time}", cx)
+                                }),
+                            ))
+                            .child(text_button("rename-datetime-token", "{datetime}").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.append_rename_token("{datetime}", cx)
+                                }),
+                            )),
+                    )
+                    .child(
+                        mono_text(theme::TEXT_MICRO, theme::faint())
+                            .line_height(px(14.0))
+                            .child("Use in prefix or suffix; falls back to the file date."),
+                    ),
+            )
+            .child(
                 button("rename-review", "Review")
                     .w_full()
                     .on_click(cx.listener(|this, _, _, cx| this.preview_rename(cx))),

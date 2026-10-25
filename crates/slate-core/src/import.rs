@@ -7,7 +7,7 @@
 //! silently lost.
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Cursor};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -409,12 +409,20 @@ fn resize_to_edge(image: DynamicImage, max_edge: u32) -> DynamicImage {
     image.resize_exact(width, height, imageops::FilterType::Triangle)
 }
 
-fn read_orientation(path: &Path) -> u8 {
+pub(crate) fn read_orientation(path: &Path) -> u8 {
     let Ok(file) = File::open(path) else {
         return 1;
     };
-    let mut reader = BufReader::new(file);
-    let Ok(exif) = ExifReader::new().read_from_container(&mut reader) else {
+    orientation_from_reader(&mut BufReader::new(file))
+}
+
+/// Read EXIF orientation from already-loaded image bytes.
+pub(crate) fn orientation_from_bytes(bytes: &[u8]) -> u8 {
+    orientation_from_reader(&mut BufReader::new(Cursor::new(bytes)))
+}
+
+fn orientation_from_reader<R: std::io::BufRead + std::io::Seek>(reader: &mut R) -> u8 {
+    let Ok(exif) = ExifReader::new().read_from_container(reader) else {
         return 1;
     };
     exif.get_field(Tag::Orientation, In::PRIMARY)

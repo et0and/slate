@@ -87,6 +87,13 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - PDF export writes one page at a time. Do not create a `SheetPlan` or hold all
   page pixels for a 500k-photo export; the output is already tens of thousands
   of pages.
+- JPEG export embeds the original DCT stream and applies EXIF/user/placement
+  rotation through the PDF image matrix. Only PNG, CMYK, mirrored EXIF and
+  unsupported JPEGs fall back to decode/re-encode. Do not reintroduce a full
+  decode/resize/encode pass for ordinary JPEGs.
+- Use the PDF xref stream (`/W [1 8 2]`) with 64-bit offsets. A classic xref
+  table is capped at ten decimal offset digits and cannot describe a 500k
+  export.
 - JPEG thumbnails and PDF images go through `jpeg-decoder`'s reduced IDCT. Do
   not decode a full-resolution JPEG just to make a preview. Call
   `memory::release_free_pages` after a project open or import drains.

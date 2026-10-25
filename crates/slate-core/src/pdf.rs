@@ -5,14 +5,14 @@
 //! whole, which is required for a 500k-photo sheet.
 
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Cursor, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use image::codecs::jpeg::JpegEncoder;
-use image::{DynamicImage, RgbImage};
+use image::{ColorType, DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage};
 
-use crate::import::load_oriented;
+use crate::import::{load_oriented, orientation_from_bytes};
 use crate::layout::{MM_TO_PT, Placement, SheetLayout};
 use crate::model::{Photo, PhotoId, PhotoSet, Project, SheetSettings};
 
@@ -144,24 +144,32 @@ impl PdfWriter {
         body.push(']');
         self.object(pages, body.as_bytes())?;
 
-        let xref = self.length;
-        self.write(b"xref\n")?;
-        self.write(format!("0 {}\n", self.offsets.len()).as_bytes())?;
-        self.write(b"0000000000 65535 f \n")?;
-        let entries: String = self
-            .offsets
-            .iter()
-            .skip(1)
-            .map(|offset| format!("{offset:010} 00000 n \n"))
-            .collect();
-        self.write(entries.as_bytes())?;
+        // PDF 1.5 xref streams use explicit 8-byte offsets. The classic xref
+        // table is limited to 10 decimal digits, which a 500k export can exceed.
+        let xref_id = self.alloc();
+        let size = self.offsets.len();
+        let xref_offset = self.length;
+        self.offsets[xref_id as usize] = xref_offset;
+
+        let mut entries = Vec::with_capacity(size * 11);
+        entries.extend_from_slice(&[0]);
+        entries.extend_from_slice(&0u64.to_be_bytes());
+        entries.extend_from_slice(&65535u16.to_be_bytes());
+        for offset in self.offsets.iter().skip(1) {
+            entries.push(1);
+            entries.extend_from_slice(&offset.to_be_bytes());
+            entries.extend_from_slice(&0u16.to_be_bytes());
+        }
+
         self.write(
             format!(
-                "trailer\n<< /Size {} /Root {catalog} 0 R >>\nstartxref\n{xref}\n%%EOF\n",
-                self.offsets.len()
+                "{xref_id} 0 obj\n<< /Type /XRef /Size {size} /W [1 8 2] /Root {catalog} 0 R /Length {} >>\nstream\n",
+                entries.len()
             )
             .as_bytes(),
         )?;
+        self.write(&entries)?;
+        self.write(format!("\nendstream\nendobj\nstartxref\n{xref_offset}\n%%EOF\n").as_bytes())?;
         self.file.flush()?;
         Ok(self.length as usize)
     }
@@ -205,6 +213,16 @@ impl PageContent {
     }
 
     fn image(&mut self, placement: &Placement, page_h_mm: f32, image_id: u32) {
+        self.image_with_turns(placement, page_h_mm, image_id, 0);
+    }
+
+    fn image_with_turns(
+        &mut self,
+        placement: &Placement,
+        page_h_mm: f32,
+        image_id: u32,
+        turns: u8,
+    ) {
         let name = format!("Im{}", self.images.len());
         let x = mm_to_pt(placement.image_x_mm);
         let y = mm_to_pt(top_to_bottom(
@@ -213,10 +231,17 @@ impl PageContent {
         ));
         let width = mm_to_pt(placement.image_w_mm);
         let height = mm_to_pt(placement.image_h_mm);
+        let (a, b, c, d, e, f) = match turns % 4 {
+            0 => (width, 0.0, 0.0, height, x, y),
+            1 => (0.0, -height, width, 0.0, x, y + height),
+            2 => (-width, 0.0, 0.0, -height, x + width, y + height),
+            3 => (0.0, height, -width, 0.0, x + width, y),
+            _ => unreachable!(),
+        };
         use std::fmt::Write as _;
         let _ = writeln!(
             self.ops,
-            "q\n{width:.3} 0 0 {height:.3} {x:.3} {y:.3} cm\n/{name} Do\nQ"
+            "q\n{a:.3} {b:.3} {c:.3} {d:.3} {e:.3} {f:.3} cm\n/{name} Do\nQ"
         );
         self.images.push((name, image_id));
     }
@@ -263,6 +288,76 @@ impl PageContent {
         }
         resources
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum JpegColor {
+    Rgb,
+    Gray,
+}
+
+impl JpegColor {
+    fn device_space(self) -> &'static str {
+        match self {
+            Self::Rgb => "/DeviceRGB",
+            Self::Gray => "/DeviceGray",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct JpegInfo {
+    width: u32,
+    height: u32,
+    color: JpegColor,
+    orientation: u8,
+}
+
+fn jpeg_info(bytes: &[u8]) -> Option<JpegInfo> {
+    let reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    if reader.format() != Some(ImageFormat::Jpeg) {
+        return None;
+    }
+    let decoder = reader.into_decoder().ok()?;
+    let (width, height) = decoder.dimensions();
+    let color = match decoder.color_type() {
+        ColorType::Rgb8 => JpegColor::Rgb,
+        ColorType::L8 => JpegColor::Gray,
+        _ => return None,
+    };
+    Some(JpegInfo {
+        width,
+        height,
+        color,
+        orientation: orientation_from_bytes(bytes),
+    })
+}
+
+/// Quarter turns that map raw JPEG pixels to the displayed orientation.
+/// Mirrored EXIF orientations fall back to the decoder.
+fn orientation_turns(orientation: u8) -> Option<u8> {
+    match orientation {
+        1 => Some(0),
+        3 => Some(2),
+        6 => Some(1),
+        8 => Some(3),
+        _ => None,
+    }
+}
+
+fn raw_jpeg(photo: &Photo, placement: &Placement) -> Option<(Vec<u8>, JpegInfo, u8)> {
+    if !matches!(photo.extension().as_str(), "jpg" | "jpeg") {
+        return None;
+    }
+    let bytes = std::fs::read(&photo.path).ok()?;
+    let info = jpeg_info(&bytes)?;
+    let turns = orientation_turns(info.orientation)?
+        .wrapping_add(photo.rotation().turns())
+        .wrapping_add(u8::from(placement.rotated))
+        % 4;
+    Some((bytes, info, turns))
 }
 
 fn flatten_on_white(image: DynamicImage) -> RgbImage {
@@ -479,34 +574,51 @@ fn write_page(
         let Some(photo) = page_photos.get(placement.photo_index) else {
             continue;
         };
-        match render_photo(photo, placement) {
-            Ok((bytes, width, height)) => {
-                let image_id = writer.alloc();
-                writer.stream(
-                    image_id,
-                    &format!("/Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode"),
-                    &bytes,
-                )?;
-                content.image(placement, layout.page_h_mm, image_id);
-            }
-            Err(error) => {
-                content.rectangle(
-                    layout.page_h_mm,
-                    placement.image_x_mm,
-                    placement.image_y_mm,
-                    placement.image_w_mm,
-                    placement.image_h_mm,
-                );
-                content.text(
-                    layout.page_h_mm,
-                    placement.image_x_mm + 4.0,
-                    placement.image_y_mm + placement.image_h_mm / 2.0,
-                    6.0,
-                    "F3",
-                    TEXT_GREY,
-                    "Missing",
-                );
-                missing.push(format!("{}: {error}", photo.file_name()));
+        if let Some((bytes, info, turns)) = raw_jpeg(photo, placement) {
+            let image_id = writer.alloc();
+            writer.stream(
+                image_id,
+                &format!(
+                    "/Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace {} /BitsPerComponent 8 /Filter /DCTDecode",
+                    info.width,
+                    info.height,
+                    info.color.device_space()
+                ),
+                &bytes,
+            )?;
+            content.image_with_turns(placement, layout.page_h_mm, image_id, turns);
+        } else {
+            match render_photo(photo, placement) {
+                Ok((bytes, width, height)) => {
+                    let image_id = writer.alloc();
+                    writer.stream(
+                        image_id,
+                        &format!(
+                            "/Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode"
+                        ),
+                        &bytes,
+                    )?;
+                    content.image(placement, layout.page_h_mm, image_id);
+                }
+                Err(error) => {
+                    content.rectangle(
+                        layout.page_h_mm,
+                        placement.image_x_mm,
+                        placement.image_y_mm,
+                        placement.image_w_mm,
+                        placement.image_h_mm,
+                    );
+                    content.text(
+                        layout.page_h_mm,
+                        placement.image_x_mm + 4.0,
+                        placement.image_y_mm + placement.image_h_mm / 2.0,
+                        6.0,
+                        "F3",
+                        TEXT_GREY,
+                        "Missing",
+                    );
+                    missing.push(format!("{}: {error}", photo.file_name()));
+                }
             }
         }
         if let Some(caption) = &placement.caption {
@@ -741,6 +853,12 @@ mod tests {
         let bytes = std::fs::read(&output).unwrap();
         assert!(bytes.starts_with(b"%PDF-"));
         assert!(bytes.len() > 4_000, "pdf should contain image data");
+        assert!(
+            bytes
+                .windows(b"/Width 600 /Height 400".len())
+                .any(|window| window == b"/Width 600 /Height 400"),
+            "JPEG photos should be embedded without resizing"
+        );
         assert_eq!(summary.bytes, bytes.len());
         let document = lopdf::Document::load_mem(&bytes).unwrap();
         assert_eq!(document.get_pages().len(), 1);
@@ -827,7 +945,29 @@ mod tests {
         let summary = export_pdf("Test", &settings, &photos, &output).unwrap();
         assert_eq!(summary.pages, 3);
         let bytes = std::fs::read(&output).unwrap();
-        assert!(bytes.len() > 10_000);
+        let document = lopdf::Document::load_mem(&bytes).unwrap();
+        assert_eq!(document.get_pages().len(), 3);
+    }
+
+    #[test]
+    fn exif_orientation_turns_are_mapped() {
+        assert_eq!(orientation_turns(1), Some(0));
+        assert_eq!(orientation_turns(3), Some(2));
+        assert_eq!(orientation_turns(6), Some(1));
+        assert_eq!(orientation_turns(8), Some(3));
+        assert_eq!(orientation_turns(2), None);
+        assert_eq!(orientation_turns(7), None);
+    }
+
+    #[test]
+    fn jpeg_info_reads_dimensions_and_color() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = image_path(directory.path(), "info.jpg", 600, 400);
+        let bytes = std::fs::read(path).unwrap();
+        let info = jpeg_info(&bytes).unwrap();
+        assert_eq!((info.width, info.height), (600, 400));
+        assert!(matches!(info.color, JpegColor::Rgb));
+        assert_eq!(info.orientation, 1);
     }
 
     #[test]

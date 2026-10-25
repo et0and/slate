@@ -1,3 +1,11 @@
+# [0.1.0](https://github.com/et0and/slate/compare/v0.0.7...v0.1.0) (2026-10-25)
+
+
+### Features
+
+* **app:** add photo inspector, sorting and full-screen review ([edc00f5](https://github.com/et0and/slate/commit/edc00f511ca4ba1069197ff1a7f7f01bef529cc3))
+* **core:** add ratings, labels and batch conversion ([11a3702](https://github.com/et0and/slate/commit/11a37022016e4a195bbca407c3fd6deb1626bbc6))
+
 ## [0.0.7](https://github.com/et0and/slate/compare/v0.0.6...v0.0.7) (2026-10-25)
 
 

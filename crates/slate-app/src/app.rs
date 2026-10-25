@@ -488,12 +488,25 @@ impl ContactSheet {
             focus: true,
             ..Default::default()
         };
-        let handle = cx.open_window(options, |_, cx| {
-            cx.new(|cx| PreviewWindow::new(parent, page, cx))
-        });
-        if let Ok(handle) = handle {
-            self.preview_window = Some(handle);
-        }
+        // Open after the current update: the preview reads ContactSheet while
+        // it renders, so the parent must not still be borrowed by this action.
+        cx.spawn(async move |this, cx| {
+            let handle = cx.update(|app| {
+                app.open_window(options, |_, cx| {
+                    cx.new(|cx| PreviewWindow::new(parent, page, cx))
+                })
+            });
+            let Ok(handle) = handle else {
+                return;
+            };
+            if let Ok(handle) = handle {
+                let _ = this.update(cx, |this, cx| {
+                    this.preview_window = Some(handle);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     pub(crate) fn open_about_window(&mut self, cx: &mut Context<Self>) {

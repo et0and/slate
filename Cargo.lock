@@ -5836,7 +5836,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slate-app"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
@@ -5860,7 +5860,7 @@ dependencies = [
 
 [[package]]
 name = "slate-core"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "anyhow",
  "chrono",

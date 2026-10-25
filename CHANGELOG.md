@@ -1,3 +1,10 @@
+## [0.0.6](https://github.com/et0and/slate/compare/v0.0.5...v0.0.6) (2026-10-25)
+
+
+### Performance Improvements
+
+* **pdf:** optimize fallback image paths ([e7d0090](https://github.com/et0and/slate/commit/e7d0090df1e69ba70c0e1fa5da7b76a640646c01))
+
 ## [0.0.5](https://github.com/et0and/slate/compare/v0.0.4...v0.0.5) (2026-10-25)
 
 

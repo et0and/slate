@@ -94,6 +94,10 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - PDF export writes one page at a time. Do not create a `SheetPlan` or hold all
   page pixels for a 500k-photo export; the output is already tens of thousands
   of pages.
+- Telemetry is opt-in through `AXIOM_TOKEN`. Use `tracing` spans in core and
+  app code, never log tokens, file paths or image data, and keep per-photo spans
+  at trace level. The Axiom exporter flushes on process exit. See
+  `docs/telemetry.md`.
 - JPEG export embeds the original DCT stream. All EXIF orientations, including
   mirrors, are represented by the PDF image matrix; CMYK uses `/DeviceCMYK`
   and the Adobe decode inversion. Do not reintroduce decode/resize/encode for
@@ -198,7 +202,7 @@ one-off styles. Load Geist in `main.rs`; never fall back to a system font.
 ## Automation
 
 - `.github/workflows/ci.yml` runs fmt, clippy and tests on macOS, Linux and
-  Windows.
+  Windows, plus a release-mode 500k synthetic stress gate on Linux.
 - `.github/workflows/release.yml` runs semantic-release on `main`, then packages
   a universal macOS `Slate.app`, a Linux tarball and a Windows zip from the
   release tag. See `docs/release.md` for the versioning and notarization rules.
@@ -220,7 +224,11 @@ one-off styles. Load Geist in `main.rs`; never fall back to a system font.
 - Core: layout geometry/pagination/rotation, rename conflicts and apply,
   tag normalisation, project JSON roundtrip, PDF generation with real images,
   missing-file placeholders.
-- App: pure helpers such as `slug`.
+- App: GPUI `TestAppContext` flows for rating, labels, sorting, photo
+  inspection, sheet builder, conversion and the native preview window, plus pure
+  helpers such as `slug`.
+- Stress: `cargo run --release -p slate-core --example stress -- --photos 500000 --gate`
+  enforces file size, load, planning, rename and base-RSS limits on Linux CI.
 - Visual output: run `sample_sheet`, convert the PDF with
   `qlmanage -t -s 1400 -o target/sample target/sample/sample.pdf`, and inspect.
   Regenerate `docs/app-preview-light.jpg` and `docs/app-preview-dark.jpg` with

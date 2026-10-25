@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use tracing::Instrument as _;
+
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, CursorStyle, ExternalPaths, FocusHandle,
     Focusable, MouseButton, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, Point, Render,
@@ -1251,10 +1253,12 @@ impl ContactSheet {
                 format,
                 quality: 92,
             };
+            let span = tracing::info_span!("app.convert", photos = ids.len(), format = ?format);
             let report = cx
                 .background_spawn(async move {
                     convert::convert_photos(&project, &ids, &output_dir, options)
                 })
+                .instrument(span)
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.converting = None;
@@ -2255,8 +2259,10 @@ impl ContactSheet {
         self.set_status(format!("Saving / {}", path.display()));
         cx.notify();
         cx.spawn(async move |this, cx| {
+            let span = tracing::info_span!("app.save_project");
             let result = cx
                 .background_spawn(async move { project.save(&task_path) })
+                .instrument(span)
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.generation != generation {
@@ -2753,6 +2759,7 @@ impl ContactSheet {
 
             let export_settings = settings.clone();
             let export_output = output.clone();
+            let span = tracing::info_span!("app.export", photos = ids.len());
             let result = cx
                 .background_spawn(async move {
                     pdf::export_pdf_ids(
@@ -2763,6 +2770,7 @@ impl ContactSheet {
                         &export_output,
                     )
                 })
+                .instrument(span)
                 .await;
 
             let _ = this.update(cx, |this, cx| {
@@ -3133,7 +3141,194 @@ fn reveal(path: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::slug;
+    use super::*;
+    use crate::assets;
+
+    fn ui_project() -> Project {
+        let mut project = Project::new("UI test");
+        project.add_photo(PathBuf::from("/tmp/a.jpg"), 4000, 3000, 1_000_000);
+        project.add_photo(PathBuf::from("/tmp/b.jpg"), 3000, 4000, 2_000_000);
+        project
+    }
+
+    fn draw_root(view: &gpui::Entity<ContactSheet>, cx: &mut gpui::VisualTestContext) {
+        let size = cx.update(|window, _| window.viewport_size());
+        cx.draw(Point::default(), size, |_, _| {
+            view.clone().into_any_element()
+        });
+    }
+
+    fn ui_click(
+        view: &gpui::Entity<ContactSheet>,
+        cx: &mut gpui::VisualTestContext,
+        selector: &'static str,
+    ) {
+        draw_root(view, cx);
+        let bounds = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("missing debug bounds for {selector}"));
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+    }
+
+    #[gpui::test]
+    fn rating_label_sort_and_inspector_controls_work(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| assets::install_fonts(cx));
+        let (view, cx) = cx.add_window_view(|_, cx| ContactSheet::new(cx));
+        view.update(cx, |view, cx| {
+            view.project = ui_project();
+            view.selected = Arc::new([PhotoId(1), PhotoId(2)].into_iter().collect());
+            view.selection_changed();
+            view.inspected_photo = Some(PhotoId(1));
+            view.inspector_mode = InspectorMode::Photo;
+            view.project_changed();
+            view.filter_changed();
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        ui_click(&view, cx, "rating-3");
+        view.update(cx, |view, _| {
+            assert_eq!(
+                view.project.photo(PhotoId(1)).unwrap().rating(),
+                StarRating::try_from(3).unwrap()
+            );
+            assert_eq!(
+                view.project.photo(PhotoId(2)).unwrap().rating(),
+                StarRating::try_from(3).unwrap()
+            );
+        });
+
+        ui_click(&view, cx, "label-green");
+        view.update(cx, |view, _| {
+            assert_eq!(
+                view.project.photo(PhotoId(1)).unwrap().label(),
+                ColorLabel::Green
+            );
+            assert_eq!(
+                view.project.photo(PhotoId(2)).unwrap().label(),
+                ColorLabel::Green
+            );
+        });
+
+        ui_click(&view, cx, "sort-date");
+        view.update(cx, |view, _| {
+            assert_eq!(view.sort, SortKey::CapturedAt);
+            assert_eq!(view.sort_direction, SortDirection::Ascending);
+        });
+
+        ui_click(&view, cx, "cell-1");
+        view.update(cx, |view, _| {
+            assert_eq!(view.inspected_photo, Some(PhotoId(1)));
+            assert_eq!(view.inspector_mode, InspectorMode::Photo);
+        });
+
+        view.update(cx, |view, cx| view.open_sheet_builder(cx));
+        cx.run_until_parked();
+        view.update(cx, |view, _| {
+            assert_eq!(view.inspector_mode, InspectorMode::Sheet)
+        });
+        draw_root(&view, cx);
+        assert!(cx.debug_bounds("sheet-inspector").is_some());
+
+        view.update(cx, |view, cx| view.open_convert_dialog(cx));
+        cx.run_until_parked();
+        draw_root(&view, cx);
+        assert!(cx.debug_bounds("convert-dialog").is_some());
+        view.update(cx, |view, _| assert!(view.convert_dialog_open));
+    }
+
+    #[gpui::test]
+    fn rating_and_label_edits_undo_as_field_deltas(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| assets::install_fonts(cx));
+        let (view, cx) = cx.add_window_view(|_, cx| ContactSheet::new(cx));
+        view.update(cx, |view, cx| {
+            view.project = ui_project();
+            view.selected = Arc::new([PhotoId(1)].into_iter().collect());
+            view.selection_changed();
+            view.apply_rating(StarRating::try_from(4).unwrap(), cx);
+            view.apply_label(ColorLabel::Red, cx);
+        });
+        view.update(cx, |view, _| {
+            assert_eq!(
+                view.project.photo(PhotoId(1)).unwrap().rating(),
+                StarRating::try_from(4).unwrap()
+            );
+            assert_eq!(
+                view.project.photo(PhotoId(1)).unwrap().label(),
+                ColorLabel::Red
+            );
+        });
+
+        view.update(cx, |view, cx| view.undo(cx));
+        view.update(cx, |view, _| {
+            assert_eq!(
+                view.project.photo(PhotoId(1)).unwrap().rating(),
+                StarRating::try_from(4).unwrap()
+            );
+            assert_eq!(
+                view.project.photo(PhotoId(1)).unwrap().label(),
+                ColorLabel::None
+            );
+        });
+
+        view.update(cx, |view, cx| view.undo(cx));
+        view.update(cx, |view, _| {
+            assert_eq!(
+                view.project.photo(PhotoId(1)).unwrap().rating(),
+                StarRating::NONE
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn eye_button_opens_a_native_preview_window(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| assets::install_fonts(cx));
+        let (view, cx) = cx.add_window_view(|_, cx| ContactSheet::new(cx));
+        view.update(cx, |view, cx| {
+            view.project = ui_project();
+            view.selected = Arc::new([PhotoId(1)].into_iter().collect());
+            view.selection_changed();
+            view.project_changed();
+            view.filter_changed();
+            cx.notify();
+        });
+        cx.run_until_parked();
+        draw_root(&view, cx);
+
+        let windows_before = cx.windows().len();
+        ui_click(&view, cx, "preview-1");
+        cx.run_until_parked();
+        cx.run_until_parked();
+
+        view.update(cx, |view, _| {
+            assert_eq!(view.photo_preview_target, Some(PhotoId(1)));
+            assert_eq!(view.inspected_photo, Some(PhotoId(1)));
+        });
+        assert!(cx.windows().len() > windows_before);
+    }
+
+    #[gpui::test]
+    fn actions_open_the_sheet_builder_and_converter(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| assets::install_fonts(cx));
+        let (view, cx) = cx.add_window_view(|_, cx| ContactSheet::new(cx));
+        view.update(cx, |view, cx| {
+            view.project = ui_project();
+            view.selected = Arc::new([PhotoId(1)].into_iter().collect());
+            view.selection_changed();
+            view.project_changed();
+            view.filter_changed();
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_action(CreateContactSheet);
+        view.update(cx, |view, _| {
+            assert_eq!(view.inspector_mode, InspectorMode::Sheet)
+        });
+
+        cx.dispatch_action(ConvertSelected);
+        view.update(cx, |view, _| assert!(view.convert_dialog_open));
+    }
 
     #[test]
     fn slugs_are_flat_and_safe() {

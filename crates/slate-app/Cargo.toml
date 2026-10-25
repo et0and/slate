@@ -26,6 +26,15 @@ tokio-util.workspace = true
 unicode-segmentation = "1"
 url.workspace = true
 uuid.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-opentelemetry.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-otlp.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

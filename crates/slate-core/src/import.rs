@@ -148,6 +148,7 @@ pub fn file_size(path: &Path) -> u64 {
 /// Thumbnails are decoded lazily when a cell becomes visible. This keeps a
 /// 500k-photo import from doing 500k image decodes whose previews would be
 /// evicted by the bounded thumbnail cache.
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn probe(path: &Path) -> Result<Probe> {
     let bytes = file_size(path);
     let (width, height) = original_dimensions(path)
@@ -160,6 +161,7 @@ pub fn probe(path: &Path) -> Result<Probe> {
     })
 }
 
+#[tracing::instrument(level = "trace", skip_all, fields(max_edge))]
 pub fn preview(path: &Path, max_edge: u32) -> Result<PreviewImage> {
     load_oriented(path, Some(max_edge))
         .map(PreviewImage::from_dynamic_image)
@@ -177,6 +179,7 @@ pub fn preview_bytes(bytes: &[u8], max_edge: u32) -> Result<PreviewImage> {
 /// Decode a photo with EXIF orientation applied. `max_edge` caps the long edge
 /// so a contact sheet export never embeds more pixels than print resolution
 /// needs.
+#[tracing::instrument(level = "trace", skip_all, fields(max_edge = ?max_edge))]
 pub fn load_oriented(path: &Path, max_edge: Option<u32>) -> Result<DynamicImage> {
     let mut image = if is_jpeg(path) {
         match decode_jpeg(path, max_edge) {

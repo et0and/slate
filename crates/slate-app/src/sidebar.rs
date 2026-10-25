@@ -533,6 +533,7 @@ fn rating_button(value: u8, active: bool, cx: &mut Context<ContactSheet>) -> Any
         })
         .cursor_pointer()
         .hover(|style| style.bg(theme::accent_soft()))
+        .debug_selector(move || format!("rating-{value}"))
         .on_click(
             cx.listener(move |this, _, _, cx| this.apply_rating(StarRating::clamped(value), cx)),
         )
@@ -568,6 +569,7 @@ fn label_button(label: ColorLabel, active: bool, cx: &mut Context<ContactSheet>)
         .bg(theme::surface())
         .cursor_pointer()
         .hover(|style| style.border_color(theme::ink()))
+        .debug_selector(move || format!("label-{}", label.label().to_lowercase()))
         .on_click(cx.listener(move |this, _, _, cx| this.apply_label(label, cx)))
         .child(
             div()
@@ -610,6 +612,7 @@ fn sort_button(key: SortKey, active: bool, cx: &mut Context<ContactSheet>) -> An
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_size(px(theme::TEXT_LABEL))
         .text_color(if active { theme::ink() } else { theme::muted() })
+        .debug_selector(move || format!("sort-{}", key.label().to_lowercase()))
         .on_click(cx.listener(move |this, _, _, cx| this.set_sort_key(key, cx)))
         .child(key.label())
         .into_any_element()

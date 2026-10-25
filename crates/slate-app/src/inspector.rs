@@ -338,6 +338,7 @@ impl ContactSheet {
         };
 
         div()
+            .debug_selector(|| "photo-inspector".into())
             .w(px(self.panels.right()))
             .flex_shrink_0()
             .h_full()
@@ -936,6 +937,7 @@ impl ContactSheet {
             });
 
         div()
+            .debug_selector(|| "sheet-inspector".into())
             .w(px(self.panels.right()))
             .flex_shrink_0()
             .h_full()

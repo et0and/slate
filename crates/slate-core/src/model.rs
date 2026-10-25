@@ -1053,6 +1053,7 @@ impl Project {
         self.photos.iter().map(|photo| photo.id).collect()
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let file = std::fs::File::open(path)?;
         let mut project: Project = serde_json::from_reader(BufReader::new(file))?;
@@ -1079,6 +1080,7 @@ impl Project {
         Ok(project)
     }
 
+    #[tracing::instrument(skip_all, fields(photos = self.photos.len()))]
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;

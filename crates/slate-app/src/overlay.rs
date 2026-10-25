@@ -230,6 +230,7 @@ impl ContactSheet {
         let count = self.scope_ids().len();
         let format = self.convert_format;
         let panel = div()
+            .debug_selector(|| "convert-dialog".into())
             .w(px(440.0))
             .flex()
             .flex_col()

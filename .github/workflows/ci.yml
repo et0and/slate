@@ -85,3 +85,19 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  stress-500k:
+    name: 500k stress gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust 1.99.1
+        run: rustup toolchain install 1.99.1 --profile minimal
+
+      - name: Build and run the 500k gate
+        run: >-
+          cargo run --release -p slate-core --example stress --
+          --photos 500000 --gate

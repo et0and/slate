@@ -180,6 +180,7 @@ impl ContactSheet {
                 MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.stop_propagation()),
             )
+            .debug_selector(move || format!("preview-{}", id.0))
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.open_photo_preview(id, window, cx);
@@ -238,6 +239,7 @@ impl ContactSheet {
             .cursor_pointer()
             .hover(|style| style.bg(theme::accent_soft()))
             .active(|style| style.opacity(0.82))
+            .debug_selector(move || format!("cell-{}", id.0))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {

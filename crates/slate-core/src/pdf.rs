@@ -1130,6 +1130,7 @@ fn write_page(
 /// Pages are planned, rendered and written one at a time. Only the current
 /// page's pixels and JPEG bytes are live, so export memory is bounded by the
 /// page size instead of the library size.
+#[tracing::instrument(skip_all, fields(photos = photos.len()))]
 pub fn export_pdf(
     project_name: &str,
     settings: &SheetSettings,
@@ -1166,6 +1167,8 @@ pub fn export_pdf(
     let mut kids = Vec::with_capacity(page_count);
     let mut missing = Vec::new();
     for page_index in 0..page_count {
+        let _page_span =
+            tracing::debug_span!("pdf.page", page = page_index + 1, pages = page_count).entered();
         let start = page_index.saturating_mul(per_page);
         let end = (start + per_page).min(photos.len());
         let page_photos: Vec<&Photo> = (start..end).filter_map(|index| photos.get(index)).collect();
@@ -1199,6 +1202,7 @@ pub fn export_pdf(
 }
 
 /// Render a scope of photo ids into a flat PDF without cloning every photo.
+#[tracing::instrument(skip_all, fields(photos = ids.len()))]
 pub fn export_pdf_ids(
     project_name: &str,
     settings: &SheetSettings,
@@ -1235,6 +1239,8 @@ pub fn export_pdf_ids(
     let mut kids = Vec::with_capacity(page_count);
     let mut missing = Vec::new();
     for page_index in 0..page_count {
+        let _page_span =
+            tracing::debug_span!("pdf.page", page = page_index + 1, pages = page_count).entered();
         let start = page_index.saturating_mul(per_page);
         let end = (start + per_page).min(ids.len());
         let page_ids = &ids[start..end];

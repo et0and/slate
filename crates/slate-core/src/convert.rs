@@ -86,6 +86,7 @@ impl ConvertReport {
     }
 }
 
+#[tracing::instrument(skip_all, fields(photos = ids.len(), format = ?options.format))]
 pub fn convert_photos(
     project: &Project,
     ids: &[PhotoId],

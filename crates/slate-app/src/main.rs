@@ -17,6 +17,7 @@ mod photo_preview;
 mod preview_window;
 mod selection;
 mod sidebar;
+mod telemetry;
 mod text_field;
 mod theme;
 mod view;
@@ -48,6 +49,7 @@ fn primary(keys: &str) -> String {
 }
 
 fn main() {
+    let _telemetry = telemetry::init();
     Application::new()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {

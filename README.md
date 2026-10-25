@@ -61,7 +61,11 @@ Reproduce the core numbers with:
 
 ```sh
 cargo run --release -p slate-core --example stress
+cargo run --release -p slate-core --example stress -- --photos 500000 --gate
 ```
+
+CI runs the 500k gate on Linux. It enforces the project file size, load time,
+page planning, rename planning and base resident set.
 
 ## Output
 
@@ -72,6 +76,10 @@ cargo run --release -p slate-core --example stress
 ![Rotated contact sheet](docs/example-rotated.jpg)
 
 *A4 landscape, 4 × 3, rotate-to-fit.*
+
+## Telemetry
+
+Axiom OTLP tracing is optional. Set `AXIOM_TOKEN` and `AXIOM_DATASET` before launch to send traces to Axiom. Slate sends operation names, sizes and timings, not file paths or image data. See [docs/telemetry.md](docs/telemetry.md).
 
 ## Google Drive
 

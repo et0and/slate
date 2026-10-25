@@ -78,10 +78,10 @@ jobs:
 
       - name: Check formatting
         if: runner.os == 'Linux'
-        run: cargo fmt --all -- --check
+        run: cargo fmt-check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo lint
 
       - name: Test
         run: cargo test --workspace

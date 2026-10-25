@@ -7,8 +7,10 @@ Slate Desktop: a cross-platform desktop contact-sheet builder in Rust + GPUI 0.2
 - `cargo run --release` — launch
 - `cargo run --release -- path/to/file.slate` — launch with a project
 - `cargo test --workspace` — core + app tests
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo fmt --all`
+- `cargo lint` — Clippy, all targets, warnings denied
+- `cargo lint-fix` — apply Clippy's safe fixes
+- `cargo fmt --all` — format
+- `cargo fmt-check` — verify formatting without writing
 - Release: merge to `main`; semantic-release reads Conventional Commits, updates
   the version and changelog, tags `v*`, creates the GitHub Release, and builds
   macOS, Linux and Windows artifacts from that tag.
@@ -164,6 +166,34 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   window edge. `chrome.rs` owns the `WINDOW_CHROME_TOP` strip, the left panel
   collapse button and the drag region. Double-click calls the native titlebar
   action so the window zooms. Native child windows keep their standard titles.
+
+## Anti-slop
+
+Adapted from wwwtom's anti-slop rules, expressed for Rust.
+
+- Make the smallest correct change. Follow local patterns and improve the file
+  you are already in.
+- One function unless the logic is genuinely reusable. Keep the reason for a
+  helper obvious from its name.
+- Single-use converters, wrappers and adapters are slop unless they enforce a
+  contract. Inline them.
+- Parse unknown input once at the edge into typed structs and enums. Do not
+  pass `serde_json::Value`, untyped maps or strings through the app.
+- Do not widen a typed value into a string, integer or dictionary and cast it
+  back later. Keep the original type.
+- Use named structs and enums instead of boolean flags, tuple bags or opaque
+  parameter groups. Use enums to make invalid states hard to represent.
+- No runtime shape or type probing when a variant can represent the state.
+- Do not chain `as` casts, `unwrap()` or `expect()` to launder a value. Use
+  `?`, `match` or `let else` at boundary contracts. Tests may unwrap.
+- No speculative compatibility paths, deprecated aliases or dead fallback
+  variants. Update every caller and delete the old path in the same change.
+- Names describe domain behaviour, not type shape. Avoid `FooData`,
+  `FooHelper` and `FooUtil`.
+- Do not duplicate logic. Use the existing local helper. Comments explain why,
+  invariants or platform constraints; they do not restate code.
+- Do not add `dbg!`, `todo!` or `unimplemented!`. Handle the error or return a
+  concrete failure.
 
 ## Style
 

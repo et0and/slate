@@ -63,7 +63,8 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   only for the rendered range and keep the cache at `THUMB_CACHE`. The 10,000
   photo path must stay virtualised. A left press toggles the cell and starts a
   marquee; dragging selects or deselects every cell in the rectangle. Right
-  press opens the single-photo rename menu. Do not add a second click toggle.
+  press opens the per-photo menu: rename, properties, reveal, copy path and
+  remove. Do not add a second click toggle.
 - JPEG thumbnails and PDF images go through `jpeg-decoder`'s reduced IDCT. Do
   not decode a full-resolution JPEG just to make a preview. Call
   `memory::release_free_pages` after a project open or import drains.
@@ -78,6 +79,11 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - Text field callbacks must not read or update the same field from inside its
   own event handler (GPUI entity re-borrow panic). Pass values through the
   callback instead.
+- Photo properties read EXIF on demand in a background task and cache the
+  result; never decode an image for the properties panel. Editing the capture
+  date updates `Photo.captured_at` in the `.slate` project only. Do not claim to
+  write EXIF to the original file without a separate, backed-up file-writing
+  path.
 - Rename targets are checked against existing files and duplicate targets before
   enabling Apply rename. Never add a clobbering rename path.
 - PDFs are flat, RGB, no layers. Images are capped at 300 DPI for their cell.

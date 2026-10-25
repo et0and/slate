@@ -274,6 +274,82 @@ fn composite_on_white(mut rgba: RgbaImage) -> RgbaImage {
     rgba
 }
 
+/// Read-only EXIF metadata for the properties panel. The order is stable and
+/// labels are presentation-ready; no pixels are decoded.
+#[derive(Debug, Clone, Default)]
+pub struct PhotoMetadata {
+    pub rows: Vec<(String, String)>,
+}
+
+pub fn read_metadata(path: &Path) -> PhotoMetadata {
+    let Ok(file) = File::open(path) else {
+        return PhotoMetadata::default();
+    };
+    let mut reader = BufReader::new(file);
+    let Ok(exif) = ExifReader::new().read_from_container(&mut reader) else {
+        return PhotoMetadata::default();
+    };
+    let mut rows = Vec::new();
+    let make = field_value(&exif, Tag::Make);
+    let model = field_value(&exif, Tag::Model);
+    let camera = match (make, model) {
+        (Some(make), Some(model)) if !model.starts_with(&make) => Some(format!("{make} {model}")),
+        (Some(make), Some(model)) => Some(format!("{make} {model}")),
+        (Some(make), None) => Some(make),
+        (None, Some(model)) => Some(model),
+        (None, None) => None,
+    };
+    push_row(&mut rows, "Camera", camera);
+    push_row(&mut rows, "Lens", field_value(&exif, Tag::LensModel));
+    push_row(
+        &mut rows,
+        "Captured",
+        [Tag::DateTimeOriginal, Tag::DateTime]
+            .into_iter()
+            .find_map(|tag| field_value(&exif, tag).and_then(|value| normalize_datetime(&value))),
+    );
+    push_row(
+        &mut rows,
+        "ISO",
+        field_value(&exif, Tag::PhotographicSensitivity)
+            .or_else(|| field_value(&exif, Tag::ISOSpeed)),
+    );
+    push_row(
+        &mut rows,
+        "Aperture",
+        field_value(&exif, Tag::FNumber).map(|value| format!("f/{value}")),
+    );
+    push_row(
+        &mut rows,
+        "Shutter",
+        field_value(&exif, Tag::ExposureTime).map(|value| format!("{value} s")),
+    );
+    push_row(
+        &mut rows,
+        "Focal length",
+        field_value(&exif, Tag::FocalLength),
+    );
+    push_row(&mut rows, "Software", field_value(&exif, Tag::Software));
+    PhotoMetadata { rows }
+}
+
+fn field_value(exif: &exif::Exif, tag: Tag) -> Option<String> {
+    let field = exif.get_field(tag, In::PRIMARY)?;
+    let value = field.display_value().to_string();
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn push_row(rows: &mut Vec<(String, String)>, label: &str, value: Option<String>) {
+    if let Some(value) = value {
+        rows.push((label.to_string(), value));
+    }
+}
+
+pub fn normalize_capture_datetime(value: &str) -> Option<String> {
+    normalize_datetime(value)
+}
+
 pub fn capture_datetime(path: &Path) -> Option<String> {
     read_exif_datetime(path).or_else(|| {
         let modified = std::fs::metadata(path).ok()?.modified().ok()?;
@@ -485,6 +561,14 @@ mod tests {
         assert_eq!(found.len(), 2);
         assert!(found[0].ends_with("a.webp"));
         assert!(found[1].ends_with("b.jpg"));
+    }
+
+    #[test]
+    fn metadata_is_empty_without_exif() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("plain.jpg");
+        write_test_jpeg(&path, 20, 20);
+        assert!(read_metadata(&path).rows.is_empty());
     }
 
     #[test]

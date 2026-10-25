@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, App, Bounds, Context, CursorStyle, ExternalPaths, FocusHandle, Focusable,
-    MouseButton, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, Point, Render,
+    AnyElement, App, Bounds, ClipboardItem, Context, CursorStyle, ExternalPaths, FocusHandle,
+    Focusable, MouseButton, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, Point, Render,
     RenderImage, TitlebarOptions, UniformListScrollHandle, Window, WindowAppearance, WindowBounds,
     WindowHandle, WindowOptions, actions, div, prelude::*, px, size,
 };
@@ -103,6 +103,12 @@ pub(crate) struct PhotoContextMenu {
     pub position: Point<Pixels>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum PhotoMetaState {
+    Loading,
+    Ready(import::PhotoMetadata),
+}
+
 #[derive(Debug, Default)]
 pub struct ImportState {
     pub total: usize,
@@ -145,6 +151,9 @@ pub struct ContactSheet {
     pub(crate) rename_photo_target: Option<PhotoId>,
     pub(crate) rename_photo_error: Option<String>,
     pub(crate) photo_context: Option<PhotoContextMenu>,
+    pub(crate) photo_info_target: Option<PhotoId>,
+    pub(crate) photo_meta: HashMap<PhotoId, PhotoMetaState>,
+    pub(crate) photo_date_error: Option<String>,
     pub(crate) rename_options: RenameOptions,
     pub(crate) exporting: Option<String>,
 
@@ -174,6 +183,7 @@ pub struct ContactSheet {
     pub(crate) search_field: gpui::Entity<TextField>,
     pub(crate) title_field: gpui::Entity<TextField>,
     pub(crate) rename_photo_field: gpui::Entity<TextField>,
+    pub(crate) photo_date_field: gpui::Entity<TextField>,
     pub(crate) custom_width_field: gpui::Entity<TextField>,
     pub(crate) custom_height_field: gpui::Entity<TextField>,
     pub(crate) prefix_field: gpui::Entity<TextField>,
@@ -210,6 +220,7 @@ impl ContactSheet {
         });
 
         let rename_photo_field = cx.new(|cx| TextField::new(cx, "File name"));
+        let photo_date_field = cx.new(|cx| TextField::new(cx, "YYYY-MM-DD HH:MM:SS"));
 
         let prefix_field = cx.new(|cx| {
             let weak = weak.clone();
@@ -294,6 +305,9 @@ impl ContactSheet {
             rename_photo_target: None,
             rename_photo_error: None,
             photo_context: None,
+            photo_info_target: None,
+            photo_meta: HashMap::new(),
+            photo_date_error: None,
             rename_options: RenameOptions::default(),
             exporting: None,
             status: "Ready".to_string(),
@@ -321,6 +335,7 @@ impl ContactSheet {
             search_field,
             title_field,
             rename_photo_field,
+            photo_date_field,
             custom_width_field,
             custom_height_field,
             prefix_field,
@@ -455,6 +470,7 @@ impl ContactSheet {
             self.search_field.clone(),
             self.title_field.clone(),
             self.rename_photo_field.clone(),
+            self.photo_date_field.clone(),
             self.custom_width_field.clone(),
             self.custom_height_field.clone(),
             self.prefix_field.clone(),
@@ -664,6 +680,7 @@ impl ContactSheet {
             &self.search_field,
             &self.title_field,
             &self.rename_photo_field,
+            &self.photo_date_field,
             &self.custom_width_field,
             &self.custom_height_field,
             &self.prefix_field,
@@ -863,6 +880,168 @@ impl ContactSheet {
     ) {
         self.photo_context = Some(PhotoContextMenu { photo_id, position });
         cx.notify();
+    }
+
+    pub(crate) fn open_photo_info(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
+        self.photo_context = None;
+        let Some(photo) = self.project.photo(photo_id) else {
+            return;
+        };
+        self.photo_info_target = Some(photo_id);
+        self.photo_date_error = None;
+        let date = photo.captured_at.clone().unwrap_or_default();
+        self.photo_date_field
+            .update(cx, |field, cx| field.set_value(date, cx));
+        let path = photo.path.clone();
+        if let std::collections::hash_map::Entry::Vacant(entry) = self.photo_meta.entry(photo_id) {
+            entry.insert(PhotoMetaState::Loading);
+            let generation = self.generation;
+            cx.spawn(async move |this, cx| {
+                let metadata = cx
+                    .background_spawn(async move { import::read_metadata(&path) })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    if this.generation != generation || this.project.photo(photo_id).is_none() {
+                        return;
+                    }
+                    if this.photo_meta.len() > 64
+                        && let Some(oldest) = this.photo_meta.keys().next().copied()
+                    {
+                        this.photo_meta.remove(&oldest);
+                    }
+                    this.photo_meta
+                        .insert(photo_id, PhotoMetaState::Ready(metadata));
+                    if this.photo_info_target == Some(photo_id) {
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn close_photo_info(&mut self, cx: &mut Context<Self>) {
+        if self.photo_info_target.take().is_some() {
+            self.photo_date_error = None;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn save_photo_date(&mut self, cx: &mut Context<Self>) {
+        let Some(photo_id) = self.photo_info_target else {
+            return;
+        };
+        let value = self.photo_date_field.read(cx).value().trim().to_string();
+        let normalized = if value.is_empty() {
+            None
+        } else {
+            match import::normalize_capture_datetime(&value) {
+                Some(value) => Some(value),
+                None => {
+                    self.photo_date_error =
+                        Some("Use YYYY-MM-DD HH:MM:SS, or leave blank.".to_string());
+                    cx.notify();
+                    return;
+                }
+            }
+        };
+        let Some(photo) = self.project.photo(photo_id) else {
+            return;
+        };
+        if photo.captured_at == normalized {
+            self.photo_date_error = None;
+            cx.notify();
+            return;
+        }
+        self.checkpoint();
+        if let Some(photo) = self.project.photo_mut(photo_id) {
+            photo.captured_at = normalized;
+        }
+        self.dirty = true;
+        self.photo_date_error = None;
+        self.set_status("Capture date updated / project unsaved");
+        self.log("Photo date edited");
+        cx.notify();
+    }
+
+    pub(crate) fn use_file_date(&mut self, cx: &mut Context<Self>) {
+        let Some(photo_id) = self.photo_info_target else {
+            return;
+        };
+        let Some(path) = self.project.photo(photo_id).map(|photo| photo.path.clone()) else {
+            return;
+        };
+        match import::capture_datetime(&path) {
+            Some(date) => {
+                self.photo_date_field
+                    .update(cx, |field, cx| field.set_value(date, cx));
+                self.photo_date_error = None;
+            }
+            None => self.photo_date_error = Some("No file date is available.".to_string()),
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn copy_photo_path(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
+        let Some(path) = self.project.photo(photo_id).map(|photo| photo.path.clone()) else {
+            return;
+        };
+        let text = path.to_string_lossy().into_owned();
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.photo_context = None;
+        self.set_status("File path copied");
+        self.log("File path copied");
+        cx.notify();
+    }
+
+    pub(crate) fn reveal_photo(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
+        let Some(path) = self.project.photo(photo_id).map(|photo| photo.path.clone()) else {
+            return;
+        };
+        #[cfg(target_os = "macos")]
+        let result = std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map(|_| ());
+        #[cfg(not(target_os = "macos"))]
+        let result = open::that(&path);
+        match result {
+            Ok(()) => {
+                self.photo_context = None;
+                self.set_status("Revealed in Finder");
+                self.log("Revealed in Finder");
+            }
+            Err(error) => {
+                self.set_status(format!("Could not reveal file / {error}"));
+                self.log(format!("Reveal failed: {error}"));
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn remove_photo(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
+        if self.project.photo(photo_id).is_none() {
+            return;
+        }
+        self.checkpoint();
+        self.project.remove_photos(&[photo_id]);
+        Arc::make_mut(&mut self.selected).remove(&photo_id);
+        self.thumbs.remove(&photo_id);
+        self.thumbs_queued.remove(&photo_id);
+        self.thumb_order.retain(|id| *id != photo_id);
+        self.rotated_thumbs.retain(|(id, _), _| *id != photo_id);
+        self.photo_context = None;
+        if self.photo_info_target == Some(photo_id) {
+            self.photo_info_target = None;
+        }
+        self.photo_meta.remove(&photo_id);
+        self.project_changed();
+        self.dirty = true;
+        self.set_status("Removed photo from the project / file untouched");
+        self.log("Photo removed from project");
+        self.refresh_and_notify(cx);
     }
 
     pub(crate) fn begin_photo_rename(
@@ -1227,6 +1406,9 @@ impl ContactSheet {
         self.rename_photo_target = None;
         self.rename_photo_error = None;
         self.photo_context = None;
+        self.photo_info_target = None;
+        self.photo_meta.clear();
+        self.photo_date_error = None;
         self.rename_options = RenameOptions::default();
         self.preview_page = 0;
         self.marquee = None;
@@ -1360,6 +1542,9 @@ impl ContactSheet {
                 self.rename_photo_target = None;
                 self.rename_photo_error = None;
                 self.photo_context = None;
+                self.photo_info_target = None;
+                self.photo_meta.clear();
+                self.photo_date_error = None;
                 self.project_changed();
                 self.selection_changed();
                 self.filter_changed();
@@ -2052,6 +2237,10 @@ impl Render for ContactSheet {
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
                 if this.rename_photo_target.is_some() {
                     this.cancel_photo_rename(cx);
+                    return;
+                }
+                if this.photo_info_target.is_some() {
+                    this.close_photo_info(cx);
                     return;
                 }
                 if this.photo_context.is_some() {

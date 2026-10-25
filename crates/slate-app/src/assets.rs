@@ -22,6 +22,7 @@ macro_rules! icons {
 
 icons! {
     CHECK => "icons/check.svg",
+    COPY => "icons/copy.svg",
     CHEVRON_LEFT => "icons/chevron-left.svg",
     CHEVRON_DOWN => "icons/chevron-down.svg",
     CHEVRON_RIGHT => "icons/chevron-right.svg",

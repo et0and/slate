@@ -1,3 +1,10 @@
+## [0.2.3](https://github.com/et0and/slate/compare/v0.2.2...v0.2.3) (2026-10-25)
+
+
+### Bug Fixes
+
+* refine search and inspector headers ([39bf4db](https://github.com/et0and/slate/commit/39bf4db619412d76a3fc8440bf757bb9e173b3e4))
+
 ## [0.2.2](https://github.com/et0and/slate/compare/v0.2.1...v0.2.2) (2026-10-25)
 
 

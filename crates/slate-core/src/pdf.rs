@@ -854,10 +854,7 @@ fn flatten_on_white(image: DynamicImage) -> RgbImage {
 }
 
 fn render_photo(photo: &Photo, placement: &Placement) -> Result<(Vec<u8>, u32, u32)> {
-    let max_px = (((placement.image_w_mm.max(placement.image_h_mm) * DPI) / 25.4).ceil() as u32)
-        .max(64)
-        .saturating_mul(2);
-    let mut image = load_oriented(&photo.path, Some(max_px))?;
+    let mut image = load_oriented(&photo.path, Some(max_pixels(placement)))?;
     for _ in 0..photo.rotation().turns() {
         image = image.rotate90();
     }

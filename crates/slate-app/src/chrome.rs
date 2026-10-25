@@ -1,12 +1,12 @@
 //! Window chrome: primary commands and status.
 
-use gpui::{AnyElement, Context, div, prelude::*, px};
+use gpui::{AnyElement, ClickEvent, Context, MouseButton, div, prelude::*, px};
 
 use crate::app::ContactSheet;
 use crate::assets;
-use crate::panels::{RAIL_W, ResizeTarget};
+use crate::panels::{DIVIDER_W, RAIL_W, ResizeTarget};
 use crate::theme;
-use crate::widgets::{icon, ui_text};
+use crate::widgets::{icon, icon_button, ui_text};
 
 impl ContactSheet {
     pub(crate) fn render_statusbar(&self) -> AnyElement {
@@ -62,13 +62,10 @@ impl ContactSheet {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (id, icon_path, side_left): (&'static str, &'static str, bool) = match side {
-            ResizeTarget::Left => ("rail-expand-left", assets::CHEVRON_RIGHT, true),
-            ResizeTarget::Right => ("rail-expand-right", assets::CHEVRON_LEFT, false),
+            ResizeTarget::Left => ("rail-expand-left", assets::PANEL_LEFT, true),
+            ResizeTarget::Right => ("rail-expand-right", assets::PANEL_RIGHT, false),
         };
-        let top = match side {
-            ResizeTarget::Left => theme::WINDOW_CHROME_TOP + 8.0,
-            ResizeTarget::Right => 8.0,
-        };
+        let top = 8.0;
         let rail = div()
             .w(px(RAIL_W))
             .h_full()
@@ -106,6 +103,82 @@ impl ContactSheet {
     }
 
     #[cfg(target_os = "macos")]
+    pub(crate) fn render_window_titlebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let left_width = if self.panels.left_collapsed() {
+            RAIL_W
+        } else {
+            self.panels.left()
+        };
+        let right_width = if self.panels.right_collapsed() {
+            RAIL_W
+        } else {
+            self.panels.right()
+        };
+        let left = div()
+            .w(px(left_width))
+            .h_full()
+            .flex_shrink_0()
+            .bg(theme::panel())
+            .flex()
+            .items_center()
+            .child(drag_region(cx, "titlebar-drag-left").flex_1().h_full())
+            .children((!self.panels.left_collapsed()).then(|| {
+                div()
+                    .w(px(38.0))
+                    .h_full()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        icon_button("titlebar-collapse-left", assets::PANEL_LEFT).on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.toggle_left_pane(window, cx);
+                            }),
+                        ),
+                    )
+            }));
+        let right = div()
+            .w(px(right_width))
+            .h_full()
+            .flex_shrink_0()
+            .bg(theme::panel())
+            .child(drag_region(cx, "titlebar-drag-right").w_full().h_full());
+        let mut row = div()
+            .h(px(theme::WINDOW_CHROME_TOP))
+            .w_full()
+            .flex_shrink_0()
+            .flex()
+            .bg(theme::paper())
+            .child(left);
+        if !self.panels.left_collapsed() {
+            row = row.child(
+                div()
+                    .w(px(DIVIDER_W))
+                    .h_full()
+                    .flex_shrink_0()
+                    .bg(theme::paper()),
+            );
+        }
+        row = row.child(drag_region(cx, "titlebar-drag-centre").flex_1().h_full());
+        if !self.panels.right_collapsed() {
+            row = row.child(
+                div()
+                    .w(px(DIVIDER_W))
+                    .h_full()
+                    .flex_shrink_0()
+                    .bg(theme::paper()),
+            );
+        }
+        row.child(right).into_any_element()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn render_window_titlebar(&mut self, _cx: &mut Context<Self>) -> AnyElement {
+        div().into_any_element()
+    }
+
+    #[cfg(target_os = "macos")]
     pub(crate) fn render_topbar(&mut self, _cx: &mut Context<Self>) -> AnyElement {
         div().into_any_element()
     }
@@ -125,4 +198,20 @@ impl ContactSheet {
             .child(self.render_menubar(cx))
             .into_any_element()
     }
+}
+
+#[cfg(target_os = "macos")]
+fn drag_region(cx: &mut Context<ContactSheet>, id: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .cursor_pointer()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_, _, window, _| window.start_window_move()),
+        )
+        .on_click(cx.listener(|_, event: &ClickEvent, window, _| {
+            if event.click_count() == 2 {
+                window.titlebar_double_click();
+            }
+        }))
 }

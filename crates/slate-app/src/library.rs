@@ -14,11 +14,33 @@ use crate::assets;
 use crate::theme;
 use crate::widgets::{button_with_icon, icon, mono_text, ui_text};
 
-const CELL_W: f32 = 200.0;
-const THUMB_H: f32 = 150.0;
+const CELL_MIN: f32 = 190.0;
 const GAP: f32 = 16.0;
-const ROW_H: f32 = 236.0;
 const GRID_PAD: f32 = 24.0;
+const META_H: f32 = 86.0;
+const THUMB_RATIO: f32 = 0.75;
+
+#[derive(Clone, Copy, Debug)]
+struct GridMetrics {
+    columns: usize,
+    cell_w: f32,
+    thumb_h: f32,
+    row_h: f32,
+}
+
+fn grid_metrics(viewport: f32, left_edge: f32, right_edge: f32) -> GridMetrics {
+    let center = (viewport - left_edge - right_edge).max(CELL_MIN + GRID_PAD * 2.0);
+    let content = (center - GRID_PAD * 2.0).max(CELL_MIN);
+    let columns = (((content + GAP) / (CELL_MIN + GAP)).floor() as usize).max(1);
+    let cell_w = ((content - GAP * (columns.saturating_sub(1)) as f32) / columns as f32).max(1.0);
+    let thumb_h = (cell_w * THUMB_RATIO).max(120.0);
+    GridMetrics {
+        columns,
+        cell_w,
+        thumb_h,
+        row_h: thumb_h + META_H,
+    }
+}
 
 impl ContactSheet {
     pub(crate) fn render_library(
@@ -32,11 +54,12 @@ impl ContactSheet {
         } else if visible.is_empty() {
             self.render_no_matches(cx)
         } else {
-            let viewport = f32::from(window.viewport_size().width);
-            let center = (viewport - self.panels.left_edge() - self.panels.right_edge())
-                .max(CELL_W + GRID_PAD * 2.0);
-            let content = (center - GRID_PAD * 2.0).max(CELL_W);
-            let columns = (((content + GAP) / (CELL_W + GAP)).floor() as usize).max(1);
+            let metrics = grid_metrics(
+                f32::from(window.viewport_size().width),
+                self.panels.left_edge(),
+                self.panels.right_edge(),
+            );
+            let columns = metrics.columns;
             let rows = visible.len().div_ceil(columns);
             let visible_for_grid = visible.clone();
             let scroll = self.grid_scroll.clone();
@@ -56,12 +79,12 @@ impl ContactSheet {
                             let mut cells = Vec::with_capacity(end.saturating_sub(start));
                             for &index in visible_for_grid.iter().take(end).skip(start) {
                                 indices.push(index);
-                                cells.push(this.render_cell(index, cx));
+                                cells.push(this.render_cell(index, metrics, cx));
                             }
                             rendered.push(
                                 div()
                                     .w_full()
-                                    .h(px(ROW_H))
+                                    .h(px(metrics.row_h))
                                     .flex()
                                     .gap(px(GAP))
                                     .children(cells),
@@ -100,7 +123,12 @@ impl ContactSheet {
             .into_any_element()
     }
 
-    fn render_cell(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_cell(
+        &mut self,
+        index: usize,
+        metrics: GridMetrics,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let (id, name, dimensions, tags, bytes, rotation, rating, color_label) = {
             let photo = &self.project.photos[index];
             (
@@ -234,7 +262,7 @@ impl ContactSheet {
                 "cell-{}",
                 id.0
             ))))
-            .w(px(CELL_W))
+            .w(px(metrics.cell_w))
             .p(px(5.0))
             .cursor_pointer()
             .hover(|style| style.bg(theme::accent_soft()))
@@ -259,7 +287,7 @@ impl ContactSheet {
                 div()
                     .relative()
                     .w_full()
-                    .h(px(THUMB_H))
+                    .h(px(metrics.thumb_h))
                     .overflow_hidden()
                     .bg(theme::photo_bg())
                     .border_1()
@@ -424,10 +452,8 @@ impl ContactSheet {
             return;
         };
         let viewport = f32::from(window.viewport_size().width);
-        let center = (viewport - self.panels.left_edge() - self.panels.right_edge())
-            .max(CELL_W + GRID_PAD * 2.0);
-        let content = (center - GRID_PAD * 2.0).max(CELL_W);
-        let columns = (((content + GAP) / (CELL_W + GAP)).floor() as usize).max(1);
+        let metrics = grid_metrics(viewport, self.panels.left_edge(), self.panels.right_edge());
+        let columns = metrics.columns;
         let visible = self.visible_indices();
         let rows = visible.len().div_ceil(columns);
         if rows == 0 {
@@ -445,10 +471,15 @@ impl ContactSheet {
         let origin_x = self.panels.left_edge() + GRID_PAD;
         let origin_y =
             content_top + GRID_PAD + f32::from(self.grid_scroll.0.borrow().base_handle.offset().y);
-        let min_row = (((top - origin_y) / ROW_H).floor().max(0.0) as usize).min(rows);
-        let max_row = (((bottom - origin_y) / ROW_H).ceil().max(0.0) as usize).min(rows);
-        let min_col = ((left - origin_x) / (CELL_W + GAP)).floor().max(0.0) as usize;
-        let max_col = (((right - origin_x) / (CELL_W + GAP)).ceil().max(0.0) as usize).min(columns);
+        let min_row = (((top - origin_y) / metrics.row_h).floor().max(0.0) as usize).min(rows);
+        let max_row = (((bottom - origin_y) / metrics.row_h).ceil().max(0.0) as usize).min(rows);
+        let min_col = ((left - origin_x) / (metrics.cell_w + GAP))
+            .floor()
+            .max(0.0) as usize;
+        let max_col = (((right - origin_x) / (metrics.cell_w + GAP))
+            .ceil()
+            .max(0.0) as usize)
+            .min(columns);
         let mut changed = false;
         let selected = Arc::make_mut(&mut self.selected);
         for row in min_row..max_row {
@@ -576,5 +607,19 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     } else {
         format!("{} KB", (bytes / 1024).max(1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grid_cells_fill_the_available_width() {
+        let metrics = grid_metrics(1440.0, 280.0, 384.0);
+        let width = metrics.cell_w * metrics.columns as f32
+            + GAP * metrics.columns.saturating_sub(1) as f32;
+        let content = 1440.0 - 280.0 - 384.0 - GRID_PAD * 2.0;
+        assert!((width - content).abs() < 0.01, "{width} != {content}");
     }
 }

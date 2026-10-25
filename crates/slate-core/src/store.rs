@@ -1,7 +1,8 @@
-//! Local SQLite catalogue for projects and recent files.
+//! Local SQLite catalogue for projects, recent files and settings.
 //!
-//! `.slate` files remain portable documents. This catalogue stores only
-//! local metadata: project name, path, photo count and last update time.
+//! `.slate` files remain portable documents. This catalogue stores only local
+//! metadata: project name, path, photo count, last update time and preferences
+//! such as the selected theme.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -47,6 +48,26 @@ impl LocalStore {
             .context("read recent projects")
     }
 
+    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare("SELECT value FROM settings WHERE key = ?1")?;
+        let mut rows = statement.query(params![key])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get(0)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let connection = self.connect()?;
+        connection.execute(
+            "INSERT INTO settings(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
     pub fn remember_project(&self, path: &Path, project: &Project) -> Result<()> {
         let connection = self.connect()?;
         let updated_at = SystemTime::now()
@@ -83,6 +104,10 @@ impl LocalStore {
                name TEXT NOT NULL,
                photo_count INTEGER NOT NULL,
                updated_at INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS settings (
+               key TEXT PRIMARY KEY,
+               value TEXT NOT NULL
              );",
         )?;
         Ok(connection)
@@ -119,6 +144,17 @@ fn default_database_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_round_trip_and_overwrite() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalStore::at(directory.path().join("metadata.sqlite3"));
+        assert_eq!(store.setting("theme").unwrap(), None);
+        store.set_setting("theme", "dark").unwrap();
+        assert_eq!(store.setting("theme").unwrap().as_deref(), Some("dark"));
+        store.set_setting("theme", "light").unwrap();
+        assert_eq!(store.setting("theme").unwrap().as_deref(), Some("light"));
+    }
 
     #[test]
     fn recent_projects_are_ordered_and_deduplicated() {

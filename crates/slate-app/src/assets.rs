@@ -53,6 +53,8 @@ icons! {
     INFO => "icons/info.svg",
     PENCIL => "icons/pencil.svg",
     LAYOUT => "icons/layout.svg",
+    PANEL_LEFT => "icons/panel-left.svg",
+    PANEL_RIGHT => "icons/panel-right.svg",
 }
 
 pub struct Assets;

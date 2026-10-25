@@ -33,8 +33,8 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - `panels.rs` owns the drag-resizable rail geometry and the collapsed state.
   Keep the centre at `CENTER_MIN`, clamp the widths on every render, and use
   `left_edge`/`right_edge` for library/marquee geometry. A collapsed pane
-  becomes a narrow rail with one expand button; resetting panel widths expands
-  both panes.
+  becomes a narrow rail with one panel-icon expand button; resetting panel
+  widths expands both panes.
 - `menubar.rs` owns every menu. On macOS, build native menus with
   `cx.set_menus` and hide the in-window topbar; on other platforms, keep the
   in-window menus. Do not duplicate a command on the same platform. Sync the
@@ -44,9 +44,9 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   import/remove/sheet boundaries stay structural. A successful file rename
   clears history; a save marks older snapshots dirty. Keep both invariants when
   adding commands.
-- `slate-core/store.rs` is a local SQLite catalogue only; `.slate` files
-  stay portable. Remember a project after open/save and keep the recent list
-  bounded. `store::data_directory()` is the one application-data path.
+- `slate-core/store.rs` is a local SQLite catalogue and settings store; `.slate`
+  files stay portable. Remember a project after open/save, persist the theme
+  there, and keep the recent list bounded. `store::data_directory()` is the one application-data path.
 - `drive.rs` owns Google OAuth, the refresh token, Drive listing and streaming
   transfers. `drive_ui.rs` owns the Drive browser, thumbnails, selected stack,
   setup notice and the import/export workflows. Keep every Drive command in the
@@ -161,9 +161,9 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - The macOS main-window title stays empty. Use the native app menu and native
   command menus; do not set a visible main-window title. The titlebar is
   transparent, so the sidebar, library and inspector backgrounds run to the
-  window edge. Keep `theme::WINDOW_CHROME_TOP` clear for the traffic lights and
-  use the sidebar strip as the drag region. Native child windows keep their
-  standard titles.
+  window edge. `chrome.rs` owns the `WINDOW_CHROME_TOP` strip, the left panel
+  collapse button and the drag region. Double-click calls the native titlebar
+  action so the window zooms. Native child windows keep their standard titles.
 
 ## Style
 
@@ -189,12 +189,13 @@ icon. Use SVG icons for utility actions; reserve text for primary actions. Put
 every global command in the menu bar; do not duplicate export, save, import,
 selection or theme controls in the panels.
 
-The first panel starts with the compact project name and path and carries the
-selected count. On Windows and Linux the masthead carries only the in-window
-menu bar; on macOS the native menu bar replaces it. Do not repeat the project
-name or add action buttons there. Menu boxes start at an 8 px inset so their
-labels sit on the same 16 px text gutter as the panels; hover fills the full
-topbar height. Do not switch menus on hover.
+The first panel starts with Search. Do not repeat the project name or path in
+the panels. Keep each left-rail section collapsible with a chevron and persist
+the selected theme across launches. Use the panel icons, not chevrons, for pane
+collapse and expand. On Windows and Linux the masthead carries only the
+in-window menu bar; on macOS the native menu bar replaces it. Menu boxes start
+at an 8 px inset so their labels sit on the same 16 px text gutter as the
+panels; hover fills the full topbar height. Do not switch menus on hover.
 
 Use `theme.rs` tokens, `widgets.rs` controls and `assets.rs` icons instead of
 one-off styles. Load Geist in `main.rs`; never fall back to a system font.

@@ -12,8 +12,8 @@ use tracing::Instrument as _;
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, CursorStyle, ExternalPaths, FocusHandle,
     Focusable, MouseButton, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, Point, Render,
-    RenderImage, TitlebarOptions, UniformListScrollHandle, Window, WindowAppearance, WindowBounds,
-    WindowHandle, WindowOptions, actions, div, prelude::*, px, size,
+    RenderImage, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle,
+    WindowOptions, actions, div, prelude::*, px, size,
 };
 use image::{Frame, RgbaImage};
 use slate_core::PreviewImage;
@@ -90,6 +90,7 @@ const THUMB_CACHE: usize = 32;
 const THUMB_EDGE: u32 = 224;
 const THUMB_QUEUE_LIMIT: usize = 512;
 const PHOTO_PREVIEW_EDGE: u32 = 3200;
+const INSPECTOR_EDGE: u32 = 1200;
 
 #[derive(Debug, Clone)]
 pub enum ThumbState {
@@ -122,6 +123,29 @@ pub(crate) enum InspectorMode {
     #[default]
     Photo,
     Sheet,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum SidebarSection {
+    Search,
+    Rating,
+    Label,
+    Sort,
+    Tags,
+    Rename,
+}
+
+impl SidebarSection {
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Self::Search => "search",
+            Self::Rating => "rating",
+            Self::Label => "label",
+            Self::Sort => "sort",
+            Self::Tags => "tags",
+            Self::Rename => "rename",
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -167,6 +191,9 @@ pub struct ContactSheet {
     pub(crate) photo_preview_image: Option<Arc<RenderImage>>,
     pub(crate) photo_preview_error: Option<String>,
     pub(crate) photo_preview_load_id: u64,
+    pub(crate) inspector_image: Option<(PhotoId, Arc<RenderImage>)>,
+    pub(crate) inspector_image_error: Option<(PhotoId, String)>,
+    pub(crate) inspector_load_id: u64,
     pub(crate) about_window: Option<WindowHandle<AboutWindow>>,
     pub(crate) inspector_mode: InspectorMode,
     pub(crate) inspected_photo: Option<PhotoId>,
@@ -191,6 +218,7 @@ pub struct ContactSheet {
     pub(crate) focused_once: bool,
     pub(crate) theme: theme::Theme,
     pub(crate) appearance_initialized: bool,
+    pub(crate) sidebar_collapsed: HashSet<SidebarSection>,
     pub(crate) panels: PanelLayout,
     pub(crate) menu_open: Option<crate::menubar::MenuId>,
     pub(crate) drive_account: Option<drive::DriveAccount>,
@@ -301,6 +329,12 @@ impl ContactSheet {
         log.push_back("Session ready".to_string());
         let store = LocalStore::default_location();
         let recent_projects = store.recent_projects(5).unwrap_or_default();
+        let theme = store
+            .setting("theme")
+            .ok()
+            .flatten()
+            .and_then(|key| theme::Theme::from_key(&key))
+            .unwrap_or(theme::Theme::Light);
 
         let mut this = Self {
             project: Project::new("Untitled"),
@@ -334,6 +368,9 @@ impl ContactSheet {
             photo_preview_image: None,
             photo_preview_error: None,
             photo_preview_load_id: 0,
+            inspector_image: None,
+            inspector_image_error: None,
+            inspector_load_id: 0,
             about_window: None,
             inspector_mode: InspectorMode::Photo,
             inspected_photo: None,
@@ -355,8 +392,9 @@ impl ContactSheet {
             log,
             focus: cx.focus_handle(),
             focused_once: false,
-            theme: theme::Theme::Light,
+            theme,
             appearance_initialized: false,
+            sidebar_collapsed: HashSet::new(),
             panels: PanelLayout::default(),
             menu_open: None,
             drive_account: drive::load_account(),
@@ -543,6 +581,9 @@ impl ContactSheet {
         self.theme = theme;
         theme::set_theme(theme);
         theme::apply_native_appearance(theme);
+        if let Err(error) = self.store.set_setting("theme", theme.key()) {
+            self.log(format!("Settings / {error}"));
+        }
         self.sync_native_menus(cx);
         let fields = [
             self.search_field.clone(),
@@ -754,6 +795,7 @@ impl ContactSheet {
         self.thumb_queue.clear();
         self.thumbs_in_flight = 0;
         self.rotated_thumbs.clear();
+        self.clear_inspector_image();
         self.grid_scroll = UniformListScrollHandle::default();
         self.project = snapshot.project;
         self.selected = snapshot.selected;
@@ -801,6 +843,10 @@ impl ContactSheet {
     }
 
     fn apply_photo_edit(&mut self, edit: PhotoEdit, forward: bool, cx: &mut Context<Self>) {
+        let rotation_changed = edit
+            .fields()
+            .iter()
+            .any(|field| matches!(field, PhotoFieldChange::Rotation { .. }));
         for field in edit.fields() {
             match field {
                 PhotoFieldChange::Tags { id, before, after } => {
@@ -841,6 +887,12 @@ impl ContactSheet {
         self.selected = edit.selected(forward);
         self.dirty = edit.dirty(forward);
         self.rotated_thumbs.clear();
+        if rotation_changed {
+            self.clear_inspector_image();
+            if let Some(id) = self.inspected_photo {
+                self.load_inspector_image(id, cx);
+            }
+        }
         self.project_changed();
         self.selection_changed();
         self.refresh_and_notify(cx);
@@ -1457,7 +1509,60 @@ impl ContactSheet {
             .update(cx, |field, cx| field.set_value(date, cx));
         self.schedule_thumb_ids([photo_id], cx);
         self.ensure_photo_meta(photo_id, cx);
+        self.load_inspector_image(photo_id, cx);
         cx.notify();
+    }
+
+    pub(crate) fn clear_inspector_image(&mut self) {
+        self.inspector_image = None;
+        self.inspector_image_error = None;
+        self.inspector_load_id = self.inspector_load_id.wrapping_add(1);
+    }
+
+    fn load_inspector_image(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
+        if matches!(self.inspector_image, Some((id, _)) if id == photo_id) {
+            return;
+        }
+        let Some(photo) = self.project.photo(photo_id) else {
+            return;
+        };
+        let path = photo.path.to_path_buf();
+        let turns = photo.rotation();
+        let generation = self.generation;
+        self.inspector_load_id = self.inspector_load_id.wrapping_add(1);
+        let load_id = self.inspector_load_id;
+        self.inspector_image = None;
+        self.inspector_image_error = None;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { import::preview(&path, INSPECTOR_EDGE) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation
+                    || this.inspected_photo != Some(photo_id)
+                    || this.inspector_load_id != load_id
+                {
+                    return;
+                }
+                match result {
+                    Ok(preview) => {
+                        let image = render_image(preview);
+                        let image = if turns == QuarterTurns::NONE {
+                            image
+                        } else {
+                            rotate_render_image(&image, turns).unwrap_or(image)
+                        };
+                        this.inspector_image = Some((photo_id, image));
+                        this.inspector_image_error = None;
+                    }
+                    Err(error) => {
+                        this.inspector_image_error = Some((photo_id, error.to_string()));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn ensure_photo_meta(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
@@ -2034,6 +2139,7 @@ impl ContactSheet {
         self.thumb_queue.clear();
         self.thumbs_in_flight = 0;
         self.rotated_thumbs.clear();
+        self.clear_inspector_image();
         self.grid_scroll = UniformListScrollHandle::default();
         self.import_queue.clear();
         self.importing_paths.clear();
@@ -2169,6 +2275,7 @@ impl ContactSheet {
                 self.rotated_thumbs.clear();
                 self.thumb_queue.clear();
                 self.thumbs_in_flight = 0;
+                self.clear_inspector_image();
                 self.grid_scroll = UniformListScrollHandle::default();
                 // Empty means "all visible"; do not materialise a 500k-entry
                 // selection set just to open a large project.
@@ -2654,6 +2761,10 @@ impl ContactSheet {
             );
         }
         self.log(format!("Rotate / {name} / {degrees}°"));
+        if self.inspected_photo == Some(id) {
+            self.clear_inspector_image();
+            self.load_inspector_image(id, cx);
+        }
         self.refresh_and_notify(cx);
     }
 
@@ -2826,14 +2937,6 @@ impl Render for ContactSheet {
             self.focused_once = true;
         }
         if !self.appearance_initialized {
-            self.theme = if matches!(
-                window.appearance(),
-                WindowAppearance::Dark | WindowAppearance::VibrantDark
-            ) {
-                theme::Theme::Dark
-            } else {
-                theme::Theme::Light
-            };
             self.appearance_initialized = true;
             theme::configure_window_chrome();
             theme::apply_native_appearance(self.theme);
@@ -3009,6 +3112,7 @@ impl Render for ContactSheet {
             }))
             .on_mouse_move(cx.listener(Self::pointer_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::pointer_up))
+            .child(self.render_window_titlebar(cx))
             .child(self.render_topbar(cx))
             .child(
                 div()
@@ -3168,6 +3272,7 @@ mod tests {
             .debug_bounds(selector)
             .unwrap_or_else(|| panic!("missing debug bounds for {selector}"));
         cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
     }
 
     #[gpui::test]
@@ -3216,6 +3321,18 @@ mod tests {
             assert_eq!(view.sort_direction, SortDirection::Ascending);
         });
 
+        ui_click(&view, cx, "sidebar-section-rating");
+        view.update(cx, |view, _| {
+            assert!(
+                view.sidebar_collapsed.contains(&SidebarSection::Rating),
+                "rating section did not collapse"
+            );
+        });
+        ui_click(&view, cx, "sidebar-section-rating");
+        view.update(cx, |view, _| {
+            assert!(!view.sidebar_collapsed.contains(&SidebarSection::Rating));
+        });
+
         ui_click(&view, cx, "cell-1");
         view.update(cx, |view, _| {
             assert_eq!(view.inspected_photo, Some(PhotoId(1)));
@@ -3235,6 +3352,46 @@ mod tests {
         draw_root(&view, cx);
         assert!(cx.debug_bounds("convert-dialog").is_some());
         view.update(cx, |view, _| assert!(view.convert_dialog_open));
+    }
+
+    fn ui_sample_project() -> Project {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/sample/street-walk-01.jpg")
+            .canonicalize()
+            .unwrap();
+        let bytes = std::fs::metadata(&path).unwrap().len();
+        let mut project = Project::new("Preview");
+        project.add_photo(path, 4000, 2667, bytes);
+        project
+    }
+
+    #[gpui::test]
+    fn inspector_loads_a_fit_preview_larger_than_the_grid_thumb(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| assets::install_fonts(cx));
+        let (view, cx) = cx.add_window_view(|_, cx| ContactSheet::new(cx));
+        view.update(cx, |view, cx| {
+            view.project = ui_sample_project();
+            view.selected = Arc::new([PhotoId(1)].into_iter().collect());
+            view.selection_changed();
+            view.inspect_photo(PhotoId(1), cx);
+        });
+        for _ in 0..10 {
+            cx.run_until_parked();
+            if view.update(cx, |view, _| view.inspector_image.is_some()) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        view.update(cx, |view, _| {
+            let (id, image) = view
+                .inspector_image
+                .as_ref()
+                .expect("inspector preview should load");
+            assert_eq!(*id, PhotoId(1));
+            let size = image.size(0);
+            assert!(size.width.0 > THUMB_EDGE as i32);
+            assert!(size.height.0 > THUMB_EDGE as i32);
+        });
     }
 
     #[gpui::test]

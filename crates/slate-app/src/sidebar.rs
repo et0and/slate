@@ -1,13 +1,11 @@
 //! Left rail: import, search, tags, rename and activity.
 
-use gpui::{
-    AnyElement, Context, ElementId, MouseButton, SharedString, Window, div, prelude::*, px, rgba,
-};
+use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, prelude::*, px, rgba};
 
 use slate_core::batch;
 use slate_core::model::{ColorLabel, Filter, StarRating};
 
-use crate::app::ContactSheet;
+use crate::app::{ContactSheet, SidebarSection};
 use crate::assets;
 use crate::theme;
 use crate::view::SortKey;
@@ -33,38 +31,37 @@ impl ContactSheet {
         let scope_label = self.scope_label();
         let scope_count = self.scope_ids().len();
 
-        let search_block = div()
-            .px(px(16.0))
-            .py(px(14.0))
-            .border_t_1()
-            .border_color(theme::rule())
-            .flex()
-            .flex_col()
-            .gap(px(10.0))
-            .child(label("Search"))
-            .child(self.search_field.clone())
-            .child(
-                mono_text(theme::TEXT_META, theme::muted())
-                    .child(format!("{selected_count} selected")),
-            );
+        let search_open = !self.sidebar_collapsed.contains(&SidebarSection::Search);
+        let rating_open = !self.sidebar_collapsed.contains(&SidebarSection::Rating);
+        let label_open = !self.sidebar_collapsed.contains(&SidebarSection::Label);
+        let sort_open = !self.sidebar_collapsed.contains(&SidebarSection::Sort);
+        let tags_open = !self.sidebar_collapsed.contains(&SidebarSection::Tags);
+        let rename_open = !self.sidebar_collapsed.contains(&SidebarSection::Rename);
 
-        let rating_block =
+        let search_block = sidebar_section(
+            SidebarSection::Search,
+            "Search",
+            format!("{selected_count} selected"),
+            search_open,
             div()
                 .px(px(16.0))
-                .py(px(14.0))
-                .border_t_1()
-                .border_color(theme::rule())
+                .pb(px(14.0))
+                .child(self.search_field.clone())
+                .into_any_element(),
+            cx,
+        );
+
+        let rating_block = sidebar_section(
+            SidebarSection::Rating,
+            "Rating",
+            format!("{scope_count} in scope"),
+            rating_open,
+            div()
+                .px(px(16.0))
+                .pb(px(14.0))
                 .flex()
                 .flex_col()
                 .gap(px(8.0))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(group_label("Rating"))
-                        .child(micro(format!("{scope_count} in scope"))),
-                )
                 .child(div().flex().items_center().gap(px(3.0)).children(
                     (1..=StarRating::MAX).map(|value| {
                         let active = scope_rating
@@ -73,64 +70,52 @@ impl ContactSheet {
                         rating_button(value, active, cx)
                     }),
                 ))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(micro("Click a star to rate the scope"))
-                        .child(text_button("rating-clear", "Clear").on_click(
-                            cx.listener(|this, _, _, cx| this.apply_rating(StarRating::NONE, cx)),
-                        )),
-                );
+                .child(div().flex().justify_end().child(
+                    text_button("rating-clear", "Clear").on_click(
+                        cx.listener(|this, _, _, cx| this.apply_rating(StarRating::NONE, cx)),
+                    ),
+                ))
+                .into_any_element(),
+            cx,
+        );
 
-        let label_block = div()
-            .px(px(16.0))
-            .py(px(14.0))
-            .border_t_1()
-            .border_color(theme::rule())
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(group_label("Label"))
-                    .child(micro(if scope_count == 0 {
-                        "—".to_string()
-                    } else {
-                        scope_label
-                            .map(|label| label.label().to_string())
-                            .unwrap_or_else(|| "Mixed".to_string())
-                    })),
-            )
-            .child(
-                div().flex().items_center().gap(px(5.0)).children(
+        let label_block = sidebar_section(
+            SidebarSection::Label,
+            "Label",
+            if scope_count == 0 {
+                "—".to_string()
+            } else {
+                scope_label
+                    .map(|label| label.label().to_string())
+                    .unwrap_or_else(|| "Mixed".to_string())
+            },
+            label_open,
+            div()
+                .px(px(16.0))
+                .pb(px(14.0))
+                .flex()
+                .items_center()
+                .gap(px(5.0))
+                .children(
                     ColorLabel::ALL
                         .into_iter()
                         .map(|label| label_button(label, scope_label == Some(label), cx)),
-                ),
-            );
+                )
+                .into_any_element(),
+            cx,
+        );
 
-        let sort_block =
+        let sort_block = sidebar_section(
+            SidebarSection::Sort,
+            "Sort",
+            format!("{photo_count} photos"),
+            sort_open,
             div()
                 .px(px(16.0))
-                .py(px(14.0))
-                .border_t_1()
-                .border_color(theme::rule())
+                .pb(px(14.0))
                 .flex()
                 .flex_col()
                 .gap(px(6.0))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(group_label("Sort"))
-                        .child(micro(format!("{photo_count} photos"))),
-                )
                 .child(div().grid().grid_cols(2).gap(px(4.0)).children(
                     SortKey::ALL.into_iter().map(|key| {
                         let active = self.sort == key;
@@ -165,7 +150,10 @@ impl ContactSheet {
                             10.0,
                             theme::faint(),
                         )),
-                );
+                )
+                .into_any_element(),
+            cx,
+        );
 
         let mut filter_rows: Vec<AnyElement> = Vec::new();
         let is_all = matches!(self.filter, Filter::All);
@@ -265,22 +253,9 @@ impl ContactSheet {
             .into_any_element(),
         );
 
-        let tags_block = div()
-            .border_t_1()
-            .border_color(theme::rule())
+        let tags_content = div()
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .px(px(16.0))
-                    .pt(px(14.0))
-                    .pb(px(8.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(group_label("Tags"))
-                    .child(micro(format!("{tag_count_total}"))),
-            )
             .children(filter_rows)
             .child(
                 div()
@@ -309,7 +284,17 @@ impl ContactSheet {
                                     .on_click(cx.listener(|this, _, _, cx| this.clear_tags(cx))),
                             ),
                     ),
-            );
+            )
+            .into_any_element();
+
+        let tags_block = sidebar_section(
+            SidebarSection::Tags,
+            "Tags",
+            format!("{tag_count_total}"),
+            tags_open,
+            tags_content,
+            cx,
+        );
 
         let target_ids = self.scope_ids();
         let target_count = target_ids.len();
@@ -324,22 +309,12 @@ impl ContactSheet {
         let start = self.rename_options.start;
         let padding = self.rename_options.padding;
 
-        let rename_block = div()
+        let rename_content = div()
             .px(px(16.0))
-            .py(px(14.0))
-            .border_t_1()
-            .border_color(theme::rule())
+            .pb(px(14.0))
             .flex()
             .flex_col()
             .gap(px(10.0))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(group_label("Rename"))
-                    .child(micro(format!("{target_count} in scope"))),
-            )
             .child(label("Prefix"))
             .child(self.prefix_field.clone())
             .child(label("Suffix"))
@@ -434,7 +409,17 @@ impl ContactSheet {
                 button("rename-review", "Review")
                     .w_full()
                     .on_click(cx.listener(|this, _, _, cx| this.preview_rename(cx))),
-            );
+            )
+            .into_any_element();
+
+        let rename_block = sidebar_section(
+            SidebarSection::Rename,
+            "Rename",
+            format!("{target_count} in scope"),
+            rename_open,
+            rename_content,
+            cx,
+        );
 
         div()
             .w(px(self.panels.left()))
@@ -443,63 +428,27 @@ impl ContactSheet {
             .flex()
             .flex_col()
             .bg(theme::panel())
-            .child(
+            .children((!cfg!(target_os = "macos")).then(|| {
                 div()
-                    .h(px(theme::WINDOW_CHROME_TOP))
+                    .h(px(36.0))
                     .w_full()
                     .flex_shrink_0()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|_, _, window, _| window.start_window_move()),
-                    ),
-            )
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .pr(px(6.0))
+                    .child(
+                        icon_button("sidebar-collapse", assets::PANEL_LEFT).on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_left_pane(window, cx)),
+                        ),
+                    )
+            }))
             .child(
                 div()
                     .id("sidebar-scroll")
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_y_scroll()
-                    .child(
-                        div()
-                            .px(px(16.0))
-                            .pt(px(14.0))
-                            .pb(px(10.0))
-                            .flex()
-                            .items_start()
-                            .justify_between()
-                            .gap(px(8.0))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(4.0))
-                                    .child(
-                                        ui_text(theme::TEXT_TITLE, theme::ink())
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .truncate()
-                                            .child(self.project.name.clone()),
-                                    )
-                                    .child(
-                                        mono_text(theme::TEXT_META, theme::faint())
-                                            .truncate()
-                                            .child(
-                                                self.project_path
-                                                    .as_ref()
-                                                    .map(|path| compact_path(path))
-                                                    .unwrap_or_else(|| "No file".to_string()),
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                icon_button("sidebar-collapse", assets::CHEVRON_LEFT).on_click(
-                                    cx.listener(|this, _, window, cx| {
-                                        this.toggle_left_pane(window, cx)
-                                    }),
-                                ),
-                            ),
-                    )
                     .child(search_block)
                     .child(rating_block)
                     .child(label_block)
@@ -509,6 +458,71 @@ impl ContactSheet {
             )
             .into_any_element()
     }
+
+    pub(crate) fn toggle_sidebar_section(
+        &mut self,
+        section: SidebarSection,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.sidebar_collapsed.remove(&section) {
+            self.sidebar_collapsed.insert(section);
+        }
+        cx.notify();
+    }
+}
+
+fn sidebar_section(
+    section: SidebarSection,
+    title: &'static str,
+    meta: String,
+    open: bool,
+    content: AnyElement,
+    cx: &mut Context<ContactSheet>,
+) -> AnyElement {
+    div()
+        .border_t_1()
+        .border_color(theme::rule())
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .id(ElementId::Name(SharedString::from(format!(
+                    "sidebar-section-{}",
+                    section.key()
+                ))))
+                .w_full()
+                .px(px(16.0))
+                .py(px(10.0))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(8.0))
+                .cursor_pointer()
+                .hover(|style| style.bg(theme::accent_soft()))
+                .debug_selector(move || format!("sidebar-section-{}", section.key()))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.toggle_sidebar_section(section, cx);
+                }))
+                .child(group_label(title))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(micro(meta))
+                        .child(icon(
+                            if open {
+                                assets::CHEVRON_UP
+                            } else {
+                                assets::CHEVRON_DOWN
+                            },
+                            10.0,
+                            theme::faint(),
+                        )),
+                ),
+        )
+        .children(open.then_some(content))
+        .into_any_element()
 }
 
 fn rating_button(value: u8, active: bool, cx: &mut Context<ContactSheet>) -> AnyElement {
@@ -712,15 +726,4 @@ fn filter_row(
         )
         .child(format!("{count}")),
     )
-}
-
-fn compact_path(path: &std::path::Path) -> String {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
-    let Some(home) = home else {
-        return path.display().to_string();
-    };
-    match path.strip_prefix(std::path::PathBuf::from(home)) {
-        Ok(rest) => format!("~/{}", rest.display()),
-        Err(_) => path.display().to_string(),
-    }
 }

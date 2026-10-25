@@ -230,7 +230,12 @@ impl ContactSheet {
             return self.render_photo_inspector_empty(cx);
         };
         self.schedule_thumb_ids([photo_id], cx);
-        let image = self.preview_image(photo.id(), photo.rotation(), false);
+        let image = self
+            .inspector_image
+            .as_ref()
+            .filter(|(id, _)| *id == photo_id)
+            .map(|(_, image)| image.clone())
+            .or_else(|| self.preview_image(photo.id(), photo.rotation(), false));
         let selected = self.selected.len();
         let dimensions = photo
             .oriented_size()
@@ -264,11 +269,12 @@ impl ContactSheet {
         let rating = photo.rating();
         let label = photo.label();
 
+        let image_width = (self.panels.right() - 42.0).max(1.0);
         let thumbnail: AnyElement = match image {
-            Some(image) => img(image)
-                .object_fit(gpui::ObjectFit::Contain)
-                .size_full()
-                .into_any_element(),
+            Some(image) => {
+                let (width, height) = fit_image(&image, image_width, 194.0);
+                img(image).w(px(width)).h(px(height)).into_any_element()
+            }
             None => div()
                 .size_full()
                 .flex()
@@ -371,7 +377,7 @@ impl ContactSheet {
                             .child(mono_text(theme::TEXT_META, theme::faint()).child(sub)),
                     )
                     .child(
-                        icon_button("inspector-collapse", assets::CHEVRON_RIGHT).on_click(
+                        icon_button("inspector-collapse", assets::PANEL_RIGHT).on_click(
                             cx.listener(|this, _, window, cx| this.toggle_right_pane(window, cx)),
                         ),
                     ),
@@ -386,6 +392,9 @@ impl ContactSheet {
                         div()
                             .mx(px(20.0))
                             .h(px(196.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .overflow_hidden()
                             .bg(theme::photo_bg())
                             .border_1()
@@ -547,7 +556,7 @@ impl ContactSheet {
                     .justify_between()
                     .child(group_label("Photo inspector"))
                     .child(
-                        icon_button("inspector-collapse", assets::CHEVRON_RIGHT).on_click(
+                        icon_button("inspector-collapse", assets::PANEL_RIGHT).on_click(
                             cx.listener(|this, _, window, cx| this.toggle_right_pane(window, cx)),
                         ),
                     ),
@@ -607,7 +616,7 @@ impl ContactSheet {
                     .child(format!("{} / {}", current + 1, page_count)),
             )
             .child(
-                mini_button("page-next", assets::CHEVRON_RIGHT).on_click(cx.listener(
+                mini_button("page-next", assets::PANEL_RIGHT).on_click(cx.listener(
                     |this, _, _, cx| {
                         let page =
                             (this.current_page() + 1).min(this.page_count().saturating_sub(1));
@@ -629,7 +638,7 @@ impl ContactSheet {
                     .items_center()
                     .justify_between()
                     .child(
-                        icon_button("inspector-collapse", assets::CHEVRON_RIGHT).on_click(
+                        icon_button("inspector-collapse", assets::PANEL_RIGHT).on_click(
                             cx.listener(|this, _, window, cx| this.toggle_right_pane(window, cx)),
                         ),
                     )
@@ -985,6 +994,14 @@ impl ContactSheet {
             )
             .into_any_element()
     }
+}
+
+fn fit_image(image: &std::sync::Arc<gpui::RenderImage>, max_w: f32, max_h: f32) -> (f32, f32) {
+    let size = image.size(0);
+    let width = size.width.0.max(1) as f32;
+    let height = size.height.0.max(1) as f32;
+    let scale = (max_w / width).min(max_h / height);
+    (width * scale, height * scale)
 }
 
 fn photo_info_row(label: &str, value: &str) -> AnyElement {

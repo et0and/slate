@@ -76,6 +76,26 @@ impl Theme {
         }
     }
 
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
+            Self::OneDark => "one-dark",
+            Self::Nord => "nord",
+            Self::SolarizedLight => "solarized-light",
+            Self::SolarizedDark => "solarized-dark",
+            Self::TokyoNight => "tokyo-night",
+            Self::Catppuccin => "catppuccin",
+            Self::RosePine => "rose-pine",
+            Self::Gruvbox => "gruvbox",
+            Self::Monokai => "monokai",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|theme| theme.key() == key)
+    }
+
     #[cfg(any(target_os = "macos", test))]
     pub fn is_dark(self) -> bool {
         !matches!(self, Self::Light | Self::SolarizedLight)
@@ -417,6 +437,13 @@ mod tests {
     fn every_theme_has_a_stable_index() {
         for theme in Theme::ALL {
             assert_eq!(Theme::from_index(theme.index()), theme);
+        }
+    }
+
+    #[test]
+    fn every_theme_round_trips_through_its_storage_key() {
+        for theme in Theme::ALL {
+            assert_eq!(Theme::from_key(theme.key()), Some(theme));
         }
     }
 

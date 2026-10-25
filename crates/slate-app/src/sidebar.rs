@@ -430,7 +430,7 @@ impl ContactSheet {
             .bg(theme::panel())
             .children((!cfg!(target_os = "macos")).then(|| {
                 div()
-                    .h(px(36.0))
+                    .h(px(theme::WINDOW_CHROME_TOP.max(36.0)))
                     .w_full()
                     .flex_shrink_0()
                     .flex()

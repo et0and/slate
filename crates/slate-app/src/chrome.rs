@@ -1,12 +1,18 @@
 //! Window chrome: primary commands and status.
 
-use gpui::{AnyElement, ClickEvent, Context, MouseButton, div, prelude::*, px};
+use gpui::{AnyElement, Context, div, prelude::*, px};
+#[cfg(target_os = "macos")]
+use gpui::{ClickEvent, MouseButton};
 
 use crate::app::ContactSheet;
 use crate::assets;
-use crate::panels::{DIVIDER_W, RAIL_W, ResizeTarget};
+#[cfg(target_os = "macos")]
+use crate::panels::DIVIDER_W;
+use crate::panels::{RAIL_W, ResizeTarget};
 use crate::theme;
-use crate::widgets::{icon, icon_button, ui_text};
+#[cfg(target_os = "macos")]
+use crate::widgets::icon_button;
+use crate::widgets::{icon, ui_text};
 
 impl ContactSheet {
     pub(crate) fn render_statusbar(&self) -> AnyElement {

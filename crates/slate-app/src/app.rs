@@ -39,6 +39,7 @@ actions!(
     [
         Quit,
         NewProject,
+        OpenPreview,
         OpenProject,
         SaveProject,
         SaveAs,
@@ -1939,6 +1940,10 @@ impl Render for ContactSheet {
             .on_action(cx.listener(|this, _: &NewProject, _, cx| {
                 this.close_menu(cx);
                 this.new_project(cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenPreview, window, cx| {
+                this.close_menu(cx);
+                this.open_preview_window(window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenProject, _, cx| {
                 this.close_menu(cx);

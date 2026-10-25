@@ -9,9 +9,9 @@ use gpui::{
 
 use crate::app::{
     About, ContactSheet, DeselectPhotos, ExportDrive, ExportSheet, HideOthers, HideSlate,
-    ImportDrive, ImportFiles, ImportFolder, InvertSelection, LinkDrive, NewProject, OpenProject,
-    OpenRecent, OpenWebsite, Quit, Redo, RemoveSelected, ReportIssue, ResetPanels, SaveAs,
-    SaveProject, SaveSheet, SelectAllPhotos, SetTheme, Undo, UnlinkDrive,
+    ImportDrive, ImportFiles, ImportFolder, InvertSelection, LinkDrive, NewProject, OpenPreview,
+    OpenProject, OpenRecent, OpenWebsite, Quit, Redo, RemoveSelected, ReportIssue, ResetPanels,
+    SaveAs, SaveProject, SaveSheet, SelectAllPhotos, SetTheme, Undo, UnlinkDrive,
 };
 use crate::assets;
 use crate::drive_ui::DriveMode;
@@ -414,10 +414,26 @@ impl ContactSheet {
     }
 
     fn view_menu(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let mut rows: Vec<AnyElement> = theme::Theme::ALL
-            .into_iter()
-            .map(|choice| self.theme_menu_item(choice, cx))
-            .collect();
+        let mut rows: Vec<AnyElement> = vec![
+            menu_item(
+                "menu-preview",
+                assets::IMAGE,
+                "Open preview window",
+                Some(shift_shortcut_label("P")),
+                true,
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.close_menu(cx);
+                this.open_preview_window(window, cx);
+            }))
+            .into_any_element(),
+            separator(),
+        ];
+        rows.extend(
+            theme::Theme::ALL
+                .into_iter()
+                .map(|choice| self.theme_menu_item(choice, cx)),
+        );
         rows.push(separator());
         rows.push(
             menu_item(
@@ -685,17 +701,18 @@ impl ContactSheet {
             MenuItem::action("Remove from project", RemoveSelected),
         ];
 
-        let mut view_items: Vec<MenuItem> = theme::Theme::ALL
-            .into_iter()
-            .map(|choice| {
-                let label = if self.theme == choice {
-                    format!("✓ {}", choice.label())
-                } else {
-                    choice.label().to_string()
-                };
-                MenuItem::action(label, SetTheme { theme: choice })
-            })
-            .collect();
+        let mut view_items = vec![
+            MenuItem::action("Open preview window", OpenPreview),
+            MenuItem::separator(),
+        ];
+        view_items.extend(theme::Theme::ALL.into_iter().map(|choice| {
+            let label = if self.theme == choice {
+                format!("✓ {}", choice.label())
+            } else {
+                choice.label().to_string()
+            };
+            MenuItem::action(label, SetTheme { theme: choice })
+        }));
         view_items.push(MenuItem::separator());
         view_items.push(MenuItem::action("Reset panel widths", ResetPanels));
 

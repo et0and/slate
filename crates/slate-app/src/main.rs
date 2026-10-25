@@ -27,7 +27,8 @@ use gpui::{
 
 use app::{
     ContactSheet, DeselectPhotos, Dismiss, ExportSheet, HideOthers, HideSlate, ImportFiles,
-    ImportFolder, NewProject, OpenProject, Quit, Redo, SaveAs, SaveProject, SelectAllPhotos, Undo,
+    ImportFolder, NewProject, OpenPreview, OpenProject, Quit, Redo, SaveAs, SaveProject,
+    SelectAllPhotos, Undo,
 };
 use preview_window::{ClosePreview, NextPage, PreviousPage};
 
@@ -50,6 +51,7 @@ fn main() {
                 KeyBinding::new(&primary("n"), NewProject, None),
                 KeyBinding::new(&primary("z"), Undo, None),
                 KeyBinding::new(&primary("shift-z"), Redo, None),
+                KeyBinding::new(&primary("shift-p"), OpenPreview, None),
                 KeyBinding::new(&primary("o"), OpenProject, None),
                 KeyBinding::new(&primary("s"), SaveProject, None),
                 KeyBinding::new(&primary("shift-s"), SaveAs, None),

@@ -22,13 +22,15 @@ Use Slate for client proofs, portfolio edits, archive indexes, and the first pas
 
 ## Why Slate
 
-- **Built for the cull.** Import folders or drops, search by name, tag, drag-select, right-click to rename, and rotate each frame from its thumbnail.
+- **Built for the cull.** Import folders or drops, rate with stars, mark colour labels, sort by name or capture date, tag, drag-select, right-click to rename, and rotate each frame from its thumbnail.
 - **Fast on real libraries.** The grid is virtualised and only visible thumbnails load. A 10,000-photo project opens in about 0.2 seconds warm and stays around 78 MB.
 - **Your files stay yours.** Local photos are read in place; Drive imports download beside the project. `.slate` files hold layout, tags, rotation, and saved sheets — not image data.
-- **One sheet, no noise.** A native macOS menu bar, eleven themes, zero toolbars, and collapsible side panes. Commands live in File, Edit, View, Drive, and Help.
+- **One sheet, no noise.** A native macOS menu bar, eleven themes, zero toolbars, and collapsible side panes. Commands live in File, Edit, View, Drive, and Help. Selecting a photo fills the right rail with its metadata; `File > Create contact sheet…` opens the sheet builder.
 - **Dates in names.** Use `{date}`, `{time}`, `{datetime}` or `{year}` tokens in the rename prefix and suffix. Right-click any frame for properties, EXIF, reveal and path actions.
 - **Contact sheet automation is not good enough.** On low-powered machines, the Photoshop batch workflow is [buggy and resource intensive](https://www.reddit.com/r/photoshop/comments/vpwwn7/attempting_to_create_a_contact_sheet_that_uses/).
 - **Print-ready by default.** A4, A3, Letter, Tabloid, or a custom size export as flat PDFs at up to 300 DPI per cell.
+- **Full-screen review.** The eye button on any thumbnail opens a native full-screen preview. Arrow keys move through the sorted library.
+- **More formats.** Import JPEG, PNG, TIFF, WebP, GIF, BMP, PSD, DDS, EXR, HDR, ICO, PNM, QOI, TGA and camera RAW. Convert selections to JPEG, PNG, WebP or TIFF from the File menu.
 - **Undo that keeps up.** Every layout change is undoable without copying the whole library.
 
 ## Benchmark
@@ -53,7 +55,7 @@ Slate supports popular colour themes, with support for custom themes coming soon
 
 GPUI draws the interface on the GPU (Metal on macOS). Only visible thumbnails are uploaded as textures; image decoding, Drive transfers, PDF export and EXIF reads run on bounded background workers.
 
-Large imports read file and EXIF metadata first. Thumbnails decode only when a cell becomes visible. PDF pages stream to disk one at a time. JPEGs, CMYK JPEGs and ordinary RGB/gray PNGs are embedded from their original compressed streams; HEIC/RAW use in-process ImageIO on macOS. Mirrored EXIF, user rotation and layout rotation are expressed as PDF matrices. Remaining alpha/palette/16-bit PNGs and other formats decode in parallel. Photo edits use field-level undo deltas instead of copying the whole library. The photo store is chunked copy-on-write: a 500k-project mutation touches one chunk, snapshots share the rest, and selection is a compact bitmap. A 500k synthetic library is about 71 MB before thumbnails and view caches; `Photo` is 80 bytes.
+Large imports read file and EXIF metadata first. Thumbnails decode only when a cell becomes visible. PDF pages stream to disk one at a time. JPEGs, CMYK JPEGs and ordinary RGB/gray PNGs are embedded from their original compressed streams; HEIC/RAW use in-process ImageIO on macOS. Mirrored EXIF, user rotation and layout rotation are expressed as PDF matrices. Remaining alpha/palette/16-bit PNGs and other formats decode in parallel. Photo edits use field-level undo deltas instead of copying the whole library. The photo store is chunked copy-on-write: a 500k-project mutation touches one chunk, snapshots share the rest, and selection is a compact bitmap. A 500k synthetic library is about 71 MB before thumbnails and view caches; `Photo` is 80 bytes. Ratings, labels and capture dates stay in the portable `.slate` project. Conversion writes new files and never overwrites an existing target.
 
 Reproduce the core numbers with:
 

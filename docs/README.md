@@ -64,3 +64,11 @@ sips -s format jpeg -s formatOptions 88 \
 sips -s format jpeg -s formatOptions 88 \
   target/sample/sample-rotated.pdf.png --out docs/example-rotated.jpg
 ```
+
+## Interface prototype
+
+`docs/parity-preview.html` mirrors the ratings, labels, sorting, photo inspector,
+sheet builder, full-screen preview and conversion dialog. Open it with
+`?view=sheet`, `?view=full`, `?view=convert` or `?menu=file`. The rendered
+screenshots are `docs/parity-photo-inspector.jpg`, `parity-sheet-builder.jpg`,
+`parity-fullscreen.jpg`, `parity-file-menu.jpg` and `parity-convert.jpg`.

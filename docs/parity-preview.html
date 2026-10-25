@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Slate parity prototype</title>
+<style>
+  @font-face { font-family: "Geist"; src: url("../assets/fonts/Geist-Regular.ttf") format("truetype"); font-weight: 400; }
+  @font-face { font-family: "Geist"; src: url("../assets/fonts/Geist-Medium.ttf") format("truetype"); font-weight: 500; }
+  @font-face { font-family: "Geist"; src: url("../assets/fonts/Geist-SemiBold.ttf") format("truetype"); font-weight: 600; }
+  @font-face { font-family: "Geist Mono"; src: url("../assets/fonts/GeistMono-Regular.ttf") format("truetype"); font-weight: 400; }
+  @font-face { font-family: "Geist Mono"; src: url("../assets/fonts/GeistMono-Medium.ttf") format("truetype"); font-weight: 500; }
+
+  :root {
+    --paper: #f6f6f4;
+    --panel: #fbfbfa;
+    --surface: #ffffff;
+    --ink: #111111;
+    --muted: #5f5f5c;
+    --faint: #8b8b87;
+    --rule: #e3e3df;
+    --soft: #eeeeeb;
+    --photo: #efefec;
+    --accent: #111111;
+    --accent-text: #f6f6f4;
+    --red: #d34a45;
+    --yellow: #d8a52e;
+    --green: #4d9a5e;
+    --blue: #4a78c8;
+    --purple: #8f63c9;
+    --lift: 0 2px 6px rgba(17,17,17,.08);
+    --paper-lift: 0 18px 44px rgba(17,17,17,.13), 0 2px 6px rgba(17,17,17,.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1440px; height: 1120px; overflow: hidden; }
+  body { background: var(--paper); color: var(--ink); font-family: "Geist", sans-serif; font-size: 12px; -webkit-font-smoothing: antialiased; }
+  .mono { font-family: "Geist Mono", monospace; }
+  .window { height: 100%; display: flex; flex-direction: column; position: relative; }
+  .icon { width: 14px; height: 14px; flex: 0 0 auto; }
+  .icon.sm { width: 12px; height: 12px; }
+  .icon.tiny { width: 10px; height: 10px; }
+
+  .topbar { height: 44px; flex: 0 0 44px; display: flex; align-items: center; padding: 0 8px; border-bottom: 1px solid var(--rule); background: var(--paper); position: relative; z-index: 30; }
+  .menubar { display: flex; align-items: center; }
+  .menu-trigger { height: 44px; display: flex; align-items: center; justify-content: center; color: var(--muted); font: 500 11px "Geist", sans-serif; }
+  .menu-trigger.file { width: 36px; background: var(--soft); color: var(--ink); }
+  .menu-trigger.edit { width: 36px; }
+  .menu-trigger.view { width: 40px; }
+  .menu-trigger.drive { width: 42px; }
+  .menu-trigger.history { width: 56px; }
+  .menu-trigger.help { width: 38px; }
+  .menu-popover { display: none; position: absolute; top: 44px; left: 16px; width: 292px; padding: 4px 0; background: var(--surface); border: 1px solid var(--rule); box-shadow: 0 18px 44px rgba(17,17,17,.16), 0 2px 6px rgba(17,17,17,.08); z-index: 40; }
+  html.menu-file .menu-popover { display: block; }
+  .menu-item { height: 30px; padding: 0 10px; display: flex; align-items: center; gap: 9px; font-size: 11px; font-weight: 500; }
+  .menu-item .icon { color: var(--muted); }
+  .menu-item .shortcut { margin-left: auto; font: 400 9px "Geist Mono", monospace; color: var(--faint); }
+  .menu-item.new-command { background: var(--soft); }
+  .menu-item.new-command .tag { margin-left: auto; font: 500 8px "Geist Mono", monospace; color: var(--accent); border: 1px solid var(--rule); padding: 2px 4px; }
+  .menu-sep { height: 1px; background: var(--rule); }
+
+  .workspace { flex: 1; min-height: 0; display: flex; }
+  .rail { display: flex; flex-direction: column; overflow: hidden; background: var(--panel); }
+  .rail.left { width: 256px; flex: 0 0 256px; }
+  .rail.right { width: 344px; flex: 0 0 344px; }
+  .panel-divider { width: 8px; flex: 0 0 8px; background: var(--panel); position: relative; }
+  .panel-divider::before { content: ""; position: absolute; top: 0; left: 3.5px; width: 1px; height: 100%; background: var(--rule); }
+  .scroll { flex: 1; min-height: 0; overflow: hidden; }
+
+  .project-block { padding: 14px 16px 10px; display: flex; flex-direction: column; gap: 4px; }
+  .project-name { font-size: 13px; font-weight: 600; }
+  .project-path { font: 9px "Geist Mono", monospace; color: var(--faint); }
+  .selected-count { font: 9px "Geist Mono", monospace; color: var(--muted); }
+  .group { border-top: 1px solid var(--rule); padding: 12px 16px; display: flex; flex-direction: column; gap: 9px; }
+  .group.tight { gap: 7px; }
+  .group-head { display: flex; align-items: center; justify-content: space-between; }
+  .group-label { font-size: 10px; font-weight: 600; color: var(--muted); }
+  .micro { font: 400 9px "Geist Mono", monospace; color: var(--faint); }
+  .field { height: 32px; border: 1px solid var(--rule); background: var(--surface); display: flex; align-items: center; padding: 0 9px; font-size: 11.5px; color: var(--ink); }
+  .field.placeholder { color: var(--faint); }
+  .label { font-size: 10px; font-weight: 500; color: var(--muted); }
+
+  .stars { display: flex; align-items: center; gap: 3px; }
+  .star { width: 26px; height: 26px; border: 1px solid var(--rule); background: var(--surface); color: var(--faint); display: flex; align-items: center; justify-content: center; }
+  .star.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .star .icon { width: 14px; height: 14px; }
+  .rating-line { display: flex; align-items: center; justify-content: space-between; }
+  .clear-btn { height: 22px; padding: 0 7px; border: 0; background: transparent; color: var(--muted); font: 500 9px "Geist", sans-serif; }
+
+  .labels { display: flex; align-items: center; gap: 5px; }
+  .swatch { width: 25px; height: 25px; border: 1px solid var(--rule); background: var(--surface); position: relative; }
+  .swatch i { position: absolute; inset: 5px; display: block; }
+  .swatch.red i { background: var(--red); }
+  .swatch.yellow i { background: var(--yellow); }
+  .swatch.green i { background: var(--green); }
+  .swatch.blue i { background: var(--blue); }
+  .swatch.purple i { background: var(--purple); }
+  .swatch.none i { background: transparent; border: 1px solid var(--rule); }
+  .swatch.active { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+
+  .sort-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .sort-btn { height: 26px; border: 1px solid var(--rule); background: var(--surface); color: var(--muted); font: 500 10px "Geist", sans-serif; display: flex; align-items: center; justify-content: center; }
+  .sort-btn.active { background: var(--soft); border-color: var(--ink); color: var(--ink); }
+  .sort-dir { width: 100%; height: 26px; border: 1px solid var(--rule); background: var(--surface); color: var(--muted); font: 500 10px "Geist", sans-serif; display: flex; align-items: center; justify-content: center; gap: 6px; }
+
+  .filter-row { height: 30px; display: flex; align-items: center; justify-content: space-between; margin: 0 -16px; padding: 0 16px; border-top: 1px solid var(--rule); font-size: 10.5px; color: var(--muted); }
+  .filter-row.active { background: var(--soft); color: var(--ink); }
+  .filter-row .count { font: 400 9px "Geist Mono", monospace; color: var(--faint); }
+  .filter-name { display: flex; align-items: center; gap: 7px; }
+  .dot { width: 3px; height: 3px; background: transparent; }
+  .filter-row.active .dot { background: var(--accent); }
+  .filter-row .swatch-mini { width: 8px; height: 8px; display: block; }
+  .tag-form { display: flex; gap: 4px; }
+  .btn { height: 30px; padding: 0 11px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 10.5px; font-weight: 500; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; box-shadow: var(--lift); }
+  .btn.flex { flex: 1; }
+  .text-btn { height: 26px; padding: 0 7px; border: 0; background: transparent; color: var(--muted); font: 500 9.5px "Geist", sans-serif; }
+  .rename-note { font-size: 9px; line-height: 13px; color: var(--faint); }
+
+  .center { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--paper); }
+  .grid { flex: 1; padding: 20px; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 14px; overflow: hidden; }
+  .cell { width: 185px; padding: 5px; display: flex; flex-direction: column; }
+  .cell.selected { background: var(--soft); }
+  .thumb { width: 175px; height: 136px; overflow: hidden; position: relative; background: var(--photo); border: 1px solid var(--rule); box-shadow: var(--lift); display: flex; align-items: center; justify-content: center; }
+  .thumb img { width: 100%; height: 100%; object-fit: contain; }
+  .eye { position: absolute; top: 9px; left: 9px; width: 20px; height: 20px; background: var(--surface); border: 1px solid var(--rule); color: var(--muted); display: flex; align-items: center; justify-content: center; box-shadow: var(--lift); }
+  .eye .icon { width: 11px; height: 11px; }
+  .rotate { position: absolute; top: 9px; right: 35px; width: 20px; height: 20px; background: var(--surface); border: 1px solid var(--rule); color: var(--muted); display: flex; align-items: center; justify-content: center; box-shadow: var(--lift); }
+  .rotate .icon { width: 12px; height: 12px; }
+  .check { position: absolute; top: 9px; right: 9px; width: 20px; height: 20px; background: var(--accent); color: var(--accent-text); display: flex; align-items: center; justify-content: center; box-shadow: var(--lift); }
+  .check .icon { width: 11px; height: 11px; }
+  .cell-meta { padding: 9px 1px 0; display: flex; flex-direction: column; gap: 4px; }
+  .filename { font-size: 11px; font-weight: 500; line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-line { display: flex; align-items: center; justify-content: space-between; gap: 6px; font: 400 8.5px "Geist Mono", monospace; color: var(--faint); }
+  .cell-flags { display: flex; align-items: center; gap: 5px; height: 13px; }
+  .cell-stars { display: flex; gap: 1px; color: var(--muted); }
+  .cell-stars .icon { width: 9px; height: 9px; }
+  .cell-label { width: 9px; height: 9px; border: 1px solid var(--rule); }
+  .cell-tags { font-size: 8.5px; line-height: 12px; color: var(--muted); }
+
+  .inspector-head { padding: 13px 20px 10px; display: flex; align-items: center; justify-content: space-between; }
+  .inspector-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .inspector-sub { font: 9px "Geist Mono", monospace; color: var(--faint); margin-top: 3px; }
+  .thumb-large { margin: 0 20px 12px; height: 196px; background: var(--photo); border: 1px solid var(--rule); box-shadow: var(--lift); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .thumb-large img { width: 100%; height: 100%; object-fit: contain; }
+  .meta-block { padding: 0 20px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .meta-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 10px; }
+  .meta-line .k { color: var(--muted); }
+  .meta-line .v { font: 9.5px "Geist Mono", monospace; color: var(--ink); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .section-rule { border-top: 1px solid var(--rule); }
+  .section-head { padding: 11px 20px 6px; }
+  .read-flags { display: flex; align-items: center; justify-content: space-between; padding: 0 20px 12px; }
+  .read-stars { display: flex; gap: 2px; color: var(--muted); }
+  .read-stars .icon { width: 12px; height: 12px; }
+  .read-label { display: flex; align-items: center; gap: 7px; font-size: 10px; color: var(--muted); }
+  .read-label .swatch { width: 18px; height: 18px; }
+  .read-label .swatch i { inset: 3px; }
+  .tag-line { font-size: 10px; color: var(--muted); line-height: 15px; }
+  .capture-box { padding: 0 20px 12px; display: flex; flex-direction: column; gap: 7px; }
+  .capture-actions { display: flex; justify-content: space-between; gap: 8px; }
+  .exif-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 20px; border-top: 1px solid var(--rule); font-size: 10px; }
+  .exif-row .k { color: var(--muted); }
+  .exif-row .v { font: 9.5px "Geist Mono", monospace; color: var(--ink); }
+  .action-row { display: flex; gap: 6px; padding: 12px 20px; border-top: 1px solid var(--rule); }
+  .action-row .btn { flex: 1; }
+
+  .sheet-head { padding: 13px 20px 8px; display: flex; align-items: flex-start; justify-content: space-between; }
+  .sheet-title { font-size: 13px; font-weight: 600; }
+  .sheet-sub { font: 9px "Geist Mono", monospace; color: var(--faint); margin-top: 3px; }
+  .pager { display: flex; align-items: center; gap: 4px; }
+  .page-label { width: 46px; text-align: center; font: 9px "Geist Mono", monospace; color: var(--faint); }
+  .page-wrap { display: flex; justify-content: center; padding: 0 20px 12px; }
+  .page { width: 270px; height: 382px; border: 1px solid var(--rule); background: #fff; box-shadow: var(--paper-lift); overflow: hidden; }
+  .page img { width: 100%; height: 100%; object-fit: contain; }
+  .setting { min-height: 33px; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--rule); }
+  .s-label { font-size: 10.5px; color: var(--muted); }
+  .s-value { display: flex; align-items: center; gap: 4px; font: 11px "Geist Mono", monospace; }
+  .checkbox { width: 20px; height: 20px; border: 1px solid var(--rule); background: var(--surface); }
+  .checkbox.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); display: flex; align-items: center; justify-content: center; }
+  .checkbox.on .icon { width: 11px; height: 11px; }
+  .saved-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px 7px; border-top: 1px solid var(--rule); }
+  .saved-row { padding: 9px 20px; border-top: 1px solid var(--rule); display: flex; flex-direction: column; gap: 4px; }
+  .saved-name { font-size: 11px; font-weight: 500; }
+  .saved-actions { display: flex; gap: 3px; margin-top: 2px; }
+  .saved-actions .mini { width: 24px; height: 22px; border: 0; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+
+  .statusbar { height: 30px; flex: 0 0 30px; border-top: 1px solid var(--rule); background: var(--panel); display: flex; align-items: center; justify-content: space-between; padding: 0 18px; }
+  .status-left { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 10.5px; }
+  .status-right { font-size: 9px; color: var(--faint); }
+
+  .overlay { display: none; position: absolute; inset: 0; background: #050505; z-index: 80; flex-direction: column; }
+  html.fullscreen .overlay { display: flex; }
+  .overlay-bar { height: 56px; flex: 0 0 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; color: #f3f3f1; }
+  .overlay-name { font-size: 12px; font-weight: 500; }
+  .overlay-sub { font: 9px "Geist Mono", monospace; color: rgba(243,243,241,.55); margin-top: 3px; }
+  .overlay-actions { display: flex; align-items: center; gap: 8px; }
+  .overlay-btn { width: 32px; height: 32px; border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.06); color: #f3f3f1; display: flex; align-items: center; justify-content: center; }
+  .overlay-btn .icon { width: 15px; height: 15px; }
+  .overlay-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 18px 72px 32px; }
+  .overlay-stage img { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 22px 80px rgba(0,0,0,.8); }
+  .overlay-foot { height: 54px; flex: 0 0 54px; display: flex; align-items: center; justify-content: center; gap: 20px; color: rgba(243,243,241,.45); font: 9px "Geist Mono", monospace; }
+  .overlay-foot .strong { color: rgba(243,243,241,.8); }
+
+  .convert-overlay { display: none; position: absolute; inset: 0; background: rgba(0,0,0,.53); z-index: 70; align-items: center; justify-content: center; }
+  html.convert .convert-overlay { display: flex; }
+  .convert-panel { width: 440px; background: var(--surface); border: 1px solid var(--rule); box-shadow: 0 18px 44px rgba(17,17,17,.18), 0 2px 6px rgba(17,17,17,.08); }
+  .convert-head { padding: 16px 20px; border-bottom: 1px solid var(--rule); display: flex; align-items: flex-start; justify-content: space-between; }
+  .convert-title { font-size: 20px; font-weight: 600; line-height: 23px; }
+  .convert-sub { font: 9px "Geist Mono", monospace; color: var(--faint); margin-top: 4px; }
+  .convert-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+  .format-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .format-btn { height: 38px; border: 1px solid var(--rule); background: var(--surface); color: var(--muted); font: 500 11px "Geist", sans-serif; display: flex; align-items: center; justify-content: center; }
+  .format-btn.active { border-color: var(--ink); background: var(--soft); color: var(--ink); }
+  .convert-note { font-size: 9px; line-height: 16px; color: var(--faint); }
+  .convert-foot { padding: 14px 20px; border-top: 1px solid var(--rule); display: flex; align-items: center; justify-content: space-between; }
+  .note { position: absolute; left: 20px; bottom: 44px; background: rgba(17,17,17,.84); color: #f6f6f4; font: 9px "Geist Mono", monospace; padding: 7px 9px; display: none; }
+  html.notes .note { display: block; }
+</style>
+<script>
+  const params = new URLSearchParams(location.search);
+  if (params.get("menu") === "file") document.documentElement.classList.add("menu-file");
+  if (params.get("view") === "full") document.documentElement.classList.add("fullscreen");
+  if (params.get("view") === "convert") document.documentElement.classList.add("convert");
+  if (params.get("notes") === "1") document.documentElement.classList.add("notes");
+</script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.9 6.2.8-4.5 4.5 1.1 6.3L12 17.5 6.4 20.5l1.1-6.3L3 9.7l6.2-.8L12 3Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="miter"/></symbol>
+  <symbol id="i-star-fill" viewBox="0 0 24 24"><path d="m12 3 2.8 5.9 6.2.8-4.5 4.5 1.1 6.3L12 17.5 6.4 20.5l1.1-6.3L3 9.7l6.2-.8L12 3Z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="miter"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M20 8a8 8 0 1 0 1 7M20 3v5h-5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M4 12.5 9.5 18 20 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="m5 5 14 14M19 5 5 19" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/></symbol>
+  <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/></symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3V6Z" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 20h16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 21V9m0 0 4 4m-4-4-4 4M4 4h16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M4 4h13l3 3v13H4V4Z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4v6h8V4M8 20v-6h8v6" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="9" r="1.5" fill="currentColor"/><path d="m4 18 5-5 4 4 3-3 4 4" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 4v16M15 4v16" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+</svg>
+
+<div class="window">
+  <div class="topbar">
+    <div class="menubar">
+      <div class="menu-trigger file">File</div>
+      <div class="menu-trigger edit">Edit</div>
+      <div class="menu-trigger view">View</div>
+      <div class="menu-trigger drive">Drive</div>
+      <div class="menu-trigger history">History</div>
+      <div class="menu-trigger help">Help</div>
+    </div>
+    <div class="menu-popover">
+      <div class="menu-item"><svg class="icon"><use href="#i-image"/></svg> New project <span class="shortcut">⌘N</span></div>
+      <div class="menu-item"><svg class="icon"><use href="#i-folder"/></svg> Open project… <span class="shortcut">⌘O</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item"><svg class="icon"><use href="#i-save"/></svg> Save <span class="shortcut">⌘S</span></div>
+      <div class="menu-item"><svg class="icon"><use href="#i-save"/></svg> Save as… <span class="shortcut">⇧⌘S</span></div>
+      <div class="menu-item new-command"><svg class="icon"><use href="#i-layout"/></svg> Create contact sheet… <span class="shortcut">⇧⌘C</span></div>
+      <div class="menu-item"><svg class="icon"><use href="#i-save"/></svg> Save sheet</div>
+      <div class="menu-sep"></div>
+      <div class="menu-item"><svg class="icon"><use href="#i-image"/></svg> Import files… <span class="shortcut">⌘I</span></div>
+      <div class="menu-item"><svg class="icon"><use href="#i-folder"/></svg> Import folder… <span class="shortcut">⇧⌘I</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item"><svg class="icon"><use href="#i-upload"/></svg> Convert selected… <span class="shortcut">⇧⌘E</span></div>
+      <div class="menu-item"><svg class="icon"><use href="#i-download"/></svg> Export PDF… <span class="shortcut">⌘E</span></div>
+    </div>
+    <div class="note">Prototype: rating + label + sort controls, eye preview, photo inspector, contact sheet command</div>
+  </div>
+
+  <div class="workspace">
+    <aside class="rail left">
+      <div class="scroll">
+        <div class="project-block">
+          <div class="project-name">Street walk</div>
+          <div class="project-path">~/Pictures/street-walk.slate</div>
+          <div class="selected-count">3 selected / 24 photos</div>
+        </div>
+
+        <div class="group">
+          <div class="label">Search</div>
+          <div class="field placeholder">File name</div>
+        </div>
+
+        <div class="group tight">
+          <div class="group-head"><span class="group-label">Rating</span><span class="micro">3 in scope</span></div>
+          <div class="rating-line">
+            <div class="stars">
+              <div class="star on"><svg class="icon"><use href="#i-star-fill"/></svg></div>
+              <div class="star on"><svg class="icon"><use href="#i-star-fill"/></svg></div>
+              <div class="star on"><svg class="icon"><use href="#i-star-fill"/></svg></div>
+              <div class="star"><svg class="icon"><use href="#i-star"/></svg></div>
+              <div class="star"><svg class="icon"><use href="#i-star"/></svg></div>
+            </div>
+            <div class="clear-btn">Clear</div>
+          </div>
+          <div class="rating-line">
+            <span class="micro">Click a star to rate the selection</span>
+          </div>
+        </div>
+
+        <div class="group tight">
+          <div class="group-head"><span class="group-label">Label</span><span class="micro">Green</span></div>
+          <div class="labels">
+            <div class="swatch none"><i></i></div>
+            <div class="swatch red"><i></i></div>
+            <div class="swatch yellow"><i></i></div>
+            <div class="swatch green active"><i></i></div>
+            <div class="swatch blue"><i></i></div>
+            <div class="swatch purple"><i></i></div>
+          </div>
+        </div>
+
+        <div class="group tight">
+          <div class="group-head"><span class="group-label">Sort</span><span class="micro">24 photos</span></div>
+          <div class="sort-grid">
+            <div class="sort-btn active">Name</div>
+            <div class="sort-btn">Date</div>
+            <div class="sort-btn">Size</div>
+            <div class="sort-btn">Type</div>
+            <div class="sort-btn">Rating</div>
+            <div class="sort-btn">Label</div>
+          </div>
+          <div class="sort-dir">Ascending <svg class="icon sm"><use href="#i-chevron-right"/></svg></div>
+        </div>
+
+        <div class="group tight">
+          <div class="group-head"><span class="group-label">Tags</span><span class="micro">6</span></div>
+          <div class="filter-row active"><span class="filter-name"><span class="dot"></span>All images</span><span class="count">24</span></div>
+          <div class="filter-row"><span class="filter-name"><span class="dot"></span>Untagged</span><span class="count">4</span></div>
+          <div class="filter-row"><span class="filter-name"><span class="dot"></span>Unrated</span><span class="count">11</span></div>
+          <div class="filter-row"><span class="filter-name"><span class="dot"></span>Rated</span><span class="count">13</span></div>
+          <div class="filter-row"><span class="filter-name"><span class="dot"></span>#street</span><span class="count">12</span></div>
+          <div class="filter-row"><span class="filter-name"><span class="dot"></span>#select</span><span class="count">7</span></div>
+          <div class="filter-row"><span class="filter-name"><span class="swatch-mini" style="background:var(--red)"></span>Red label</span><span class="count">3</span></div>
+          <div class="filter-row"><span class="filter-name"><span class="swatch-mini" style="background:var(--green)"></span>Green label</span><span class="count">9</span></div>
+          <div class="tag-form">
+            <div class="field" style="flex:1">Tag, e.g. street</div>
+            <div class="btn">Add</div>
+          </div>
+        </div>
+
+        <div class="group tight">
+          <div class="group-head"><span class="group-label">Rename</span><span class="micro">3 in scope</span></div>
+          <div class="label">Prefix</div><div class="field">walk-</div>
+          <div class="label">Suffix</div><div class="field">-web</div>
+          <div class="rename-note">Use in prefix or suffix; date tokens use the capture date.</div>
+          <div class="btn">Review</div>
+        </div>
+      </div>
+    </aside>
+    <div class="panel-divider"></div>
+
+    <main class="center">
+      <div class="grid">
+        <div class="cell selected">
+          <div class="thumb"><img src="../assets/sample/street-walk-01.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div><div class="check"><svg class="icon"><use href="#i-check"/></svg></div></div>
+          <div class="cell-meta"><div class="filename">street-walk-01.jpg</div><div class="file-line"><span class="left">001  4000 × 2667</span><span>4.2 MB</span></div><div class="cell-flags"><span class="cell-stars"><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg></span><span class="cell-label" style="background:var(--green)"></span></div><div class="cell-tags">#street #select</div></div>
+        </div>
+        <div class="cell"><div class="thumb"><img src="../assets/sample/street-walk-02.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div></div><div class="cell-meta"><div class="filename">street-walk-02.jpg</div><div class="file-line"><span class="left">002  4000 × 2667</span><span>3.8 MB</span></div><div class="cell-flags"><span class="cell-stars"><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg></span><span class="cell-label" style="background:var(--yellow)"></span></div><div class="cell-tags">#street</div></div></div>
+        <div class="cell"><div class="thumb"><img src="../assets/sample/street-walk-03.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div></div><div class="cell-meta"><div class="filename">street-walk-03.jpg</div><div class="file-line"><span class="left">003  2667 × 4000</span><span>5.1 MB</span></div><div class="cell-flags"><span class="cell-stars"></span><span class="cell-label" style="background:transparent;border-color:var(--rule)"></span></div><div class="cell-tags">#street</div></div></div>
+        <div class="cell"><div class="thumb"><img src="../assets/sample/street-walk-04.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div></div><div class="cell-meta"><div class="filename">street-walk-04.jpg</div><div class="file-line"><span class="left">004  4000 × 2667</span><span>4.7 MB</span></div><div class="cell-flags"><span class="cell-stars"><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg></span><span class="cell-label" style="background:var(--blue)"></span></div><div class="cell-tags">#select</div></div></div>
+
+        <div class="cell"><div class="thumb"><img src="../assets/sample/street-walk-05.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div></div><div class="cell-meta"><div class="filename">street-walk-05.jpg</div><div class="file-line"><span class="left">005  4000 × 2667</span><span>3.2 MB</span></div><div class="cell-flags"><span class="cell-stars"><svg class="icon"><use href="#i-star-fill"/></svg></span><span class="cell-label" style="background:var(--red)"></span></div><div class="cell-tags">#street</div></div></div>
+        <div class="cell"><div class="thumb"><img src="../assets/sample/street-walk-06.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div></div><div class="cell-meta"><div class="filename">street-walk-06.jpg</div><div class="file-line"><span class="left">006  2667 × 4000</span><span>4.4 MB</span></div><div class="cell-flags"><span class="cell-stars"><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg></span><span class="cell-label" style="background:var(--purple)"></span></div><div class="cell-tags">#street</div></div></div>
+        <div class="cell"><div class="thumb"><img src="../assets/sample/street-walk-07.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div></div><div class="cell-meta"><div class="filename">street-walk-07.jpg</div><div class="file-line"><span class="left">007  4000 × 2667</span><span>3.9 MB</span></div><div class="cell-flags"><span class="cell-stars"></span><span class="cell-label" style="background:transparent;border-color:var(--rule)"></span></div><div class="cell-tags">#street</div></div></div>
+        <div class="cell"><div class="thumb"><img src="../assets/sample/street-walk-08.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div></div><div class="cell-meta"><div class="filename">street-walk-08.jpg</div><div class="file-line"><span class="left">008  4000 × 2667</span><span>4.9 MB</span></div><div class="cell-flags"><span class="cell-stars"><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg></span><span class="cell-label" style="background:var(--green)"></span></div><div class="cell-tags">#select</div></div></div>
+
+        <div class="cell"><div class="thumb"><img src="../assets/sample/street-walk-09.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div></div><div class="cell-meta"><div class="filename">street-walk-09.jpg</div><div class="file-line"><span class="left">009  4000 × 2667</span><span>3.6 MB</span></div><div class="cell-flags"><span class="cell-stars"><svg class="icon"><use href="#i-star-fill"/></svg></span><span class="cell-label" style="background:var(--yellow)"></span></div><div class="cell-tags">#street</div></div></div>
+        <div class="cell"><div class="thumb"><img src="../assets/sample/street-walk-10.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div></div><div class="cell-meta"><div class="filename">street-walk-10.jpg</div><div class="file-line"><span class="left">010  4000 × 2667</span><span>4.1 MB</span></div><div class="cell-flags"><span class="cell-stars"><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg></span><span class="cell-label" style="background:var(--blue)"></span></div><div class="cell-tags">#street</div></div></div>
+        <div class="cell"><div class="thumb"><img src="../assets/sample/street-walk-11.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div></div><div class="cell-meta"><div class="filename">street-walk-11.jpg</div><div class="file-line"><span class="left">011  2667 × 4000</span><span>5.2 MB</span></div><div class="cell-flags"><span class="cell-stars"></span><span class="cell-label" style="background:transparent;border-color:var(--rule)"></span></div><div class="cell-tags">#street</div></div></div>
+        <div class="cell"><div class="thumb"><img src="../assets/sample/street-walk-12.jpg"><div class="eye"><svg class="icon"><use href="#i-eye"/></svg></div><div class="rotate"><svg class="icon"><use href="#i-rotate"/></svg></div></div><div class="cell-meta"><div class="filename">street-walk-12.jpg</div><div class="file-line"><span class="left">012  4000 × 2667</span><span>4.3 MB</span></div><div class="cell-flags"><span class="cell-stars"><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg></span><span class="cell-label" style="background:var(--purple)"></span></div><div class="cell-tags">#select</div></div></div>
+      </div>
+    </main>
+
+    <div class="panel-divider"></div>
+    <aside class="rail right" id="right-photo">
+      <div class="scroll">
+        <div class="inspector-head">
+          <div><div class="inspector-title">street-walk-01.jpg</div><div class="inspector-sub">3 selected / showing primary</div></div>
+          <div class="micro">24 / 24</div>
+        </div>
+        <div class="thumb-large"><img src="../assets/sample/street-walk-01.jpg"></div>
+        <div class="meta-block">
+          <div class="meta-line"><span class="k">Dimensions</span><span class="v">4000 × 2667</span></div>
+          <div class="meta-line"><span class="k">File size</span><span class="v">4.2 MB</span></div>
+          <div class="meta-line"><span class="k">Type</span><span class="v">JPEG</span></div>
+          <div class="meta-line"><span class="k">Folder</span><span class="v">~/Pictures/street-walk</span></div>
+        </div>
+        <div class="section-rule"></div>
+        <div class="section-head"><span class="group-label">Rating and label</span></div>
+        <div class="read-flags">
+          <div class="read-stars"><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star-fill"/></svg><svg class="icon"><use href="#i-star"/></svg><svg class="icon"><use href="#i-star"/></svg></div>
+          <div class="read-label">Green <span class="swatch green active"><i></i></span></div>
+        </div>
+        <div class="section-head"><span class="group-label">Tags</span></div>
+        <div class="meta-block"><div class="tag-line">#street  #select</div></div>
+        <div class="section-rule"></div>
+        <div class="section-head"><span class="group-label">Capture date</span></div>
+        <div class="capture-box">
+          <div class="field">2026-10-25 11:42:08</div>
+          <div class="capture-actions"><div class="btn">Use file date</div><div class="btn primary">Save date</div></div>
+          <div class="micro">Stored in the .slate project. Original EXIF is not changed.</div>
+        </div>
+        <div class="section-rule"></div>
+        <div class="section-head"><span class="group-label">EXIF</span></div>
+        <div class="exif-row"><span class="k">Camera</span><span class="v">Fujifilm X-T5</span></div>
+        <div class="exif-row"><span class="k">Lens</span><span class="v">XF 23mm f/1.4</span></div>
+        <div class="exif-row"><span class="k">ISO</span><span class="v">400</span></div>
+        <div class="exif-row"><span class="k">Aperture</span><span class="v">f/2.8</span></div>
+        <div class="exif-row"><span class="k">Shutter</span><span class="v">1/250 s</span></div>
+        <div class="exif-row"><span class="k">Focal length</span><span class="v">23 mm</span></div>
+        <div class="action-row">
+          <div class="btn"><svg class="icon sm"><use href="#i-rotate"/></svg> Rotate</div>
+          <div class="btn"><svg class="icon sm"><use href="#i-folder"/></svg> Reveal</div>
+        </div>
+      </div>
+    </aside>
+
+    <aside class="rail right" id="right-sheet" style="display:none">
+      <div class="scroll">
+        <div class="sheet-head">
+          <div><div class="sheet-title">Contact sheet</div><div class="sheet-sub">3 selected / A4 portrait</div></div>
+          <div class="pager"><span class="page-label">1 / 1</span><div class="btn" style="width:26px;padding:0"><svg class="icon sm"><use href="#i-chevron-left"/></svg></div><div class="btn" style="width:26px;padding:0"><svg class="icon sm"><use href="#i-chevron-right"/></svg></div></div>
+        </div>
+        <div class="page-wrap"><div class="page"><img src="example-sheet.jpg"></div></div>
+        <div class="section-head"><span class="group-label">Layout</span></div>
+        <div class="setting"><span class="s-label">Paper</span><span class="s-value">A4 <svg class="icon tiny"><use href="#i-chevron-right"/></svg></span></div>
+        <div class="setting"><span class="s-label">Orientation</span><span class="s-value">Portrait</span></div>
+        <div class="setting"><span class="s-label">Grid</span><span class="s-value">3 col / 4 row</span></div>
+        <div class="setting"><span class="s-label">Margin</span><span class="s-value">12 mm</span></div>
+        <div class="setting"><span class="s-label">Gutter</span><span class="s-value">4 mm</span></div>
+        <div class="section-head"><span class="group-label">Marks</span></div>
+        <div class="setting"><span class="s-label">Captions</span><span class="checkbox on"><svg class="icon"><use href="#i-check"/></svg></span></div>
+        <div class="setting"><span class="s-label">Index numbers</span><span class="checkbox on"><svg class="icon"><use href="#i-check"/></svg></span></div>
+        <div class="setting"><span class="s-label">Rotate to fit</span><span class="checkbox"></span></div>
+        <div class="setting"><span class="s-label">Header</span><span class="checkbox on"><svg class="icon"><use href="#i-check"/></svg></span></div>
+        <div class="setting"><span class="s-label">Footer</span><span class="checkbox"><svg class="icon"><use href="#i-check"/></svg></span></div>
+        <div class="saved-head"><span class="group-label">Saved sheets</span><span class="micro">2</span></div>
+        <div class="saved-row"><div class="saved-name">Client selects</div><div class="micro">A4 / 3 × 4 / 12 photos</div><div class="saved-actions"><span class="mini"><svg class="icon sm"><use href="#i-eye"/></svg></span><span class="mini"><svg class="icon sm"><use href="#i-download"/></svg></span></div></div>
+        <div class="saved-row"><div class="saved-name">Instagram proofs</div><div class="micro">A4 / 4 × 5 / 20 photos</div><div class="saved-actions"><span class="mini"><svg class="icon sm"><use href="#i-eye"/></svg></span><span class="mini"><svg class="icon sm"><use href="#i-download"/></svg></span></div></div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="statusbar"><div class="status-left"><span class="mono" style="color:var(--muted)">Ready</span><span style="color:var(--faint)">24 photos / 3 selected</span></div><div class="status-right">Saved</div></div>
+
+  <div class="convert-overlay">
+    <div class="convert-panel">
+      <div class="convert-head"><div><div class="convert-title">Convert photos</div><div class="convert-sub">3 photo(s) in scope / copies only</div></div><div class="overlay-btn" style="border-color:var(--rule);background:var(--surface);color:var(--muted)"><svg class="icon"><use href="#i-x"/></svg></div></div>
+      <div class="convert-body">
+        <div class="group-label">Format</div>
+        <div class="format-grid"><div class="format-btn active">JPEG</div><div class="format-btn">PNG</div><div class="format-btn">WebP</div><div class="format-btn">TIFF</div></div>
+        <div class="convert-note">Writes copies to the folder you choose. Originals are untouched.</div>
+      </div>
+      <div class="convert-foot"><div class="btn">Cancel</div><div class="btn primary">Choose folder…</div></div>
+    </div>
+  </div>
+
+  <div class="overlay">
+    <div class="overlay-bar">
+      <div><div class="overlay-name">street-walk-01.jpg</div><div class="overlay-sub">4000 × 2667 / JPEG / 4.2 MB</div></div>
+      <div class="overlay-actions"><div class="overlay-btn"><svg class="icon"><use href="#i-chevron-left"/></svg></div><div class="overlay-btn"><svg class="icon"><use href="#i-chevron-right"/></svg></div><div class="overlay-btn"><svg class="icon"><use href="#i-x"/></svg></div></div>
+    </div>
+    <div class="overlay-stage"><img src="../assets/sample/street-walk-01.jpg"></div>
+    <div class="overlay-foot"><span class="strong">Eye button</span><span>opens a high-resolution overlay</span><span>Esc to close</span></div>
+  </div>
+</div>
+<script>
+  const view = new URLSearchParams(location.search).get("view");
+  if (view === "sheet") {
+    document.getElementById("right-photo").style.display = "none";
+    document.getElementById("right-sheet").style.display = "flex";
+  }
+</script>
+</body>
+</html>

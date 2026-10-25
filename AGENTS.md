@@ -25,8 +25,11 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - One file per domain in core. Do not add GPUI dependencies to `slate-core`.
 - `slate-app` owns all dialogs, async tasks, thumbnails and interaction state.
 - The main editing window is single-window. Sheet preview and About are native
-  GPUI child windows; keep them as read-only views over `ContactSheet` instead
-  of drawing modal overlays.
+  GPUI child windows. The photo preview is a native full-screen window. Both
+  previews stay read-only views over `ContactSheet`. The photo preview opens from
+  the grid eye button. The sheet builder is a right-rail mode opened by
+  `File > Create contact sheet…`; the right rail defaults to the selected photo
+  inspector.
 - `panels.rs` owns the drag-resizable rail geometry and the collapsed state.
   Keep the centre at `CENTER_MIN`, clamp the widths on every render, and use
   `left_edge`/`right_edge` for library/marquee geometry. A collapsed pane
@@ -57,7 +60,9 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   `plan_sheet` for tests and whole-plan diagnostics, not for export.
 - `Photo.rotation` is clockwise quarter turns. `Photo::aspect` and
   `oriented_size` account for it; PDF export applies the same turns. Never
-  mutate the stored pixel width/height for rotation.
+  mutate the stored pixel width/height for rotation. `Photo.rating` is 0–5;
+  `Photo.label` is one of the fixed colour labels. Both use serde defaults so
+  older projects open unchanged.
 - New project fields need `#[serde(default)]` and `Project::normalize` coverage
   so existing project files keep opening. Custom paper stores its free-entry
   width and height on `SheetSettings`; read the final page size through
@@ -68,9 +73,11 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - Keep background concurrency bounded: 3 import/thumbnail jobs.
 - The library uses `uniform_list`; never build all photo cells. Schedule thumbs
   only for the rendered range and keep the cache at `THUMB_CACHE`. A left press
-  toggles the cell and starts a marquee; dragging selects or deselects every
-  cell in the rectangle. Right press opens the per-photo menu: rename,
-  properties, reveal, copy path and remove. Do not add a second click toggle.
+  toggles the cell, starts a marquee and fills the photo inspector; dragging
+  selects or deselects every cell in the rectangle. The eye button opens the
+  native full-screen preview without changing selection. Right press opens the
+  per-photo menu: rename, show in inspector, reveal, copy path and remove. Do not
+  add a second click toggle.
 - Empty selection means "all visible"; never materialise a 500k-photo selection
   just to open a project. Selection is `Selection`, a roaring bitmap. Do not
   replace it with `HashSet<PhotoId>`; select-all must stay compact.
@@ -110,24 +117,31 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   lookup or replace the set with a bare `Vec`. Keep `Photo` at 80 bytes:
   path/tags/capture date are shared or boxed, and a size regression test guards
   it.
-- `ViewState` owns visible indices, tag counts and scope ids. Call
-  `project_changed`, `filter_changed` or `selection_changed` after edits; panels
-  must read the cache instead of scanning the project.
+- `ViewState` owns sorted visible indices, tag/rating/label counts and scope ids.
+  Call `project_changed`, `filter_changed` or `selection_changed` after edits;
+  panels must read the cache instead of scanning the project. Sorting is applied
+  after filtering; missing capture dates stay last in both directions.
 - `QuarterTurns` and `PhotoSize` carry the rotation and pixel invariants. Do not
   reintroduce `% 4`, zero-width or zero-height checks.
 - Text field callbacks must not read or update the same field from inside its
   own event handler (GPUI entity re-borrow panic). Pass values through the
   callback instead.
-- Photo properties read EXIF on demand in a background task and cache the
-  result; never decode an image for the properties panel. Editing the capture
-  date updates `Photo.captured_at` in the `.slate` project only. Do not claim to
-  write EXIF to the original file without a separate, backed-up file-writing
-  path.
+- The photo inspector reads EXIF on demand in a background task and caches the
+  result; never decode an image just for metadata. Editing the capture date
+  updates `Photo.captured_at` in the `.slate` project only. Do not claim to write
+  EXIF to the original file without a separate, backed-up file-writing path.
 - Rename targets are checked against existing files and duplicate targets before
   enabling Apply rename. Never add a clobbering rename path.
 - PDFs are flat, RGB, no layers. Images are capped at 300 DPI for their cell.
-- HEIC/RAW decoding goes through macOS `sips`; keep the fallback path working on
-  other platforms by returning an error that the UI can display.
+- Colour labels are the only intentional use of colour outside the active
+  theme accent. Keep the five fixed label colours recognisable in every theme.
+- HEIC/RAW import decoding goes through macOS `sips`; PDF export uses ImageIO.
+  Keep the non-macOS fallback returning an error that the UI can display.
+- PSD import uses the pure-Rust `psd` crate and flattens the composite. DDS,
+  EXR, HDR, ICO, PNM, QOI and TGA use the `image` codecs. Batch conversion is
+  JPEG/PNG/WebP/TIFF only and must not overwrite an existing target.
+- ImageMagick is not a dependency. A MagickWand system library cannot be
+  assumed by the release pipeline, so keep conversion on the bundled codecs.
 - Google Drive uses a Desktop OAuth client with PKCE and the fixed loopback
   callback `http://127.0.0.1:53682/oauth2callback`. Google still requires a
   secret for this client at the token endpoint. Official builds use
@@ -163,12 +177,13 @@ CSS `text-transform: uppercase`. Acronyms such as PDF, RGB and DPI are fine.
 Dense, not sparse. Do not add a wordmark, logo or tagline.
 
 Do not repeat a label or action on screen. Each panel has a distinct job:
-project and filters on the left, the library in the centre, the sheet on the
-right. Do not add Project, Library or Sheet headings; the content is
-self-evident. If two surfaces need the same concept, give one a different
-purpose or use an icon. Use SVG icons for utility actions; reserve text for
-primary actions. Put every global command in the menu bar; do not duplicate
-export, save, import, selection or theme controls in the panels.
+project, review and filters on the left, the library in the centre, the photo
+inspector or sheet builder on the right. Do not add Project or Library headings;
+the content is self-evident. The sheet builder may use one compact mode heading.
+If two surfaces need the same concept, give one a different purpose or use an
+icon. Use SVG icons for utility actions; reserve text for primary actions. Put
+every global command in the menu bar; do not duplicate export, save, import,
+selection or theme controls in the panels.
 
 The first panel starts with the compact project name and path and carries the
 selected count. On Windows and Linux the masthead carries only the in-window

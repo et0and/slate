@@ -1,3 +1,10 @@
+# [0.2.0](https://github.com/et0and/slate/compare/v0.1.0...v0.2.0) (2026-10-25)
+
+
+### Features
+
+* add GPUI flow tests, Axiom telemetry and 500k gate ([aae5b14](https://github.com/et0and/slate/commit/aae5b149f0b1bb3fe2d894cd25242fe8d14e8e5b))
+
 # [0.1.0](https://github.com/et0and/slate/compare/v0.0.7...v0.1.0) (2026-10-25)
 
 

@@ -236,7 +236,7 @@ impl ContactSheet {
             .filter(|(id, _)| *id == photo_id)
             .map(|(_, image)| image.clone())
             .or_else(|| self.preview_image(photo.id(), photo.rotation(), false));
-        let selected = self.selected.len();
+        let selected_count = self.selected.len();
         let dimensions = photo
             .oriented_size()
             .map(|(width, height)| format!("{width} × {height}"))
@@ -337,12 +337,6 @@ impl ContactSheet {
                 theme::label_color(label)
             });
 
-        let sub = if selected > 1 {
-            format!("{selected} selected / showing primary")
-        } else {
-            "Photo inspector".to_string()
-        };
-
         div()
             .debug_selector(|| "photo-inspector".into())
             .w(px(self.panels.right()))
@@ -355,32 +349,35 @@ impl ContactSheet {
                 div()
                     .flex_shrink_0()
                     .px(px(20.0))
-                    .pt(px(13.0))
+                    .pt(px(10.0))
                     .pb(px(10.0))
                     .flex()
-                    .items_start()
-                    .justify_between()
-                    .gap(px(8.0))
+                    .flex_col()
+                    .gap(px(4.0))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w(px(0.0))
+                            .w_full()
                             .flex()
-                            .flex_col()
-                            .gap(px(3.0))
+                            .justify_end()
                             .child(
-                                ui_text(theme::TEXT_BODY, theme::ink())
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .truncate()
-                                    .child(photo.file_name()),
-                            )
-                            .child(mono_text(theme::TEXT_META, theme::faint()).child(sub)),
+                                icon_button("inspector-collapse", assets::PANEL_LEFT).on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.toggle_right_pane(window, cx)
+                                    }),
+                                ),
+                            ),
                     )
                     .child(
-                        icon_button("inspector-collapse", assets::PANEL_RIGHT).on_click(
-                            cx.listener(|this, _, window, cx| this.toggle_right_pane(window, cx)),
-                        ),
-                    ),
+                        ui_text(theme::TEXT_BODY, theme::ink())
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .truncate()
+                            .child(photo.file_name()),
+                    )
+                    .children((selected_count > 1).then(|| {
+                        mono_text(theme::TEXT_META, theme::faint()).child(format!(
+                            "{selected_count} selected / showing primary"
+                        ))
+                    })),
             )
             .child(
                 div()
@@ -550,13 +547,12 @@ impl ContactSheet {
             .child(
                 div()
                     .px(px(20.0))
-                    .pt(px(13.0))
+                    .pt(px(10.0))
                     .pb(px(10.0))
                     .flex()
-                    .justify_between()
-                    .child(group_label("Photo inspector"))
+                    .justify_end()
                     .child(
-                        icon_button("inspector-collapse", assets::PANEL_RIGHT).on_click(
+                        icon_button("inspector-collapse", assets::PANEL_LEFT).on_click(
                             cx.listener(|this, _, window, cx| this.toggle_right_pane(window, cx)),
                         ),
                     ),
@@ -616,7 +612,7 @@ impl ContactSheet {
                     .child(format!("{} / {}", current + 1, page_count)),
             )
             .child(
-                mini_button("page-next", assets::PANEL_RIGHT).on_click(cx.listener(
+                mini_button("page-next", assets::CHEVRON_RIGHT).on_click(cx.listener(
                     |this, _, _, cx| {
                         let page =
                             (this.current_page() + 1).min(this.page_count().saturating_sub(1));
@@ -638,7 +634,7 @@ impl ContactSheet {
                     .items_center()
                     .justify_between()
                     .child(
-                        icon_button("inspector-collapse", assets::PANEL_RIGHT).on_click(
+                        icon_button("inspector-collapse", assets::PANEL_LEFT).on_click(
                             cx.listener(|this, _, window, cx| this.toggle_right_pane(window, cx)),
                         ),
                     )

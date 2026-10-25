@@ -127,7 +127,6 @@ pub(crate) enum InspectorMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum SidebarSection {
-    Search,
     Rating,
     Label,
     Sort,
@@ -138,7 +137,6 @@ pub(crate) enum SidebarSection {
 impl SidebarSection {
     pub(crate) fn key(self) -> &'static str {
         match self {
-            Self::Search => "search",
             Self::Rating => "rating",
             Self::Label => "label",
             Self::Sort => "sort",
@@ -253,7 +251,7 @@ impl ContactSheet {
 
         let search_field = cx.new(|cx| {
             let weak = weak.clone();
-            TextField::new(cx, "File name").on_change(move |value, app| {
+            TextField::new(cx, "Search").on_change(move |value, app| {
                 let _ = weak.update(app, |this, cx| {
                     this.search = value.to_string();
                     this.preview_page = 0;

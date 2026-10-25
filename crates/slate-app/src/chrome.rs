@@ -163,7 +163,10 @@ impl ContactSheet {
                     .w(px(DIVIDER_W))
                     .h_full()
                     .flex_shrink_0()
-                    .bg(theme::paper()),
+                    .bg(theme::paper())
+                    .flex()
+                    .justify_center()
+                    .child(div().w(px(1.0)).h_full().bg(theme::rule())),
             );
         }
         row = row.child(drag_region(cx, "titlebar-drag-centre").flex_1().h_full());
@@ -173,7 +176,10 @@ impl ContactSheet {
                     .w(px(DIVIDER_W))
                     .h_full()
                     .flex_shrink_0()
-                    .bg(theme::paper()),
+                    .bg(theme::paper())
+                    .flex()
+                    .justify_center()
+                    .child(div().w(px(1.0)).h_full().bg(theme::rule())),
             );
         }
         row.child(right).into_any_element()

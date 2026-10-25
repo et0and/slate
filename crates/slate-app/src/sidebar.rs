@@ -31,25 +31,24 @@ impl ContactSheet {
         let scope_label = self.scope_label();
         let scope_count = self.scope_ids().len();
 
-        let search_open = !self.sidebar_collapsed.contains(&SidebarSection::Search);
         let rating_open = !self.sidebar_collapsed.contains(&SidebarSection::Rating);
         let label_open = !self.sidebar_collapsed.contains(&SidebarSection::Label);
         let sort_open = !self.sidebar_collapsed.contains(&SidebarSection::Sort);
         let tags_open = !self.sidebar_collapsed.contains(&SidebarSection::Tags);
         let rename_open = !self.sidebar_collapsed.contains(&SidebarSection::Rename);
 
-        let search_block = sidebar_section(
-            SidebarSection::Search,
-            "Search",
-            format!("{selected_count} selected"),
-            search_open,
-            div()
-                .px(px(16.0))
-                .pb(px(14.0))
-                .child(self.search_field.clone())
-                .into_any_element(),
-            cx,
-        );
+        let search_block = div()
+            .px(px(16.0))
+            .pt(px(12.0))
+            .pb(px(12.0))
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(self.search_field.clone())
+            .child(
+                mono_text(theme::TEXT_META, theme::muted())
+                    .child(format!("{selected_count} selected")),
+            );
 
         let rating_block = sidebar_section(
             SidebarSection::Rating,

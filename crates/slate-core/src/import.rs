@@ -19,11 +19,15 @@ use image::{DynamicImage, ImageReader, RgbaImage, imageops};
 use jpeg_decoder::{Decoder as JpegDecoder, PixelFormat};
 
 pub const EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "tif", "tiff", "webp", "gif", "bmp", "heic", "heif", "dng", "cr2", "cr3",
-    "nef", "arw", "raf", "rw2", "orf", "pef", "srw", "3fr",
+    "jpg", "jpeg", "png", "tif", "tiff", "webp", "gif", "bmp", "dds", "exr", "hdr", "ico", "pnm",
+    "qoi", "tga", "psd", "heic", "heif", "dng", "cr2", "cr3", "nef", "arw", "raf", "rw2", "orf",
+    "pef", "srw", "3fr",
 ];
 
-const STANDARD_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "tif", "tiff", "webp", "gif", "bmp"];
+const STANDARD_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "tif", "tiff", "webp", "gif", "bmp", "dds", "exr", "hdr", "ico", "pnm",
+    "qoi", "tga", "psd",
+];
 
 #[derive(Debug, Clone)]
 pub struct PreviewImage {
@@ -180,13 +184,15 @@ pub fn load_oriented(path: &Path, max_edge: Option<u32>) -> Result<DynamicImage>
             Ok(None) => decode_standard(path)?,
             Err(error) => return Err(error),
         }
+    } else if is_psd(path) {
+        decode_psd(path)?
     } else if is_standard(path) {
         decode_standard(path)?
     } else {
         decode_via_sips(path, max_edge.unwrap_or(4096))?
     };
 
-    if is_standard(path) {
+    if is_standard(path) && !is_psd(path) {
         let orientation = read_orientation(path);
         image = apply_orientation(image, orientation);
     }
@@ -213,6 +219,22 @@ fn is_jpeg(path: &Path) -> bool {
         .is_some_and(|extension| {
             extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg")
         })
+}
+
+fn is_psd(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("psd"))
+}
+
+fn decode_psd(path: &Path) -> Result<DynamicImage> {
+    let bytes = std::fs::read(path)?;
+    let psd = psd::Psd::from_bytes(&bytes).map_err(anyhow::Error::from)?;
+    let (width, height) = (psd.width(), psd.height());
+    let pixels = psd.rgba();
+    let image = RgbaImage::from_raw(width, height, pixels)
+        .context("PSD pixel buffer does not match its dimensions")?;
+    Ok(DynamicImage::ImageRgba8(image))
 }
 
 fn decode_standard(path: &Path) -> Result<DynamicImage> {
@@ -446,6 +468,11 @@ fn apply_orientation(image: DynamicImage, orientation: u8) -> DynamicImage {
 
 /// The real pixel size, before any preview downscale.
 fn original_dimensions(path: &Path) -> Option<(u32, u32)> {
+    if is_psd(path) {
+        let bytes = std::fs::read(path).ok()?;
+        let psd = psd::Psd::from_bytes(&bytes).ok()?;
+        return Some((psd.width(), psd.height()));
+    }
     if is_standard(path) {
         let reader = ImageReader::open(path).ok()?.with_guessed_format().ok()?;
         let (width, height) = reader.into_dimensions().ok()?;
@@ -607,5 +634,9 @@ mod tests {
         assert!(!is_supported(Path::new("notes.txt")));
         assert!(is_supported(Path::new("photo.CR3")));
         assert!(is_supported(Path::new("photo.heic")));
+        assert!(!is_supported(Path::new("texture.ktx")));
+        assert!(is_supported(Path::new("texture.dds")));
+        assert!(is_supported(Path::new("design.psd")));
+        assert!(is_supported(Path::new("icon.ico")));
     }
 }

@@ -29,6 +29,100 @@ impl std::fmt::Display for PhotoId {
 #[serde(transparent)]
 pub struct SheetId(pub u64);
 
+/// Zero to five stars. Zero means unrated.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct StarRating(u8);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidStarRating(pub u8);
+
+impl std::fmt::Display for InvalidStarRating {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "rating must be 0..=5, got {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidStarRating {}
+
+impl StarRating {
+    pub const NONE: Self = Self(0);
+    pub const MAX: u8 = 5;
+
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+
+    pub const fn is_rated(self) -> bool {
+        self.0 > 0
+    }
+
+    pub fn clamped(value: u8) -> Self {
+        Self(value.min(Self::MAX))
+    }
+}
+
+impl TryFrom<u8> for StarRating {
+    type Error = InvalidStarRating;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        if value <= Self::MAX {
+            Ok(Self(value))
+        } else {
+            Err(InvalidStarRating(value))
+        }
+    }
+}
+
+impl From<StarRating> for u8 {
+    fn from(value: StarRating) -> Self {
+        value.0
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+#[repr(u8)]
+pub enum ColorLabel {
+    #[default]
+    None,
+    Red,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+}
+
+impl ColorLabel {
+    pub const ALL: [Self; 6] = [
+        Self::None,
+        Self::Red,
+        Self::Yellow,
+        Self::Green,
+        Self::Blue,
+        Self::Purple,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Red => "Red",
+            Self::Yellow => "Yellow",
+            Self::Green => "Green",
+            Self::Blue => "Blue",
+            Self::Purple => "Purple",
+        }
+    }
+
+    pub const fn is_set(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 /// Clockwise quarter turns, always in `0..4`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "u8", into = "u8")]
@@ -190,6 +284,12 @@ pub struct Photo {
     /// User rotation in clockwise quarter turns.
     #[serde(default)]
     pub rotation: QuarterTurns,
+    /// Star rating. Zero means unrated.
+    #[serde(default)]
+    pub rating: StarRating,
+    /// Colour label used for culling.
+    #[serde(default)]
+    pub label: ColorLabel,
     /// Camera capture time as `YYYY-MM-DD HH:MM:SS`, falling back to the
     /// file's modified time for images without EXIF metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -227,6 +327,8 @@ impl Photo {
             bytes,
             tags: Box::default(),
             rotation: QuarterTurns::NONE,
+            rating: StarRating::NONE,
+            label: ColorLabel::None,
             captured_at: None,
         }
     }
@@ -284,6 +386,22 @@ impl Photo {
 
     pub fn rotate_clockwise(&mut self) {
         self.rotation = self.rotation.clockwise();
+    }
+
+    pub fn rating(&self) -> StarRating {
+        self.rating
+    }
+
+    pub fn set_rating(&mut self, rating: StarRating) {
+        self.rating = rating;
+    }
+
+    pub fn label(&self) -> ColorLabel {
+        self.label
+    }
+
+    pub fn set_label(&mut self, label: ColorLabel) {
+        self.label = label;
     }
 
     pub fn oriented_size(&self) -> Option<(u32, u32)> {
@@ -863,11 +981,7 @@ impl Project {
         self.photos
             .iter()
             .enumerate()
-            .filter(|(_, photo)| match filter {
-                Filter::All => true,
-                Filter::Untagged => photo.tags.is_empty(),
-                Filter::Tag(tag) => photo.has_tag(tag),
-            })
+            .filter(|(_, photo)| filter.matches(photo))
             .filter(|(_, photo)| {
                 needle.is_empty() || photo.file_name().to_lowercase().contains(&needle)
             })
@@ -982,6 +1096,10 @@ pub enum Filter {
     All,
     Untagged,
     Tag(String),
+    Unrated,
+    Rated,
+    Label(ColorLabel),
+    Unlabeled,
 }
 
 impl Filter {
@@ -990,6 +1108,10 @@ impl Filter {
             Filter::All => true,
             Filter::Untagged => photo.tags.is_empty(),
             Filter::Tag(tag) => photo.has_tag(tag),
+            Filter::Unrated => !photo.rating.is_rated(),
+            Filter::Rated => photo.rating.is_rated(),
+            Filter::Label(label) => photo.label == *label,
+            Filter::Unlabeled => !photo.label.is_set(),
         }
     }
 }
@@ -1050,6 +1172,42 @@ mod tests {
         let loaded = Project::load(&path).unwrap();
         assert_eq!(loaded.photo(id).unwrap().size, PhotoSize::Unknown);
         assert_eq!(loaded.photo(id).unwrap().oriented_size(), None);
+    }
+
+    #[test]
+    fn rating_and_label_roundtrip() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("rated.slate");
+        let mut project = Project::new("Test");
+        let id = project.add_photo(PathBuf::from("/tmp/a.jpg"), 100, 100, 1);
+        {
+            let photo = project.photo_mut(id).unwrap();
+            photo.set_rating(StarRating::try_from(4).unwrap());
+            photo.set_label(ColorLabel::Green);
+        }
+        project.save(&path).unwrap();
+        let loaded = Project::load(&path).unwrap();
+        let photo = loaded.photo(id).unwrap();
+        assert_eq!(photo.rating(), StarRating::try_from(4).unwrap());
+        assert_eq!(photo.label(), ColorLabel::Green);
+    }
+
+    #[test]
+    fn older_photos_without_rating_or_label_open_unrated_and_unlabeled() {
+        let mut project = Project::new("Test");
+        let id = project.add_photo(PathBuf::from("/tmp/a.jpg"), 100, 100, 1);
+        let mut value = serde_json::to_value(&project).unwrap();
+        let photos = value
+            .get_mut("photos")
+            .and_then(|value| value.as_array_mut())
+            .unwrap();
+        let photo = photos[0].as_object_mut().unwrap();
+        photo.remove("rating");
+        photo.remove("label");
+        let loaded: Project = serde_json::from_value(value).unwrap();
+        let photo = loaded.photo(id).unwrap();
+        assert_eq!(photo.rating(), StarRating::NONE);
+        assert_eq!(photo.label(), ColorLabel::None);
     }
 
     #[test]

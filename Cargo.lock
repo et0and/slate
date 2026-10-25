@@ -4531,6 +4531,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "psd"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a25f9b8cfffd65d911baf31a033239f7a0facb755faa2481575b70db5dc9195"
+dependencies = [
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "psm"
 version = "0.1.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5871,6 +5880,7 @@ dependencies = [
  "lopdf",
  "objc2-core-foundation",
  "objc2-image-io",
+ "psd",
  "rayon",
  "rusqlite",
  "serde",

@@ -5,6 +5,7 @@
 //! tested without a display server.
 
 pub mod batch;
+pub mod convert;
 pub mod import;
 pub mod layout;
 pub mod model;

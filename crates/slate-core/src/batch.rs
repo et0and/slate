@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Photo, PhotoId, Project};
+use crate::model::{ColorLabel, Photo, PhotoId, Project, StarRating};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RenameOptions {
@@ -331,6 +331,34 @@ pub fn clear_tags(project: &mut Project, ids: &[PhotoId]) -> usize {
     changed
 }
 
+pub fn set_rating(project: &mut Project, ids: &[PhotoId], rating: StarRating) -> usize {
+    let mut changed = 0;
+    for id in ids {
+        let Some(photo) = project.photo_mut(*id) else {
+            continue;
+        };
+        if photo.rating() != rating {
+            photo.set_rating(rating);
+            changed += 1;
+        }
+    }
+    changed
+}
+
+pub fn set_label(project: &mut Project, ids: &[PhotoId], label: ColorLabel) -> usize {
+    let mut changed = 0;
+    for id in ids {
+        let Some(photo) = project.photo_mut(*id) else {
+            continue;
+        };
+        if photo.label() != label {
+            photo.set_label(label);
+            changed += 1;
+        }
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +385,20 @@ mod tests {
         )
         .unwrap();
         project
+    }
+
+    #[test]
+    fn sets_rating_and_label_without_touching_other_photos() {
+        let mut project = project(&["a.jpg", "b.jpg"]);
+        let ids = project.photo_ids();
+        let rating = StarRating::try_from(5).unwrap();
+        assert_eq!(set_rating(&mut project, &ids[..1], rating), 1);
+        assert_eq!(set_label(&mut project, &ids[..1], ColorLabel::Blue), 1);
+        assert_eq!(project.photo(ids[0]).unwrap().rating(), rating);
+        assert_eq!(project.photo(ids[0]).unwrap().label(), ColorLabel::Blue);
+        assert_eq!(project.photo(ids[1]).unwrap().rating(), StarRating::NONE);
+        assert_eq!(project.photo(ids[1]).unwrap().label(), ColorLabel::None);
+        assert_eq!(set_rating(&mut project, &ids[..1], rating), 0);
     }
 
     #[test]

@@ -3,13 +3,14 @@
 //! Everything in this module serializes to the on-disk `.slate` file,
 //! so a project can always be reopened and exported later.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::io::{BufReader, BufWriter, Write};
 use std::num::NonZeroU32;
-use std::ops::{Deref, Index};
+use std::ops::Index;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use im::{HashMap as ImHashMap, Vector as ImVector};
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -178,33 +179,85 @@ impl<'de> Deserialize<'de> for PhotoSize {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Photo {
     id: PhotoId,
-    pub path: PathBuf,
+    #[serde(with = "path_arc")]
+    pub path: Arc<Path>,
     #[serde(flatten)]
     pub size: PhotoSize,
     #[serde(default)]
     pub bytes: u64,
     #[serde(default)]
-    pub tags: Vec<String>,
+    pub tags: Box<[String]>,
     /// User rotation in clockwise quarter turns.
     #[serde(default)]
     pub rotation: QuarterTurns,
     /// Camera capture time as `YYYY-MM-DD HH:MM:SS`, falling back to the
     /// file's modified time for images without EXIF metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub captured_at: Option<String>,
+    pub captured_at: Option<Box<str>>,
+}
+
+mod path_arc {
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(path: &Arc<Path>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        path.as_ref().to_string_lossy().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<Path>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let path = PathBuf::deserialize(deserializer)?;
+        Ok(Arc::from(path))
+    }
 }
 
 impl Photo {
     pub fn new(id: PhotoId, path: PathBuf, size: PhotoSize, bytes: u64) -> Self {
         Self {
             id,
-            path,
+            path: Arc::from(path),
             size,
             bytes,
-            tags: Vec::new(),
+            tags: Box::default(),
             rotation: QuarterTurns::NONE,
             captured_at: None,
         }
+    }
+
+    pub fn set_path(&mut self, path: PathBuf) {
+        self.path = Arc::from(path);
+    }
+
+    pub fn set_tags(&mut self, tags: Vec<String>) {
+        self.tags = tags.into_boxed_slice();
+    }
+
+    pub fn push_tag(&mut self, tag: String) {
+        let mut tags = std::mem::take(&mut self.tags).into_vec();
+        tags.push(tag);
+        tags.sort();
+        self.tags = tags.into_boxed_slice();
+    }
+
+    pub fn remove_tag(&mut self, tag: &str) -> bool {
+        let mut tags = std::mem::take(&mut self.tags).into_vec();
+        let before = tags.len();
+        tags.retain(|existing| existing != tag);
+        self.tags = tags.into_boxed_slice();
+        before != self.tags.len()
+    }
+
+    pub fn clear_tags(&mut self) -> bool {
+        let had_tags = !self.tags.is_empty();
+        self.tags = Box::default();
+        had_tags
     }
 
     pub fn id(&self) -> PhotoId {
@@ -247,10 +300,76 @@ impl Photo {
     }
 }
 
+const PHOTO_CHUNK: usize = 1024;
+const EMPTY_POSITION: u32 = u32::MAX;
+
+#[derive(Debug, Clone)]
+enum PositionIndex {
+    Dense(ImVector<u32>),
+    Sparse(ImHashMap<PhotoId, usize>),
+}
+
+impl Default for PositionIndex {
+    fn default() -> Self {
+        Self::Dense(ImVector::new())
+    }
+}
+
+impl PositionIndex {
+    fn new(max_id: u64, count: usize) -> Self {
+        if max_id <= u32::MAX as u64
+            && max_id as usize <= count.saturating_mul(4).saturating_add(1024)
+        {
+            Self::Dense(ImVector::new())
+        } else {
+            Self::Sparse(ImHashMap::new())
+        }
+    }
+
+    fn get(&self, id: PhotoId) -> Option<usize> {
+        match self {
+            Self::Dense(positions) => positions
+                .get(id.0 as usize)
+                .filter(|position| **position != EMPTY_POSITION)
+                .map(|position| *position as usize),
+            Self::Sparse(positions) => positions.get(&id).copied(),
+        }
+    }
+
+    fn insert(&mut self, id: PhotoId, position: usize) {
+        match self {
+            Self::Dense(positions) => {
+                let index = id.0 as usize;
+                while positions.len() <= index {
+                    positions.push_back(EMPTY_POSITION);
+                }
+                positions.set(index, position as u32);
+            }
+            Self::Sparse(positions) => {
+                positions.insert(id, position);
+            }
+        }
+    }
+
+    fn needs_sparse(&self, id: PhotoId) -> bool {
+        match self {
+            Self::Dense(positions) => {
+                id.0 > u32::MAX as u64
+                    || id.0 as usize > positions.len().saturating_mul(4).saturating_add(1024)
+            }
+            Self::Sparse(_) => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct PhotoData {
-    photos: Vec<Photo>,
-    index: HashMap<PhotoId, usize>,
+    chunks: Vec<Arc<Vec<Photo>>>,
+    /// Flat start position for each chunk. Chunks can become shorter than
+    /// `PHOTO_CHUNK` after a removal, so the flat index cannot be derived.
+    offsets: Vec<usize>,
+    index: PositionIndex,
+    len: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -275,15 +394,19 @@ impl PhotoSet {
     }
 
     pub fn from_vec(photos: Vec<Photo>) -> Result<Self, DuplicatePhotoId> {
-        let capacity = photos.len();
+        let count = photos.len();
+        let max_id = photos.iter().map(|photo| photo.id.0).max().unwrap_or(0);
         let mut data = PhotoData {
-            photos,
-            index: HashMap::with_capacity(capacity),
+            chunks: Vec::with_capacity(count.div_ceil(PHOTO_CHUNK)),
+            offsets: Vec::with_capacity(count.div_ceil(PHOTO_CHUNK)),
+            index: PositionIndex::new(max_id, count),
+            len: 0,
         };
-        for (position, photo) in data.photos.iter().enumerate() {
-            if data.index.insert(photo.id, position).is_some() {
+        for photo in photos {
+            if data.index.get(photo.id).is_some() {
                 return Err(DuplicatePhotoId(photo.id));
             }
+            push_chunked(&mut data, photo);
         }
         Ok(Self {
             data: Arc::new(data),
@@ -291,30 +414,63 @@ impl PhotoSet {
     }
 
     pub fn push(&mut self, photo: Photo) -> Result<(), DuplicatePhotoId> {
-        if self.data.index.contains_key(&photo.id) {
+        if self.data.index.get(photo.id).is_some() {
             return Err(DuplicatePhotoId(photo.id));
         }
         let data = Arc::make_mut(&mut self.data);
-        data.index.insert(photo.id, data.photos.len());
-        data.photos.push(photo);
+        if data.index.needs_sparse(photo.id) {
+            data.rebuild_index();
+        }
+        push_chunked(data, photo);
         Ok(())
+    }
+
+    pub fn get(&self, index: usize) -> Option<&Photo> {
+        let chunk_index = self
+            .data
+            .offsets
+            .partition_point(|start| *start <= index)
+            .checked_sub(1)?;
+        let slot = index - self.data.offsets[chunk_index];
+        self.data.chunks.get(chunk_index)?.get(slot)
+    }
+
+    pub fn iter(&self) -> PhotoIter<'_> {
+        PhotoIter {
+            outer: self.data.chunks.iter(),
+            inner: [].iter(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.len == 0
     }
 
     pub fn photo(&self, id: PhotoId) -> Option<&Photo> {
         self.data
             .index
-            .get(&id)
-            .and_then(|position| self.data.photos.get(*position))
+            .get(id)
+            .and_then(|position| self.get(position))
     }
 
     pub fn photo_mut(&mut self, id: PhotoId) -> Option<&mut Photo> {
-        let position = *self.data.index.get(&id)?;
+        let position = self.data.index.get(id)?;
         let data = Arc::make_mut(&mut self.data);
-        data.photos.get_mut(position)
+        let chunk_index = data
+            .offsets
+            .partition_point(|start| *start <= position)
+            .checked_sub(1)?;
+        let slot = position - data.offsets[chunk_index];
+        let chunk = data.chunks.get_mut(chunk_index)?;
+        Arc::make_mut(chunk).get_mut(slot)
     }
 
     pub fn position(&self, id: PhotoId) -> Option<usize> {
-        self.data.index.get(&id).copied()
+        self.data.index.get(id)
     }
 
     pub fn shares_data_with(&self, other: &Self) -> bool {
@@ -322,29 +478,90 @@ impl PhotoSet {
     }
 
     pub fn remove_ids(&mut self, ids: &HashSet<PhotoId>) -> usize {
+        if ids.is_empty() {
+            return 0;
+        }
+        let before = self.data.len;
         let data = Arc::make_mut(&mut self.data);
-        let before = data.photos.len();
-        data.photos.retain(|photo| !ids.contains(&photo.id));
+        let mut chunks = Vec::with_capacity(data.chunks.len());
+        for chunk in &data.chunks {
+            if chunk.iter().all(|photo| !ids.contains(&photo.id)) {
+                chunks.push(Arc::clone(chunk));
+                continue;
+            }
+            let mut next = Vec::with_capacity(chunk.len());
+            for photo in chunk.iter() {
+                if !ids.contains(&photo.id) {
+                    next.push(photo.clone());
+                }
+            }
+            if !next.is_empty() {
+                chunks.push(Arc::new(next));
+            }
+        }
+        data.chunks = chunks;
         data.rebuild_index();
-        before - data.photos.len()
+        before - data.len
     }
+}
+
+fn push_chunked(data: &mut PhotoData, photo: Photo) {
+    let id = photo.id;
+    let position = data.len;
+    let needs_chunk = data
+        .chunks
+        .last()
+        .is_none_or(|chunk| chunk.len() >= PHOTO_CHUNK);
+    if needs_chunk {
+        data.offsets.push(position);
+        data.chunks.push(Arc::new(Vec::with_capacity(PHOTO_CHUNK)));
+    }
+    let chunk = data.chunks.last_mut().expect("chunk was just inserted");
+    Arc::make_mut(chunk).push(photo);
+    data.index.insert(id, position);
+    data.len += 1;
 }
 
 impl PhotoData {
     fn rebuild_index(&mut self) {
-        self.index.clear();
-        self.index.reserve(self.photos.len());
-        for (position, photo) in self.photos.iter().enumerate() {
-            self.index.insert(photo.id, position);
+        let max_id = self
+            .chunks
+            .iter()
+            .flat_map(|chunk| chunk.iter())
+            .map(|photo| photo.id.0)
+            .max()
+            .unwrap_or(0);
+        let count = self.chunks.iter().map(|chunk| chunk.len()).sum();
+        self.index = PositionIndex::new(max_id, count);
+        self.offsets.clear();
+        self.offsets.reserve(self.chunks.len());
+        self.len = 0;
+        for chunk in &self.chunks {
+            self.offsets.push(self.len);
+            for photo in chunk.iter() {
+                self.index.insert(photo.id, self.len);
+                self.len += 1;
+            }
         }
     }
 }
 
-impl Deref for PhotoSet {
-    type Target = [Photo];
+pub struct PhotoIter<'a> {
+    outer: std::slice::Iter<'a, Arc<Vec<Photo>>>,
+    inner: std::slice::Iter<'a, Photo>,
+}
 
-    fn deref(&self) -> &Self::Target {
-        &self.data.photos
+impl<'a> Iterator for PhotoIter<'a> {
+    type Item = &'a Photo;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(photo) = self.inner.next() {
+                return Some(photo);
+            }
+            let chunk = self.outer.next()?;
+            self.inner = chunk.iter();
+        }
     }
 }
 
@@ -352,25 +569,16 @@ impl Index<usize> for PhotoSet {
     type Output = Photo;
 
     fn index(&self, index: usize) -> &Self::Output {
-        &self.data.photos[index]
+        self.get(index).expect("photo index is in bounds")
     }
 }
 
 impl<'a> IntoIterator for &'a PhotoSet {
     type Item = &'a Photo;
-    type IntoIter = std::slice::Iter<'a, Photo>;
+    type IntoIter = PhotoIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.data.photos.iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a mut PhotoSet {
-    type Item = &'a mut Photo;
-    type IntoIter = std::slice::IterMut<'a, Photo>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        Arc::make_mut(&mut self.data).photos.iter_mut()
+        self.iter()
     }
 }
 
@@ -379,7 +587,12 @@ impl Serialize for PhotoSet {
     where
         S: serde::Serializer,
     {
-        self.data.photos.serialize(serializer)
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(Some(self.len()))?;
+        for photo in self.iter() {
+            sequence.serialize_element(photo)?;
+        }
+        sequence.end()
     }
 }
 
@@ -730,9 +943,15 @@ impl Project {
         let file = std::fs::File::open(path)?;
         let mut project: Project = serde_json::from_reader(BufReader::new(file))?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
-        for photo in &mut project.photos {
-            if photo.path.is_relative() {
-                photo.path = base.join(&photo.path);
+        let relative_ids: Vec<PhotoId> = project
+            .photos
+            .iter()
+            .filter(|photo| photo.path.is_relative())
+            .map(|photo| photo.id())
+            .collect();
+        for id in relative_ids {
+            if let Some(photo) = project.photo_mut(id) {
+                photo.set_path(base.join(photo.path.as_ref()));
             }
         }
         if project.schema > SCHEMA_VERSION {
@@ -834,6 +1053,26 @@ mod tests {
     }
 
     #[test]
+    fn photo_stays_compact() {
+        assert!(
+            std::mem::size_of::<Photo>() <= 80,
+            "Photo grew to {} bytes",
+            std::mem::size_of::<Photo>()
+        );
+    }
+
+    #[test]
+    fn persistent_photo_set_keeps_old_snapshots_alive() {
+        let mut project = project_with_photos();
+        let snapshot = project.clone();
+        let id = PhotoId(1);
+        project.photo_mut(id).unwrap().push_tag("new".into());
+        assert!(snapshot.photo(id).unwrap().tags.is_empty());
+        assert_eq!(project.photo(id).unwrap().tags.as_ref(), ["new"]);
+        assert_eq!(project.photos.len(), snapshot.photos.len());
+    }
+
+    #[test]
     fn photo_set_rejects_duplicate_ids() {
         let photos = project_with_photos();
         let duplicate = photos.photos[0].clone();
@@ -859,10 +1098,54 @@ mod tests {
         project
             .photo_mut(PhotoId(1))
             .unwrap()
-            .tags
-            .push("new".into());
+            .push_tag("new".into());
         assert!(!Arc::ptr_eq(&project.photos.data, &clone.photos.data));
         assert!(clone.photo(PhotoId(1)).unwrap().tags.is_empty());
+    }
+
+    #[test]
+    fn chunk_offsets_stay_correct_after_removal() {
+        let mut project = Project::new("Chunks");
+        for index in 0..2_500u64 {
+            project.add_photo(PathBuf::from(format!("/tmp/{index:04}.jpg")), 10, 10, 1);
+        }
+        project.remove_photos(&[PhotoId(500)]);
+        assert_eq!(project.photos.len(), 2_499);
+        assert_eq!(
+            project.photos.get(499).map(Photo::id),
+            Some(PhotoId(500 + 1))
+        );
+        assert_eq!(
+            project.photos.get(2_498).map(Photo::id),
+            Some(PhotoId(2_500))
+        );
+        assert_eq!(project.photo(PhotoId(2_500)).unwrap().id(), PhotoId(2_500));
+        assert!(project.photo_mut(PhotoId(2_000)).is_some());
+        project.add_photo(PathBuf::from("/tmp/last.jpg"), 10, 10, 1);
+        assert_eq!(
+            project.photos.get(2_499).map(Photo::id),
+            Some(PhotoId(2_501))
+        );
+    }
+
+    #[test]
+    fn sparse_photo_ids_use_a_sparse_index() {
+        let path = PathBuf::from("/tmp/sparse.jpg");
+        let photo = Photo::new(PhotoId(10_000_000), path, PhotoSize::new(10, 10), 1);
+        let mut set = PhotoSet::from_vec(vec![photo]).unwrap();
+        assert_eq!(
+            set.photo(PhotoId(10_000_000)).unwrap().id(),
+            PhotoId(10_000_000)
+        );
+        set.push(Photo::new(
+            PhotoId(10_000_001),
+            PathBuf::from("/tmp/sparse-2.jpg"),
+            PhotoSize::new(10, 10),
+            1,
+        ))
+        .unwrap();
+        assert_eq!(set.len(), 2);
+        assert_eq!(set.position(PhotoId(10_000_001)), Some(1));
     }
 
     #[test]
@@ -883,16 +1166,13 @@ mod tests {
         project
             .photo_mut(PhotoId(1))
             .unwrap()
-            .tags
-            .push("street".into());
+            .push_tag("street".into());
         project
             .photo_mut(PhotoId(2))
             .unwrap()
-            .tags
-            .push("street".into());
+            .push_tag("street".into());
         project.photo_mut(PhotoId(1)).unwrap().rotation = QuarterTurns::try_from(1).unwrap();
-        project.photo_mut(PhotoId(1)).unwrap().captured_at =
-            Some("2025-08-17 09:41:03".to_string());
+        project.photo_mut(PhotoId(1)).unwrap().captured_at = Some("2025-08-17 09:41:03".into());
         project.sheet.columns = 5;
         project.sheet.paper = Paper::Custom;
         project.sheet.custom_paper_width_mm = 120.0;
@@ -936,8 +1216,14 @@ mod tests {
     #[test]
     fn tag_counts_are_sorted() {
         let mut project = project_with_photos();
-        project.photo_mut(PhotoId(1)).unwrap().tags = vec!["zebra".into(), "alpha".into()];
-        project.photo_mut(PhotoId(2)).unwrap().tags = vec!["alpha".into()];
+        project
+            .photo_mut(PhotoId(1))
+            .unwrap()
+            .set_tags(vec!["zebra".into(), "alpha".into()]);
+        project
+            .photo_mut(PhotoId(2))
+            .unwrap()
+            .set_tags(vec!["alpha".into()]);
         let counts = project.tag_counts();
         assert_eq!(
             counts.keys().cloned().collect::<Vec<_>>(),
@@ -953,8 +1239,7 @@ mod tests {
         project
             .photo_mut(PhotoId(1))
             .unwrap()
-            .tags
-            .push("street".into());
+            .push_tag("street".into());
         let indices = project.filter_indices(&Filter::Tag("street".into()), "");
         assert_eq!(indices, vec![0]);
         let indices = project.filter_indices(&Filter::All, "B.");
@@ -1011,8 +1296,8 @@ mod tests {
         std::fs::write(&project_path, json).unwrap();
         let project = Project::load(&project_path).unwrap();
         assert_eq!(
-            project.photos[0].path,
-            directory.path().join("photos/a.jpg")
+            project.photos[0].path.as_ref(),
+            directory.path().join("photos/a.jpg").as_path()
         );
     }
 

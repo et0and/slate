@@ -14,6 +14,7 @@ mod menubar;
 mod overlay;
 mod panels;
 mod preview_window;
+mod selection;
 mod sidebar;
 mod text_field;
 mod theme;

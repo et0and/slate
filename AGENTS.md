@@ -36,9 +36,11 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   `cx.set_menus` and hide the in-window topbar; on other platforms, keep the
   in-window menus. Do not duplicate a command on the same platform. Sync the
   native menus when recent projects, the theme or the Drive account changes.
-- `history.rs` snapshots project and selection before mutating actions. A
-  successful file rename clears history; a save marks older snapshots dirty.
-  Keep both invariants when adding commands.
+- `history.rs` snapshots project and selection before mutating actions.
+  `PhotoSet` snapshots share chunks and `Selection` is a roaring bitmap, so
+  import/remove/sheet boundaries stay structural. A successful file rename
+  clears history; a save marks older snapshots dirty. Keep both invariants when
+  adding commands.
 - `slate-core/store.rs` is a local SQLite catalogue only; `.slate` files
   stay portable. Remember a project after open/save and keep the recent list
   bounded. `store::data_directory()` is the one application-data path.
@@ -70,14 +72,16 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   cell in the rectangle. Right press opens the per-photo menu: rename,
   properties, reveal, copy path and remove. Do not add a second click toggle.
 - Empty selection means "all visible"; never materialise a 500k-photo selection
-  just to open a project.
+  just to open a project. Selection is `Selection`, a roaring bitmap. Do not
+  replace it with `HashSet<PhotoId>`; select-all must stay compact.
 - Import probes metadata only. Generate a thumbnail when a cell becomes visible;
   do not decode one preview per imported file just to evict it from the cache.
   Append imported photos to `ViewState` incrementally; full view reconciles
   happen once at import completion, not every 100 ms.
 - Photo edits use `history` field deltas (tags, rotation, capture date). Do not
   add a full-project snapshot for a single-photo edit. Whole-project snapshots
-  are for sheet/saved-sheet changes, import and removal boundaries.
+  are for sheet/saved-sheet, import and removal boundaries, and are cheap
+  because they share photo chunks and the selection bitmap.
 - Save projects, plan renames and apply rename filesystem work on the background
   executor. Never block the UI with a 500k-photo JSON write or file operation.
 - PDF export writes one page at a time. Do not create a `SheetPlan` or hold all
@@ -86,9 +90,12 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - JPEG thumbnails and PDF images go through `jpeg-decoder`'s reduced IDCT. Do
   not decode a full-resolution JPEG just to make a preview. Call
   `memory::release_free_pages` after a project open or import drains.
-- `Project.photos` is a `PhotoSet`: unique, private ids, O(1) `photo(id)`, and
-  copy-on-write snapshots. Use `Photo::new` and `photo.id()`; never add a linear
-  id lookup or replace the set with a bare `Vec`.
+- `Project.photos` is a chunked copy-on-write `PhotoSet` with a persistent
+  position index and O(1) `photo(id)`. Mutating one photo clones at most one
+  1024-photo chunk. Use `Photo::new` and `photo.id()`; never add a linear id
+  lookup or replace the set with a bare `Vec`. Keep `Photo` at 80 bytes:
+  path/tags/capture date are shared or boxed, and a size regression test guards
+  it.
 - `ViewState` owns visible indices, tag counts and scope ids. Call
   `project_changed`, `filter_changed` or `selection_changed` after edits; panels
   must read the cache instead of scanning the project.

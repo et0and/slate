@@ -127,7 +127,7 @@ impl ContactSheet {
                 photo.rotation(),
             )
         };
-        let selected = self.selected.contains(&id);
+        let selected = self.selected.contains(id);
         let index_label = format!("{:03}", index + 1);
         let image = self.thumb_image(id, rotation);
         let failure = self.thumb_failed(id).map(str::to_string);
@@ -286,14 +286,14 @@ impl ContactSheet {
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        let target = photo_id.is_none_or(|id| !self.selected.contains(&id));
+        let target = photo_id.is_none_or(|id| !self.selected.contains(id));
         let mut changed = false;
         if let Some(photo_id) = photo_id {
             let selected = Arc::make_mut(&mut self.selected);
             changed = if target {
                 selected.insert(photo_id)
             } else {
-                selected.remove(&photo_id)
+                selected.remove(photo_id)
             };
         }
         self.marquee = Some(Marquee {
@@ -389,7 +389,7 @@ impl ContactSheet {
                 changed |= if target {
                     selected.insert(id)
                 } else {
-                    selected.remove(&id)
+                    selected.remove(id)
                 };
             }
         }

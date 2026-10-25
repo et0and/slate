@@ -1,20 +1,23 @@
 //! Bounded project snapshots and photo-level edits for undo and redo.
 //!
-//! Whole-project snapshots remain cheap for sheet and saved-sheet changes
-//! because `PhotoSet` is copy-on-write. Photo edits use field deltas so a
-//! single rotation or capture-date change does not clone a 500k-photo library.
+//! Whole-project snapshots remain cheap because `PhotoSet` shares 1024-photo
+//! chunks and its position index is persistent. Import, remove and sheet
+//! boundaries therefore snapshot structurally rather than copying the library.
+//! Photo edits use field deltas so a single tag, rotation or capture-date change
+//! does not even touch the photo chunks.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use slate_core::model::{PhotoId, Project, QuarterTurns};
+
+use crate::selection::Selection;
 
 const LIMIT: usize = 40;
 
 #[derive(Clone)]
 pub(crate) struct Snapshot {
     pub project: Project,
-    pub selected: Arc<HashSet<PhotoId>>,
+    pub selected: Arc<Selection>,
     pub dirty: bool,
 }
 
@@ -40,8 +43,8 @@ pub(crate) enum PhotoFieldChange {
 #[derive(Clone)]
 pub(crate) struct PhotoEdit {
     fields: Arc<Vec<PhotoFieldChange>>,
-    before_selected: Arc<HashSet<PhotoId>>,
-    after_selected: Arc<HashSet<PhotoId>>,
+    before_selected: Arc<Selection>,
+    after_selected: Arc<Selection>,
     before_dirty: bool,
     after_dirty: bool,
 }
@@ -49,8 +52,8 @@ pub(crate) struct PhotoEdit {
 impl PhotoEdit {
     pub fn new(
         fields: Vec<PhotoFieldChange>,
-        before_selected: Arc<HashSet<PhotoId>>,
-        after_selected: Arc<HashSet<PhotoId>>,
+        before_selected: Arc<Selection>,
+        after_selected: Arc<Selection>,
         before_dirty: bool,
         after_dirty: bool,
     ) -> Self {
@@ -67,7 +70,7 @@ impl PhotoEdit {
         &self.fields
     }
 
-    pub fn selected(&self, forward: bool) -> Arc<HashSet<PhotoId>> {
+    pub fn selected(&self, forward: bool) -> Arc<Selection> {
         if forward {
             Arc::clone(&self.after_selected)
         } else {
@@ -171,7 +174,7 @@ mod tests {
     fn snapshot(name: &str) -> Snapshot {
         Snapshot {
             project: Project::new(name),
-            selected: Arc::new(HashSet::new()),
+            selected: Arc::new(Selection::new()),
             dirty: false,
         }
     }
@@ -198,7 +201,7 @@ mod tests {
 
     #[test]
     fn photo_edits_invert_without_project_snapshots() {
-        let selected = Arc::new(HashSet::new());
+        let selected = Arc::new(Selection::new());
         let mut history = History::default();
         history.push_photo_edit(PhotoEdit::new(
             vec![PhotoFieldChange::Rotation {

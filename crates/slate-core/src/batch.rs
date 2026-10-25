@@ -176,14 +176,14 @@ pub fn plan_rename(project: &Project, selected: &[PhotoId], options: &RenameOpti
             .map(|parent| parent.join(&name))
             .unwrap_or_else(|| PathBuf::from(&name));
 
-        if to == photo.path {
+        if to.as_path() == photo.path.as_ref() {
             plan.skipped += 1;
             continue;
         }
 
         plan.entries.push(RenameEntry {
             photo_id: photo.id(),
-            from: photo.path.clone(),
+            from: photo.path.to_path_buf(),
             to,
             conflict: None,
         });
@@ -252,7 +252,7 @@ pub fn apply_rename(project: &mut Project, plan: &RenamePlan) -> RenameReport {
     let report = apply_rename_paths(plan);
     for (photo_id, path, _) in &report.renamed {
         if let Some(photo) = project.photo_mut(*photo_id) {
-            photo.path = path.clone();
+            photo.set_path(path.clone());
         }
     }
     report
@@ -297,8 +297,7 @@ pub fn add_tag(project: &mut Project, ids: &[PhotoId], tag: &str) -> usize {
             continue;
         };
         if !photo.has_tag(&tag) {
-            photo.tags.push(tag.clone());
-            photo.tags.sort();
+            photo.push_tag(tag.clone());
             changed += 1;
         }
     }
@@ -312,9 +311,7 @@ pub fn remove_tag(project: &mut Project, ids: &[PhotoId], tag: &str) -> usize {
         let Some(photo) = project.photo_mut(*id) else {
             continue;
         };
-        let before = photo.tags.len();
-        photo.tags.retain(|existing| existing != &tag);
-        if photo.tags.len() != before {
+        if photo.remove_tag(&tag) {
             changed += 1;
         }
     }
@@ -327,8 +324,7 @@ pub fn clear_tags(project: &mut Project, ids: &[PhotoId]) -> usize {
         let Some(photo) = project.photo_mut(*id) else {
             continue;
         };
-        if !photo.tags.is_empty() {
-            photo.tags.clear();
+        if photo.clear_tags() {
             changed += 1;
         }
     }
@@ -382,7 +378,12 @@ mod tests {
     fn catches_duplicate_targets() {
         let mut project = project(&["a.jpg"]);
         let source = &project.photos[0];
-        let duplicate = Photo::new(PhotoId(2), source.path.clone(), source.size, source.bytes);
+        let duplicate = Photo::new(
+            PhotoId(2),
+            source.path.to_path_buf(),
+            source.size,
+            source.bytes,
+        );
         project.photos.push(duplicate).unwrap();
         let options = RenameOptions {
             prefix: "SAME".into(),
@@ -558,7 +559,7 @@ mod tests {
         let ids = project.photo_ids();
         assert_eq!(add_tag(&mut project, &ids, "Street"), 1);
         assert_eq!(add_tag(&mut project, &ids, "street"), 0);
-        assert_eq!(project.photos[0].tags, vec!["street"]);
+        assert_eq!(project.photos[0].tags.as_ref(), ["street"]);
         assert_eq!(remove_tag(&mut project, &ids, "#street"), 1);
         assert!(project.photos[0].tags.is_empty());
     }

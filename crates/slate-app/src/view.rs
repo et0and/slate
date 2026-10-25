@@ -1,9 +1,11 @@
 //! Cached projections of the project for the panels.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use slate_core::model::{Filter, PhotoId, Project};
+
+use crate::selection::Selection;
 
 #[derive(Default)]
 pub(crate) struct ViewState {
@@ -45,7 +47,7 @@ impl ViewState {
         project: &Project,
         filter: &Filter,
         search: &str,
-        selected: &HashSet<PhotoId>,
+        selected: &Selection,
     ) {
         if self.project_dirty {
             self.rebuild_project(project);
@@ -175,7 +177,7 @@ impl ViewState {
         self.visible = Arc::new(visible);
     }
 
-    fn rebuild_scope(&mut self, project: &Project, selected: &HashSet<PhotoId>) {
+    fn rebuild_scope(&mut self, project: &Project, selected: &Selection) {
         if selected.is_empty() {
             let scope = self
                 .visible
@@ -188,7 +190,7 @@ impl ViewState {
         if selected.len().saturating_mul(4) < project.photos.len() {
             let mut positions: Vec<(usize, PhotoId)> = selected
                 .iter()
-                .filter_map(|id| project.photos.position(*id).map(|position| (position, *id)))
+                .filter_map(|id| project.photos.position(id).map(|position| (position, id)))
                 .collect();
             positions.sort_unstable_by_key(|(position, _)| *position);
             self.scope = Arc::new(positions.into_iter().map(|(_, id)| id).collect());
@@ -197,7 +199,7 @@ impl ViewState {
                 project
                     .photos
                     .iter()
-                    .filter(|photo| selected.contains(&photo.id()))
+                    .filter(|photo| selected.contains(photo.id()))
                     .map(|photo| photo.id())
                     .collect(),
             );
@@ -215,12 +217,18 @@ mod tests {
         project.add_photo("/tmp/a.jpg".into(), 100, 100, 1);
         project.add_photo("/tmp/b.png".into(), 100, 100, 1);
         project.add_photo("/tmp/c.jpg".into(), 100, 100, 1);
-        project.photo_mut(PhotoId(1)).unwrap().tags = vec!["street".into()];
-        project.photo_mut(PhotoId(2)).unwrap().tags = vec!["street".into()];
+        project
+            .photo_mut(PhotoId(1))
+            .unwrap()
+            .set_tags(vec!["street".into()]);
+        project
+            .photo_mut(PhotoId(2))
+            .unwrap()
+            .set_tags(vec!["street".into()]);
         project
     }
 
-    fn selected(ids: &[u64]) -> HashSet<PhotoId> {
+    fn selected(ids: &[u64]) -> Selection {
         ids.iter().map(|id| PhotoId(*id)).collect()
     }
 
@@ -228,7 +236,7 @@ mod tests {
     fn caches_visible_tags_and_scope() {
         let project = project();
         let mut view = ViewState::new();
-        let none = HashSet::new();
+        let none = Selection::new();
         view.ensure(&project, &Filter::All, "", &none);
         assert_eq!(view.visible().as_slice(), &[0, 1, 2]);
         assert_eq!(view.tags().get("street"), Some(&2));
@@ -257,7 +265,7 @@ mod tests {
     fn search_uses_cached_lowercase_names() {
         let project = project();
         let mut view = ViewState::new();
-        let none = HashSet::new();
+        let none = Selection::new();
         view.ensure(&project, &Filter::All, "B.PNG", &none);
         assert_eq!(view.visible().as_slice(), &[1]);
     }
@@ -266,11 +274,14 @@ mod tests {
     fn imported_photos_append_to_visible_scope_and_tags() {
         let mut project = project();
         let mut view = ViewState::new();
-        let none = HashSet::new();
+        let none = Selection::new();
         view.ensure(&project, &Filter::All, "", &none);
 
         project.add_photo("/tmp/d.jpg".into(), 100, 100, 1);
-        project.photo_mut(PhotoId(4)).unwrap().tags = vec!["new".into()];
+        project
+            .photo_mut(PhotoId(4))
+            .unwrap()
+            .set_tags(vec!["new".into()]);
         let photo = &project.photos[3];
         view.append_imported(3, photo, &Filter::All, "", true, false);
 
@@ -286,9 +297,12 @@ mod tests {
     fn project_invalidation_rebuilds_tags() {
         let mut project = project();
         let mut view = ViewState::new();
-        let none = HashSet::new();
+        let none = Selection::new();
         view.ensure(&project, &Filter::All, "", &none);
-        project.photo_mut(PhotoId(3)).unwrap().tags = vec!["new".into()];
+        project
+            .photo_mut(PhotoId(3))
+            .unwrap()
+            .set_tags(vec!["new".into()]);
         view.invalidate_project();
         view.ensure(&project, &Filter::All, "", &none);
         assert_eq!(view.tags().get("new"), Some(&1));

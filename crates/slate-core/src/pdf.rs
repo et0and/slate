@@ -14,7 +14,7 @@ use image::{DynamicImage, RgbImage};
 
 use crate::import::load_oriented;
 use crate::layout::{MM_TO_PT, Placement, SheetLayout};
-use crate::model::{Photo, PhotoId, Project, SheetSettings};
+use crate::model::{Photo, PhotoId, PhotoSet, Project, SheetSettings};
 
 const DPI: f32 = 300.0;
 const TEXT_BLACK: (f32, f32, f32) = (0.04, 0.04, 0.04);
@@ -540,7 +540,7 @@ fn write_page(
 pub fn export_pdf(
     project_name: &str,
     settings: &SheetSettings,
-    photos: &[Photo],
+    photos: &PhotoSet,
     output: &Path,
 ) -> Result<ExportSummary> {
     let layout = SheetLayout::from_settings(settings);
@@ -575,7 +575,7 @@ pub fn export_pdf(
     for page_index in 0..page_count {
         let start = page_index.saturating_mul(per_page);
         let end = (start + per_page).min(photos.len());
-        let page_photos: Vec<&Photo> = photos[start..end].iter().collect();
+        let page_photos: Vec<&Photo> = (start..end).filter_map(|index| photos.get(index)).collect();
         let page =
             crate::layout::plan_page_refs(settings, &layout, &page_photos, start, page_index);
         let page_id = write_page(
@@ -730,7 +730,9 @@ mod tests {
             paper: Paper::A4,
             ..Default::default()
         };
-        let photos = vec![photo(1, first, 600, 400), photo(2, second, 400, 600)];
+        let photos =
+            PhotoSet::from_vec(vec![photo(1, first, 600, 400), photo(2, second, 400, 600)])
+                .unwrap();
 
         let summary = export_pdf("Test", &settings, &photos, &output).unwrap();
         assert_eq!(summary.pages, 1);
@@ -797,7 +799,9 @@ mod tests {
     fn missing_photo_becomes_a_placeholder_not_a_failure() {
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("missing.pdf");
-        let photos = vec![photo(1, directory.path().join("gone.jpg"), 100, 100)];
+        let photos =
+            PhotoSet::from_vec(vec![photo(1, directory.path().join("gone.jpg"), 100, 100)])
+                .unwrap();
         let summary = export_pdf("Test", &SheetSettings::default(), &photos, &output).unwrap();
         assert_eq!(summary.missing.len(), 1);
         assert!(output.exists());
@@ -813,9 +817,12 @@ mod tests {
             captions: false,
             ..Default::default()
         };
-        let photos: Vec<Photo> = (0..3)
-            .map(|index| photo(index + 1, path.clone(), 100, 100))
-            .collect();
+        let photos = PhotoSet::from_vec(
+            (0..3)
+                .map(|index| photo(index + 1, path.clone(), 100, 100))
+                .collect(),
+        )
+        .unwrap();
         let output = directory.path().join("three.pdf");
         let summary = export_pdf("Test", &settings, &photos, &output).unwrap();
         assert_eq!(summary.pages, 3);

@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
             _ => &["walk", "film"],
         };
         if let Some(photo) = project.photo_mut(id) {
-            photo.tags = tags.iter().map(|tag| tag.to_string()).collect();
+            photo.set_tags(tags.iter().map(|tag| tag.to_string()).collect());
         }
     }
 

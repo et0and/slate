@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
+im.workspace = true
 image.workspace = true
 kamadak-exif.workspace = true
 jpeg-decoder = "0.3"

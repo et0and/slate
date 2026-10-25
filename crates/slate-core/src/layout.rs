@@ -4,7 +4,7 @@
 //! on-screen preview and the PDF. PDF drawing converts to bottom-left points in
 //! `pdf.rs`.
 
-use crate::model::{Photo, SheetSettings};
+use crate::model::{Photo, PhotoSet, SheetSettings};
 
 pub const MM_TO_PT: f32 = 72.0 / 25.4;
 
@@ -152,10 +152,59 @@ fn fit(image_ar: f32, area_w: f32, area_h: f32, allow_rotation: bool) -> (f32, f
     }
 }
 
-pub fn plan_sheet(settings: &SheetSettings, photos: &[Photo]) -> SheetPlan {
+/// Random-access photo storage used by whole-sheet planning.
+///
+/// `PhotoSet` is persistent; tests and small callers can pass a slice or
+/// `Vec<Photo>` without building a `PhotoSet`.
+pub trait PhotoSource {
+    fn source_len(&self) -> usize;
+    fn source_get(&self, index: usize) -> Option<&Photo>;
+}
+
+impl PhotoSource for [Photo] {
+    fn source_len(&self) -> usize {
+        self.len()
+    }
+
+    fn source_get(&self, index: usize) -> Option<&Photo> {
+        self.get(index)
+    }
+}
+
+impl PhotoSource for Vec<Photo> {
+    fn source_len(&self) -> usize {
+        self.len()
+    }
+
+    fn source_get(&self, index: usize) -> Option<&Photo> {
+        self.get(index)
+    }
+}
+
+impl<const N: usize> PhotoSource for [Photo; N] {
+    fn source_len(&self) -> usize {
+        N
+    }
+
+    fn source_get(&self, index: usize) -> Option<&Photo> {
+        self.get(index)
+    }
+}
+
+impl PhotoSource for PhotoSet {
+    fn source_len(&self) -> usize {
+        self.len()
+    }
+
+    fn source_get(&self, index: usize) -> Option<&Photo> {
+        self.get(index)
+    }
+}
+
+pub fn plan_sheet<P: PhotoSource + ?Sized>(settings: &SheetSettings, photos: &P) -> SheetPlan {
     let layout = SheetLayout::from_settings(settings);
     let per_page = layout.per_page().max(1);
-    let page_count = photos.len().div_ceil(per_page).max(1);
+    let page_count = photos.source_len().div_ceil(per_page).max(1);
     let pages = (0..page_count)
         .map(|page_index| plan_page(settings, &layout, photos, page_index))
         .collect();
@@ -163,7 +212,7 @@ pub fn plan_sheet(settings: &SheetSettings, photos: &[Photo]) -> SheetPlan {
     SheetPlan {
         layout,
         pages,
-        photo_count: photos.len(),
+        photo_count: photos.source_len(),
     }
 }
 
@@ -206,22 +255,25 @@ fn placement(
     }
 }
 
-pub fn plan_page(
+pub fn plan_page<P: PhotoSource + ?Sized>(
     settings: &SheetSettings,
     layout: &SheetLayout,
-    photos: &[Photo],
+    photos: &P,
     page_index: usize,
 ) -> PagePlan {
     let per_page = layout.per_page().max(1);
     let start = page_index.saturating_mul(per_page);
-    let end = (start + per_page).min(photos.len());
+    let end = (start + per_page).min(photos.source_len());
     let mut placements = Vec::with_capacity(end.saturating_sub(start));
 
     for (slot, photo_index) in (start..end).enumerate() {
+        let Some(photo) = photos.source_get(photo_index) else {
+            continue;
+        };
         placements.push(placement(
             settings,
             layout,
-            &photos[photo_index],
+            photo,
             photo_index,
             photo_index,
             slot,

@@ -28,6 +28,7 @@ use crate::history::{History, PhotoEdit, PhotoFieldChange, Snapshot, Step};
 use crate::memory;
 use crate::panels::{DIVIDER_W, PanelLayout, ResizeTarget};
 use crate::preview_window::PreviewWindow;
+use crate::selection::Selection;
 use crate::text_field::TextField;
 use crate::theme;
 use crate::view::ViewState;
@@ -120,7 +121,7 @@ pub struct ContactSheet {
     pub(crate) dirty: bool,
     pub(crate) generation: u64,
 
-    pub(crate) selected: Arc<HashSet<PhotoId>>,
+    pub(crate) selected: Arc<Selection>,
     pub(crate) filter: Filter,
     pub(crate) search: String,
     pub(crate) view: ViewState,
@@ -279,7 +280,7 @@ impl ContactSheet {
             project_path: None,
             dirty: false,
             generation: 1,
-            selected: Arc::new(HashSet::new()),
+            selected: Arc::new(Selection::new()),
             filter: Filter::All,
             search: String::new(),
             view: ViewState::new(),
@@ -640,7 +641,7 @@ impl ContactSheet {
     fn push_photo_edit(
         &mut self,
         fields: Vec<PhotoFieldChange>,
-        before_selected: Arc<HashSet<PhotoId>>,
+        before_selected: Arc<Selection>,
         before_dirty: bool,
     ) {
         if fields.is_empty() {
@@ -728,11 +729,11 @@ impl ContactSheet {
             match field {
                 PhotoFieldChange::Tags { id, before, after } => {
                     if let Some(photo) = self.project.photo_mut(*id) {
-                        photo.tags = if forward {
+                        photo.set_tags(if forward {
                             after.clone()
                         } else {
                             before.clone()
-                        };
+                        });
                     }
                 }
                 PhotoFieldChange::Rotation { id, before, after } => {
@@ -743,9 +744,9 @@ impl ContactSheet {
                 PhotoFieldChange::CapturedAt { id, before, after } => {
                     if let Some(photo) = self.project.photo_mut(*id) {
                         photo.captured_at = if forward {
-                            after.clone()
+                            after.clone().map(String::into_boxed_str)
                         } else {
-                            before.clone()
+                            before.clone().map(String::into_boxed_str)
                         };
                     }
                 }
@@ -807,7 +808,7 @@ impl ContactSheet {
     }
 
     pub(crate) fn deselect_all(&mut self, cx: &mut Context<Self>) {
-        self.selected = Arc::new(HashSet::new());
+        self.selected = Arc::new(Selection::new());
         self.selection_changed();
         self.refresh_and_notify(cx);
     }
@@ -817,7 +818,7 @@ impl ContactSheet {
         let selected = Arc::make_mut(&mut self.selected);
         for index in visible.iter() {
             let id = self.project.photos[*index].id();
-            if !selected.remove(&id) {
+            if !selected.remove(id) {
                 selected.insert(id);
             }
         }
@@ -842,7 +843,7 @@ impl ContactSheet {
         let removed_ids: HashSet<PhotoId> = ids.iter().copied().collect();
         let selected = Arc::make_mut(&mut self.selected);
         for id in removed_ids.iter() {
-            selected.remove(id);
+            selected.remove(*id);
             self.thumbs.remove(id);
             self.thumbs_queued.remove(id);
         }
@@ -890,7 +891,7 @@ impl ContactSheet {
             .filter_map(|id| {
                 self.project
                     .photo(*id)
-                    .map(|photo| (*id, photo.tags.clone()))
+                    .map(|photo| (*id, photo.tags.to_vec()))
             })
             .collect();
         let changed = batch::add_tag(&mut self.project, &ids, &tag);
@@ -900,7 +901,7 @@ impl ContactSheet {
             let fields: Vec<PhotoFieldChange> = before_tags
                 .into_iter()
                 .filter_map(|(id, before)| {
-                    let after = self.project.photo(id)?.tags.clone();
+                    let after = self.project.photo(id)?.tags.to_vec();
                     (before != after).then_some(PhotoFieldChange::Tags { id, before, after })
                 })
                 .collect();
@@ -930,7 +931,7 @@ impl ContactSheet {
             .filter_map(|id| {
                 self.project
                     .photo(*id)
-                    .map(|photo| (*id, photo.tags.clone()))
+                    .map(|photo| (*id, photo.tags.to_vec()))
             })
             .collect();
         let changed = batch::remove_tag(&mut self.project, &ids, &tag);
@@ -940,7 +941,7 @@ impl ContactSheet {
             let fields: Vec<PhotoFieldChange> = before_tags
                 .into_iter()
                 .filter_map(|(id, before)| {
-                    let after = self.project.photo(id)?.tags.clone();
+                    let after = self.project.photo(id)?.tags.to_vec();
                     (before != after).then_some(PhotoFieldChange::Tags { id, before, after })
                 })
                 .collect();
@@ -962,7 +963,7 @@ impl ContactSheet {
             .filter_map(|id| {
                 self.project
                     .photo(*id)
-                    .map(|photo| (*id, photo.tags.clone()))
+                    .map(|photo| (*id, photo.tags.to_vec()))
             })
             .collect();
         let changed = batch::clear_tags(&mut self.project, &ids);
@@ -972,7 +973,7 @@ impl ContactSheet {
             let fields: Vec<PhotoFieldChange> = before_tags
                 .into_iter()
                 .filter_map(|(id, before)| {
-                    let after = self.project.photo(id)?.tags.clone();
+                    let after = self.project.photo(id)?.tags.to_vec();
                     (before != after).then_some(PhotoFieldChange::Tags { id, before, after })
                 })
                 .collect();
@@ -1002,10 +1003,10 @@ impl ContactSheet {
         };
         self.photo_info_target = Some(photo_id);
         self.photo_date_error = None;
-        let date = photo.captured_at.clone().unwrap_or_default();
+        let date = photo.captured_at.as_deref().unwrap_or_default().to_string();
         self.photo_date_field
             .update(cx, |field, cx| field.set_value(date, cx));
-        let path = photo.path.clone();
+        let path = photo.path.to_path_buf();
         if let std::collections::hash_map::Entry::Vacant(entry) = self.photo_meta.entry(photo_id) {
             entry.insert(PhotoMetaState::Loading);
             let generation = self.generation;
@@ -1062,16 +1063,16 @@ impl ContactSheet {
         let Some(photo) = self.project.photo(photo_id) else {
             return;
         };
-        if photo.captured_at == normalized {
+        if photo.captured_at.as_deref() == normalized.as_deref() {
             self.photo_date_error = None;
             cx.notify();
             return;
         }
         let before_selected = Arc::clone(&self.selected);
         let before_dirty = self.dirty;
-        let before = photo.captured_at.clone();
+        let before = photo.captured_at.as_deref().map(str::to_owned);
         if let Some(photo) = self.project.photo_mut(photo_id) {
-            photo.captured_at = normalized.clone();
+            photo.captured_at = normalized.clone().map(String::into_boxed_str);
         }
         self.dirty = true;
         self.push_photo_edit(
@@ -1120,7 +1121,11 @@ impl ContactSheet {
     }
 
     pub(crate) fn reveal_photo(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
-        let Some(path) = self.project.photo(photo_id).map(|photo| photo.path.clone()) else {
+        let Some(path) = self
+            .project
+            .photo(photo_id)
+            .map(|photo| photo.path.to_path_buf())
+        else {
             return;
         };
         #[cfg(target_os = "macos")]
@@ -1151,7 +1156,7 @@ impl ContactSheet {
         }
         self.checkpoint();
         self.project.remove_photos(&[photo_id]);
-        Arc::make_mut(&mut self.selected).remove(&photo_id);
+        Arc::make_mut(&mut self.selected).remove(photo_id);
         self.thumbs.remove(&photo_id);
         self.thumbs_queued.remove(&photo_id);
         self.thumb_order.retain(|id| *id != photo_id);
@@ -1204,7 +1209,7 @@ impl ContactSheet {
             self.cancel_photo_rename(cx);
             return;
         };
-        let from = photo.path.clone();
+        let from = photo.path.to_path_buf();
         let extension = photo.extension();
         let mut name = batch::sanitize_fragment(&value);
         if name.is_empty() {
@@ -1236,7 +1241,7 @@ impl ContactSheet {
             return;
         }
         if let Some(photo) = self.project.photo_mut(id) {
-            photo.path = to;
+            photo.set_path(to);
         }
         self.history.clear();
         self.dirty = true;
@@ -1337,7 +1342,7 @@ impl ContactSheet {
                 }
                 for (photo_id, path, _) in &report.renamed {
                     if let Some(photo) = this.project.photo_mut(*photo_id) {
-                        photo.path = path.clone();
+                        photo.set_path(path.clone());
                     }
                 }
                 if report.renamed_count() > 0 {
@@ -1560,7 +1565,7 @@ impl ContactSheet {
         self.project = Project::new("Untitled");
         self.project_path = None;
         self.dirty = false;
-        self.selected = Arc::new(HashSet::new());
+        self.selected = Arc::new(Selection::new());
         self.filter = Filter::All;
         self.search.clear();
         self.thumbs.clear();
@@ -1620,7 +1625,7 @@ impl ContactSheet {
             .photos
             .iter()
             .filter(|photo| photo.captured_at.is_none())
-            .map(|photo| (photo.id(), photo.path.clone()))
+            .map(|photo| (photo.id(), photo.path.to_path_buf()))
             .collect();
         if missing.is_empty() {
             return;
@@ -1646,7 +1651,7 @@ impl ContactSheet {
                     if let Some(photo) = this.project.photo_mut(id)
                         && photo.captured_at.is_none()
                     {
-                        photo.captured_at = Some(date);
+                        photo.captured_at = Some(date.into_boxed_str());
                         changed = true;
                     }
                 }
@@ -1701,7 +1706,7 @@ impl ContactSheet {
                 self.grid_scroll = UniformListScrollHandle::default();
                 // Empty means "all visible"; do not materialise a 500k-entry
                 // selection set just to open a large project.
-                self.selected = Arc::new(HashSet::new());
+                self.selected = Arc::new(Selection::new());
                 self.filter = Filter::All;
                 self.search.clear();
                 self.search_field
@@ -1874,7 +1879,7 @@ impl ContactSheet {
             .project
             .photos
             .iter()
-            .map(|photo| photo.path.as_path())
+            .map(|photo| photo.path.as_ref())
             .collect();
         let new_paths: Vec<PathBuf> = paths
             .into_iter()
@@ -1963,7 +1968,7 @@ impl ContactSheet {
                     self.project
                         .add_photo(path.clone(), probe.width, probe.height, probe.bytes);
                 if let Some(photo) = self.project.photo_mut(id) {
-                    photo.captured_at = probe.captured_at;
+                    photo.captured_at = probe.captured_at.map(String::into_boxed_str);
                 }
                 id
             }
@@ -2079,7 +2084,7 @@ impl ContactSheet {
             if self.thumbs.contains_key(&id) || self.thumbs_queued.contains(&id) {
                 continue;
             }
-            let Some(path) = self.project.photo(id).map(|photo| photo.path.clone()) else {
+            let Some(path) = self.project.photo(id).map(|photo| photo.path.to_path_buf()) else {
                 continue;
             };
             self.thumbs_queued.insert(id);

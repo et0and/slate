@@ -670,7 +670,7 @@ impl ContactSheet {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub(crate) fn sync_native_menus(&self, _cx: &mut Context<Self>) {}
+    pub(crate) const fn sync_native_menus(&self, _cx: &mut Context<Self>) {}
 
     #[cfg(target_os = "macos")]
     fn native_menus(&self) -> Vec<Menu> {

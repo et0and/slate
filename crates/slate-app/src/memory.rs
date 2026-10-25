@@ -15,7 +15,7 @@ pub fn release_free_pages() {
 }
 
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-pub(crate) fn release_free_pages() {
+pub fn release_free_pages() {
     unsafe extern "C" {
         fn malloc_trim(pad: usize) -> i32;
     }
@@ -25,4 +25,4 @@ pub(crate) fn release_free_pages() {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub(crate) fn release_free_pages() {}
+pub fn release_free_pages() {}

@@ -398,7 +398,7 @@ pub fn configure_window_chrome() {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn configure_window_chrome() {}
+pub const fn configure_window_chrome() {}
 
 #[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)]
@@ -427,7 +427,7 @@ pub fn apply_native_appearance(theme: Theme) {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn apply_native_appearance(_theme: Theme) {}
+pub const fn apply_native_appearance(_theme: Theme) {}
 
 #[cfg(test)]
 mod tests {

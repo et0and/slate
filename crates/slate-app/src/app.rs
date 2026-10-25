@@ -3230,19 +3230,16 @@ pub fn slug(value: &str) -> String {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn reveal(path: &Path) {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = std::process::Command::new("open")
-            .arg("-R")
-            .arg(path)
-            .status();
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = path;
-    }
+    let _ = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .status();
 }
+
+#[cfg(not(target_os = "macos"))]
+const fn reveal(_path: &Path) {}
 
 #[cfg(test)]
 mod tests {

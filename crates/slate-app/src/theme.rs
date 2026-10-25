@@ -76,6 +76,7 @@ impl Theme {
         }
     }
 
+    #[cfg(any(target_os = "macos", test))]
     pub fn is_dark(self) -> bool {
         !matches!(self, Self::Light | Self::SolarizedLight)
     }

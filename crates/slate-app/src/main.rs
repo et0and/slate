@@ -26,10 +26,12 @@ use gpui::{
 };
 
 use app::{
-    ContactSheet, DeselectPhotos, Dismiss, ExportSheet, HideOthers, HideSlate, ImportFiles,
-    ImportFolder, NewProject, OpenPreview, OpenProject, Quit, Redo, SaveAs, SaveProject,
-    SelectAllPhotos, Undo,
+    ContactSheet, DeselectPhotos, Dismiss, ExportSheet, ImportFiles, ImportFolder, NewProject,
+    OpenPreview, OpenProject, Quit, Redo, SaveAs, SaveProject, SelectAllPhotos, Undo,
 };
+
+#[cfg(target_os = "macos")]
+use app::{HideOthers, HideSlate};
 use preview_window::{ClosePreview, NextPage, PreviousPage};
 
 #[cfg(target_os = "macos")]

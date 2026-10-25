@@ -2,16 +2,19 @@
 
 //! In-window menu bar and its dropdown panels.
 
-use gpui::{
-    AnyElement, Context, ElementId, Menu, MenuItem, MouseButton, Stateful, SystemMenuType, div,
-    prelude::*, px,
-};
+use gpui::{AnyElement, Context, ElementId, MouseButton, Stateful, div, prelude::*, px};
 
+#[cfg(target_os = "macos")]
+use gpui::{Menu, MenuItem, SystemMenuType};
+
+use crate::app::ContactSheet;
+
+#[cfg(target_os = "macos")]
 use crate::app::{
-    About, ContactSheet, DeselectPhotos, ExportDrive, ExportSheet, HideOthers, HideSlate,
-    ImportDrive, ImportFiles, ImportFolder, InvertSelection, LinkDrive, NewProject, OpenPreview,
-    OpenProject, OpenRecent, OpenWebsite, Quit, Redo, RemoveSelected, ReportIssue, ResetPanels,
-    SaveAs, SaveProject, SaveSheet, SelectAllPhotos, SetTheme, Undo, UnlinkDrive,
+    About, DeselectPhotos, ExportDrive, ExportSheet, HideOthers, HideSlate, ImportDrive,
+    ImportFiles, ImportFolder, InvertSelection, LinkDrive, NewProject, OpenPreview, OpenProject,
+    OpenRecent, OpenWebsite, Quit, Redo, RemoveSelected, ReportIssue, ResetPanels, SaveAs,
+    SaveProject, SaveSheet, SelectAllPhotos, SetTheme, Undo, UnlinkDrive,
 };
 use crate::assets;
 use crate::drive_ui::DriveMode;

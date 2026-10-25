@@ -83,6 +83,10 @@ impl PanelLayout {
         self.right_collapsed = !self.right_collapsed;
     }
 
+    pub fn expand_right(&mut self) {
+        self.right_collapsed = false;
+    }
+
     pub fn resizing(&self) -> Option<ResizeTarget> {
         self.resizing
     }

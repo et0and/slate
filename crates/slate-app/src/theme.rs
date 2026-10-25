@@ -338,6 +338,21 @@ pub fn photo_bg() -> Rgba {
     rgb(palette().photo)
 }
 
+/// Fixed label colours. These are the one intentional colour exception to the
+/// monochrome interface, because colour labels must stay recognisable across
+/// themes.
+pub fn label_color(label: slate_core::model::ColorLabel) -> Rgba {
+    use slate_core::model::ColorLabel;
+    match label {
+        ColorLabel::None => accent_soft(),
+        ColorLabel::Red => rgb(0xd34a45),
+        ColorLabel::Yellow => rgb(0xd8a52e),
+        ColorLabel::Green => rgb(0x4d9a5e),
+        ColorLabel::Blue => rgb(0x4a78c8),
+        ColorLabel::Purple => rgb(0x8f63c9),
+    }
+}
+
 /// Match the native window chrome to the app palette. Without this, macOS
 /// keeps the titlebar in the system appearance even when the interface is
 /// explicitly light or dark.

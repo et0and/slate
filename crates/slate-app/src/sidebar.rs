@@ -5,13 +5,14 @@ use gpui::{
 };
 
 use slate_core::batch;
-use slate_core::model::Filter;
+use slate_core::model::{ColorLabel, Filter, StarRating};
 
 use crate::app::ContactSheet;
 use crate::assets;
 use crate::theme;
+use crate::view::SortKey;
 use crate::widgets::{
-    button, group_label, icon_button, label, micro, mono_text, stepper, text_button, ui_text,
+    button, group_label, icon, icon_button, label, micro, mono_text, stepper, text_button, ui_text,
 };
 
 impl ContactSheet {
@@ -25,6 +26,12 @@ impl ContactSheet {
         let tag_counts = self.tag_counts();
         let tag_count_total = tag_counts.len();
         let untagged = self.untagged_count();
+        let rated = self.rated_count();
+        let unrated = self.unrated_count();
+        let label_counts = self.label_counts();
+        let scope_rating = self.scope_rating();
+        let scope_label = self.scope_label();
+        let scope_count = self.scope_ids().len();
 
         let search_block = div()
             .px(px(16.0))
@@ -40,6 +47,125 @@ impl ContactSheet {
                 mono_text(theme::TEXT_META, theme::muted())
                     .child(format!("{selected_count} selected")),
             );
+
+        let rating_block =
+            div()
+                .px(px(16.0))
+                .py(px(14.0))
+                .border_t_1()
+                .border_color(theme::rule())
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(group_label("Rating"))
+                        .child(micro(format!("{scope_count} in scope"))),
+                )
+                .child(div().flex().items_center().gap(px(3.0)).children(
+                    (1..=StarRating::MAX).map(|value| {
+                        let active = scope_rating
+                            .map(|rating| rating.get() >= value)
+                            .unwrap_or(false);
+                        rating_button(value, active, cx)
+                    }),
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(micro("Click a star to rate the scope"))
+                        .child(text_button("rating-clear", "Clear").on_click(
+                            cx.listener(|this, _, _, cx| this.apply_rating(StarRating::NONE, cx)),
+                        )),
+                );
+
+        let label_block = div()
+            .px(px(16.0))
+            .py(px(14.0))
+            .border_t_1()
+            .border_color(theme::rule())
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(group_label("Label"))
+                    .child(micro(if scope_count == 0 {
+                        "—".to_string()
+                    } else {
+                        scope_label
+                            .map(|label| label.label().to_string())
+                            .unwrap_or_else(|| "Mixed".to_string())
+                    })),
+            )
+            .child(
+                div().flex().items_center().gap(px(5.0)).children(
+                    ColorLabel::ALL
+                        .into_iter()
+                        .map(|label| label_button(label, scope_label == Some(label), cx)),
+                ),
+            );
+
+        let sort_block =
+            div()
+                .px(px(16.0))
+                .py(px(14.0))
+                .border_t_1()
+                .border_color(theme::rule())
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(group_label("Sort"))
+                        .child(micro(format!("{photo_count} photos"))),
+                )
+                .child(div().grid().grid_cols(2).gap(px(4.0)).children(
+                    SortKey::ALL.into_iter().map(|key| {
+                        let active = self.sort == key;
+                        sort_button(key, active, cx)
+                    }),
+                ))
+                .child(
+                    div()
+                        .id("sort-direction")
+                        .w_full()
+                        .h(px(28.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap(px(6.0))
+                        .border_1()
+                        .border_color(theme::rule())
+                        .bg(theme::surface())
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme::accent_soft()))
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_sort_direction(cx)))
+                        .child(
+                            ui_text(theme::TEXT_LABEL, theme::muted())
+                                .child(self.sort_direction.label()),
+                        )
+                        .child(icon(
+                            if self.sort_direction == crate::view::SortDirection::Ascending {
+                                assets::CHEVRON_UP
+                            } else {
+                                assets::CHEVRON_DOWN
+                            },
+                            10.0,
+                            theme::faint(),
+                        )),
+                );
 
         let mut filter_rows: Vec<AnyElement> = Vec::new();
         let is_all = matches!(self.filter, Filter::All);
@@ -64,6 +190,29 @@ impl ContactSheet {
                 }))
                 .into_any_element(),
         );
+        let is_unrated = matches!(self.filter, Filter::Unrated);
+        filter_rows.push(
+            filter_row("filter-unrated", "Unrated", unrated, is_unrated)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.filter = Filter::Unrated;
+                    this.filter_changed();
+                    this.refresh_preview();
+                    cx.notify();
+                }))
+                .into_any_element(),
+        );
+        let is_rated = matches!(self.filter, Filter::Rated);
+        filter_rows.push(
+            filter_row("filter-rated", "Rated", rated, is_rated)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.filter = Filter::Rated;
+                    this.filter_changed();
+                    this.refresh_preview();
+                    cx.notify();
+                }))
+                .into_any_element(),
+        );
+
         for (tag, count) in tag_counts.iter() {
             let active = matches!(&self.filter, Filter::Tag(active) if active == tag);
             let click_tag = tag.clone();
@@ -83,6 +232,38 @@ impl ContactSheet {
                 .into_any_element(),
             );
         }
+
+        for (index, label) in ColorLabel::ALL.into_iter().enumerate().skip(1) {
+            let active = matches!(&self.filter, Filter::Label(active) if *active == label);
+            let count = label_counts[index];
+            filter_rows.push(
+                label_filter_row(label, count, active)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.filter = Filter::Label(label);
+                        this.filter_changed();
+                        this.refresh_preview();
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
+        }
+
+        let no_label_active = matches!(self.filter, Filter::Unlabeled);
+        filter_rows.push(
+            filter_row(
+                "filter-unlabeled",
+                "No label",
+                label_counts[ColorLabel::None as usize],
+                no_label_active,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.filter = Filter::Unlabeled;
+                this.filter_changed();
+                this.refresh_preview();
+                cx.notify();
+            }))
+            .into_any_element(),
+        );
 
         let tags_block = div()
             .border_t_1()
@@ -320,11 +501,155 @@ impl ContactSheet {
                             ),
                     )
                     .child(search_block)
+                    .child(rating_block)
+                    .child(label_block)
+                    .child(sort_block)
                     .child(tags_block)
                     .child(rename_block),
             )
             .into_any_element()
     }
+}
+
+fn rating_button(value: u8, active: bool, cx: &mut Context<ContactSheet>) -> AnyElement {
+    div()
+        .id(ElementId::Name(SharedString::from(format!(
+            "rating-{value}"
+        ))))
+        .size(px(28.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .border_1()
+        .border_color(if active {
+            theme::accent()
+        } else {
+            theme::rule()
+        })
+        .bg(if active {
+            theme::accent()
+        } else {
+            theme::surface()
+        })
+        .cursor_pointer()
+        .hover(|style| style.bg(theme::accent_soft()))
+        .on_click(
+            cx.listener(move |this, _, _, cx| this.apply_rating(StarRating::clamped(value), cx)),
+        )
+        .child(icon(
+            if active {
+                assets::STAR_FILLED
+            } else {
+                assets::STAR
+            },
+            15.0,
+            if active {
+                theme::accent_text()
+            } else {
+                theme::muted()
+            },
+        ))
+        .into_any_element()
+}
+
+fn label_button(label: ColorLabel, active: bool, cx: &mut Context<ContactSheet>) -> AnyElement {
+    let color = theme::label_color(label);
+    div()
+        .id(ElementId::Name(SharedString::from(format!(
+            "label-{}",
+            label.label().to_lowercase()
+        ))))
+        .size(px(26.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .border_1()
+        .border_color(if active { theme::ink() } else { theme::rule() })
+        .bg(theme::surface())
+        .cursor_pointer()
+        .hover(|style| style.border_color(theme::ink()))
+        .on_click(cx.listener(move |this, _, _, cx| this.apply_label(label, cx)))
+        .child(
+            div()
+                .size(px(12.0))
+                .border_1()
+                .border_color(if label == ColorLabel::None {
+                    theme::rule()
+                } else {
+                    color
+                })
+                .bg(if label == ColorLabel::None {
+                    theme::surface()
+                } else {
+                    color
+                }),
+        )
+        .into_any_element()
+}
+
+fn sort_button(key: SortKey, active: bool, cx: &mut Context<ContactSheet>) -> AnyElement {
+    div()
+        .id(ElementId::Name(SharedString::from(format!(
+            "sort-{}",
+            key.label().to_lowercase()
+        ))))
+        .h(px(26.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .border_1()
+        .border_color(if active { theme::ink() } else { theme::rule() })
+        .bg(if active {
+            theme::accent_soft()
+        } else {
+            theme::surface()
+        })
+        .cursor_pointer()
+        .hover(|style| style.bg(theme::accent_soft()))
+        .font_family(theme::FONT_UI)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_size(px(theme::TEXT_LABEL))
+        .text_color(if active { theme::ink() } else { theme::muted() })
+        .on_click(cx.listener(move |this, _, _, cx| this.set_sort_key(key, cx)))
+        .child(key.label())
+        .into_any_element()
+}
+
+fn label_filter_row(label: ColorLabel, count: usize, active: bool) -> gpui::Stateful<gpui::Div> {
+    let color = theme::label_color(label);
+    div()
+        .id(ElementId::Name(SharedString::from(format!(
+            "filter-label-{}",
+            label.label().to_lowercase()
+        ))))
+        .h(px(theme::ROW_H))
+        .px(px(16.0))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(8.0))
+        .cursor_pointer()
+        .border_b_1()
+        .border_color(theme::rule())
+        .bg(if active {
+            theme::accent_soft()
+        } else {
+            rgba(0x00000000)
+        })
+        .active(|style| style.opacity(0.8))
+        .hover(|style| style.bg(theme::accent_soft()))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(div().size(px(9.0)).bg(color))
+                .child(
+                    ui_text(theme::TEXT_BODY - 1.0, theme::muted())
+                        .child(format!("{} label", label.label())),
+                ),
+        )
+        .child(mono_text(theme::TEXT_META, theme::faint()).child(count.to_string()))
 }
 
 fn filter_row(

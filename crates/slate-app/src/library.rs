@@ -101,7 +101,7 @@ impl ContactSheet {
     }
 
     fn render_cell(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
-        let (id, name, dimensions, tags, bytes, rotation) = {
+        let (id, name, dimensions, tags, bytes, rotation, rating, color_label) = {
             let photo = &self.project.photos[index];
             (
                 photo.id(),
@@ -125,6 +125,8 @@ impl ContactSheet {
                 },
                 format_bytes(photo.bytes),
                 photo.rotation(),
+                photo.rating(),
+                photo.label(),
             )
         };
         let selected = self.selected.contains(id);
@@ -155,6 +157,34 @@ impl ContactSheet {
                 .opacity(0.45)
                 .into_any_element()
         };
+
+        let eye = div()
+            .id(ElementId::Name(SharedString::from(format!(
+                "preview-{}",
+                id.0
+            ))))
+            .absolute()
+            .top(px(10.0))
+            .left(px(10.0))
+            .size(px(22.0))
+            .bg(theme::surface())
+            .border_1()
+            .border_color(theme::rule())
+            .shadow_sm()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .hover(|style| style.bg(theme::accent_soft()))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| cx.stop_propagation()),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.open_photo_preview(id, window, cx);
+            }))
+            .child(icon(assets::EYE, 13.0, theme::muted()));
 
         let rotate = div()
             .id(ElementId::Name(SharedString::from(format!(
@@ -213,6 +243,7 @@ impl ContactSheet {
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
                     this.begin_marquee(Some(id), event.position, cx);
+                    this.inspect_photo(id, cx);
                 }),
             )
             .on_mouse_down(
@@ -236,6 +267,7 @@ impl ContactSheet {
                     .items_center()
                     .justify_center()
                     .child(preview)
+                    .child(eye)
                     .child(rotate)
                     .children(badge),
             )
@@ -269,6 +301,44 @@ impl ContactSheet {
                                     .child(format!("{index_label}  {dimensions}")),
                             )
                             .child(mono_text(theme::TEXT_MICRO, theme::faint()).child(bytes)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(1.0))
+                                    .children((1..=5).map(|value| {
+                                        icon(
+                                            if rating.get() >= value {
+                                                assets::STAR_FILLED
+                                            } else {
+                                                assets::STAR
+                                            },
+                                            9.0,
+                                            if rating.get() >= value {
+                                                theme::muted()
+                                            } else {
+                                                theme::rule()
+                                            },
+                                        )
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .size(px(9.0))
+                                    .border_1()
+                                    .border_color(theme::rule())
+                                    .bg(if color_label == slate_core::model::ColorLabel::None {
+                                        theme::surface()
+                                    } else {
+                                        theme::label_color(color_label)
+                                    }),
+                            ),
                     )
                     .children(tags.map(|tags| {
                         ui_text(theme::TEXT_MICRO, theme::muted())

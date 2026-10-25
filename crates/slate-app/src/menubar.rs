@@ -11,10 +11,11 @@ use crate::app::ContactSheet;
 
 #[cfg(target_os = "macos")]
 use crate::app::{
-    About, DeselectPhotos, ExportDrive, ExportSheet, HideOthers, HideSlate, ImportDrive,
-    ImportFiles, ImportFolder, InvertSelection, LinkDrive, NewProject, OpenPreview, OpenProject,
-    OpenRecent, OpenWebsite, Quit, Redo, RemoveSelected, ReportIssue, ResetPanels, SaveAs,
-    SaveProject, SaveSheet, SelectAllPhotos, SetTheme, Undo, UnlinkDrive,
+    About, ConvertSelected, CreateContactSheet, DeselectPhotos, ExportDrive, ExportSheet,
+    HideOthers, HideSlate, ImportDrive, ImportFiles, ImportFolder, InvertSelection, LinkDrive,
+    NewProject, OpenPreview, OpenProject, OpenRecent, OpenWebsite, Quit, Redo, RemoveSelected,
+    ReportIssue, ResetPanels, SaveAs, SaveProject, SaveSheet, SelectAllPhotos, SetTheme, Undo,
+    UnlinkDrive,
 };
 use crate::assets;
 use crate::drive_ui::DriveMode;
@@ -272,6 +273,20 @@ impl ContactSheet {
                 }))
                 .into_any_element(),
         );
+        rows.push(
+            menu_item(
+                "menu-create-sheet",
+                assets::LAYOUT,
+                "Create contact sheet…",
+                Some(shift_shortcut_label("C")),
+                true,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.close_menu(cx);
+                this.open_sheet_builder(cx);
+            }))
+            .into_any_element(),
+        );
         rows.push(separator());
         rows.push(
             menu_item(
@@ -302,6 +317,20 @@ impl ContactSheet {
             .into_any_element(),
         );
         rows.push(separator());
+        rows.push(
+            menu_item(
+                "menu-convert",
+                assets::UPLOAD,
+                "Convert selected…",
+                Some(shift_shortcut_label("E")),
+                true,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.close_menu(cx);
+                this.open_convert_dialog(cx);
+            }))
+            .into_any_element(),
+        );
         rows.push(
             menu_item(
                 "menu-export",
@@ -421,7 +450,7 @@ impl ContactSheet {
             menu_item(
                 "menu-preview",
                 assets::IMAGE,
-                "Open preview window",
+                "Open sheet preview",
                 Some(shift_shortcut_label("P")),
                 true,
             )
@@ -686,10 +715,12 @@ impl ContactSheet {
             MenuItem::action("Save", SaveProject),
             MenuItem::action("Save as…", SaveAs),
             MenuItem::action("Save sheet", SaveSheet),
+            MenuItem::action("Create contact sheet…", CreateContactSheet),
             MenuItem::separator(),
             MenuItem::action("Import files…", ImportFiles),
             MenuItem::action("Import folder…", ImportFolder),
             MenuItem::separator(),
+            MenuItem::action("Convert selected…", ConvertSelected),
             MenuItem::action("Export PDF…", ExportSheet),
         ]);
 
@@ -705,7 +736,7 @@ impl ContactSheet {
         ];
 
         let mut view_items = vec![
-            MenuItem::action("Open preview window", OpenPreview),
+            MenuItem::action("Open sheet preview", OpenPreview),
             MenuItem::separator(),
         ];
         view_items.extend(theme::Theme::ALL.into_iter().map(|choice| {

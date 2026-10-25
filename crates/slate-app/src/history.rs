@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use slate_core::model::{PhotoId, Project, QuarterTurns};
+use slate_core::model::{ColorLabel, PhotoId, Project, QuarterTurns, StarRating};
 
 use crate::selection::Selection;
 
@@ -37,6 +37,16 @@ pub(crate) enum PhotoFieldChange {
         id: PhotoId,
         before: Option<String>,
         after: Option<String>,
+    },
+    Rating {
+        id: PhotoId,
+        before: StarRating,
+        after: StarRating,
+    },
+    Label {
+        id: PhotoId,
+        before: ColorLabel,
+        after: ColorLabel,
     },
 }
 

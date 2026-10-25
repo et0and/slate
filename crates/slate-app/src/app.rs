@@ -16,8 +16,11 @@ use gpui::{
 use image::{Frame, RgbaImage};
 use slate_core::PreviewImage;
 use slate_core::batch::{self, RenameOptions, RenamePlan};
+use slate_core::convert::{self, ConvertOptions, OutputFormat};
 use slate_core::import::{self, Probe};
-use slate_core::model::{Filter, Paper, PhotoId, Project, QuarterTurns, SheetId, SheetSettings};
+use slate_core::model::{
+    ColorLabel, Filter, Paper, PhotoId, Project, QuarterTurns, SheetId, SheetSettings, StarRating,
+};
 use slate_core::pdf::{self, ExportSummary};
 use slate_core::store::{LocalStore, RecentProject};
 
@@ -27,11 +30,12 @@ use crate::drive_ui::{DriveDownload, DriveMode, DriveNotice, DrivePicker};
 use crate::history::{History, PhotoEdit, PhotoFieldChange, Snapshot, Step};
 use crate::memory;
 use crate::panels::{DIVIDER_W, PanelLayout, ResizeTarget};
+use crate::photo_preview::PhotoPreviewWindow;
 use crate::preview_window::PreviewWindow;
 use crate::selection::Selection;
 use crate::text_field::TextField;
 use crate::theme;
-use crate::view::ViewState;
+use crate::view::{SortDirection, SortKey, ViewState};
 
 actions!(
     contact_sheet_actions,
@@ -51,6 +55,8 @@ actions!(
         Redo,
         Dismiss,
         SaveSheet,
+        CreateContactSheet,
+        ConvertSelected,
         InvertSelection,
         RemoveSelected,
         ResetPanels,
@@ -81,6 +87,7 @@ pub(crate) struct SetTheme {
 const THUMB_CACHE: usize = 32;
 const THUMB_EDGE: u32 = 224;
 const THUMB_QUEUE_LIMIT: usize = 512;
+const PHOTO_PREVIEW_EDGE: u32 = 3200;
 
 #[derive(Debug, Clone)]
 pub enum ThumbState {
@@ -108,6 +115,13 @@ pub(crate) enum PhotoMetaState {
     Ready(import::PhotoMetadata),
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum InspectorMode {
+    #[default]
+    Photo,
+    Sheet,
+}
+
 #[derive(Debug, Default)]
 pub struct ImportState {
     pub total: usize,
@@ -124,6 +138,8 @@ pub struct ContactSheet {
     pub(crate) selected: Arc<Selection>,
     pub(crate) filter: Filter,
     pub(crate) search: String,
+    pub(crate) sort: SortKey,
+    pub(crate) sort_direction: SortDirection,
     pub(crate) view: ViewState,
 
     pub(crate) thumbs: HashMap<PhotoId, ThumbState>,
@@ -144,7 +160,17 @@ pub struct ContactSheet {
 
     pub(crate) preview_page: usize,
     pub(crate) preview_window: Option<WindowHandle<PreviewWindow>>,
+    pub(crate) photo_preview_window: Option<WindowHandle<PhotoPreviewWindow>>,
+    pub(crate) photo_preview_target: Option<PhotoId>,
+    pub(crate) photo_preview_image: Option<Arc<RenderImage>>,
+    pub(crate) photo_preview_error: Option<String>,
+    pub(crate) photo_preview_load_id: u64,
     pub(crate) about_window: Option<WindowHandle<AboutWindow>>,
+    pub(crate) inspector_mode: InspectorMode,
+    pub(crate) inspected_photo: Option<PhotoId>,
+    pub(crate) convert_dialog_open: bool,
+    pub(crate) convert_format: OutputFormat,
+    pub(crate) converting: Option<String>,
     pub(crate) marquee: Option<Marquee>,
     pub(crate) paper_menu_open: bool,
     pub(crate) rename_pending: Option<Arc<RenamePlan>>,
@@ -152,7 +178,6 @@ pub struct ContactSheet {
     pub(crate) rename_photo_target: Option<PhotoId>,
     pub(crate) rename_photo_error: Option<String>,
     pub(crate) photo_context: Option<PhotoContextMenu>,
-    pub(crate) photo_info_target: Option<PhotoId>,
     pub(crate) photo_meta: HashMap<PhotoId, PhotoMetaState>,
     pub(crate) photo_date_error: Option<String>,
     pub(crate) rename_options: RenameOptions,
@@ -283,6 +308,8 @@ impl ContactSheet {
             selected: Arc::new(Selection::new()),
             filter: Filter::All,
             search: String::new(),
+            sort: SortKey::Name,
+            sort_direction: SortDirection::Ascending,
             view: ViewState::new(),
             thumbs: HashMap::new(),
             thumb_queue: VecDeque::new(),
@@ -300,7 +327,17 @@ impl ContactSheet {
             last_import_render: Instant::now(),
             preview_page: 0,
             preview_window: None,
+            photo_preview_window: None,
+            photo_preview_target: None,
+            photo_preview_image: None,
+            photo_preview_error: None,
+            photo_preview_load_id: 0,
             about_window: None,
+            inspector_mode: InspectorMode::Photo,
+            inspected_photo: None,
+            convert_dialog_open: false,
+            convert_format: OutputFormat::Jpeg,
+            converting: None,
             marquee: None,
             paper_menu_open: false,
             rename_pending: None,
@@ -308,7 +345,6 @@ impl ContactSheet {
             rename_photo_target: None,
             rename_photo_error: None,
             photo_context: None,
-            photo_info_target: None,
             photo_meta: HashMap::new(),
             photo_date_error: None,
             rename_options: RenameOptions::default(),
@@ -354,7 +390,14 @@ impl ContactSheet {
 
     fn ensure_view(&mut self) {
         let view = &mut self.view;
-        view.ensure(&self.project, &self.filter, &self.search, &self.selected);
+        view.ensure(
+            &self.project,
+            &self.filter,
+            &self.search,
+            &self.selected,
+            self.sort,
+            self.sort_direction,
+        );
     }
 
     pub(crate) fn project_changed(&mut self) {
@@ -396,6 +439,31 @@ impl ContactSheet {
     pub(crate) fn untagged_count(&mut self) -> usize {
         self.ensure_view();
         self.view.untagged()
+    }
+
+    pub(crate) fn rated_count(&mut self) -> usize {
+        self.ensure_view();
+        self.view.rated()
+    }
+
+    pub(crate) fn unrated_count(&mut self) -> usize {
+        self.ensure_view();
+        self.view.unrated()
+    }
+
+    pub(crate) fn label_counts(&mut self) -> [usize; ColorLabel::ALL.len()] {
+        self.ensure_view();
+        self.view.label_counts()
+    }
+
+    pub(crate) fn scope_rating(&mut self) -> Option<StarRating> {
+        self.ensure_view();
+        self.view.scope_rating()
+    }
+
+    pub(crate) fn scope_label(&mut self) -> Option<ColorLabel> {
+        self.ensure_view();
+        self.view.scope_label()
     }
 
     /// Explicit selection wins. With no selection, every visible photo is the
@@ -693,6 +761,12 @@ impl ContactSheet {
         }
         self.selection_changed();
         self.preview_page = 0;
+        if self
+            .inspected_photo
+            .is_some_and(|id| self.project.photo(id).is_none())
+        {
+            self.inspected_photo = None;
+        }
         self.rename_pending = None;
         self.title_field.update(cx, |field, cx| {
             field.set_value(self.project.sheet.title.clone(), cx);
@@ -748,6 +822,16 @@ impl ContactSheet {
                         } else {
                             before.clone().map(String::into_boxed_str)
                         };
+                    }
+                }
+                PhotoFieldChange::Rating { id, before, after } => {
+                    if let Some(photo) = self.project.photo_mut(*id) {
+                        photo.set_rating(if forward { *after } else { *before });
+                    }
+                }
+                PhotoFieldChange::Label { id, before, after } => {
+                    if let Some(photo) = self.project.photo_mut(*id) {
+                        photo.set_label(if forward { *after } else { *before });
                     }
                 }
             }
@@ -850,6 +934,19 @@ impl ContactSheet {
         self.thumb_order.retain(|id| !removed_ids.contains(id));
         self.rotated_thumbs
             .retain(|(photo_id, _), _| !removed_ids.contains(photo_id));
+        if self
+            .inspected_photo
+            .is_some_and(|id| removed_ids.contains(&id))
+        {
+            self.inspected_photo = None;
+        }
+        if self
+            .photo_preview_target
+            .is_some_and(|id| removed_ids.contains(&id))
+        {
+            self.photo_preview_target = None;
+            self.photo_preview_image = None;
+        }
         self.project_changed();
         self.dirty = true;
         self.log(format!("Removed {removed} photos from the project"));
@@ -984,6 +1081,352 @@ impl ContactSheet {
         self.refresh_and_notify(cx);
     }
 
+    // ----- rating, labels and sorting ------------------------------------
+
+    pub(crate) fn apply_rating(&mut self, rating: StarRating, cx: &mut Context<Self>) {
+        let ids = self.scope_ids();
+        if ids.is_empty() {
+            self.set_status("No photos in scope");
+            cx.notify();
+            return;
+        }
+        let before_selected = Arc::clone(&self.selected);
+        let before_dirty = self.dirty;
+        let before: Vec<(PhotoId, StarRating)> = ids
+            .iter()
+            .filter_map(|id| self.project.photo(*id).map(|photo| (*id, photo.rating())))
+            .collect();
+        let changed = batch::set_rating(&mut self.project, &ids, rating);
+        self.project_changed();
+        if changed > 0 {
+            self.dirty = true;
+            let fields: Vec<PhotoFieldChange> = before
+                .into_iter()
+                .filter_map(|(id, before)| {
+                    let after = self.project.photo(id)?.rating();
+                    (before != after).then_some(PhotoFieldChange::Rating { id, before, after })
+                })
+                .collect();
+            self.push_photo_edit(fields, before_selected, before_dirty);
+            self.log(format!("Rating {} / {changed} photo(s)", rating.get()));
+        }
+        self.set_status(if rating.is_rated() {
+            format!("Rated {} / {changed} photo(s)", rating.get())
+        } else {
+            format!("Rating cleared / {changed} photo(s)")
+        });
+        self.refresh_and_notify(cx);
+    }
+
+    pub(crate) fn apply_label(&mut self, label: ColorLabel, cx: &mut Context<Self>) {
+        let ids = self.scope_ids();
+        if ids.is_empty() {
+            self.set_status("No photos in scope");
+            cx.notify();
+            return;
+        }
+        let before_selected = Arc::clone(&self.selected);
+        let before_dirty = self.dirty;
+        let before: Vec<(PhotoId, ColorLabel)> = ids
+            .iter()
+            .filter_map(|id| self.project.photo(*id).map(|photo| (*id, photo.label())))
+            .collect();
+        let changed = batch::set_label(&mut self.project, &ids, label);
+        self.project_changed();
+        if changed > 0 {
+            self.dirty = true;
+            let fields: Vec<PhotoFieldChange> = before
+                .into_iter()
+                .filter_map(|(id, before)| {
+                    let after = self.project.photo(id)?.label();
+                    (before != after).then_some(PhotoFieldChange::Label { id, before, after })
+                })
+                .collect();
+            self.push_photo_edit(fields, before_selected, before_dirty);
+            self.log(format!("Label {} / {changed} photo(s)", label.label()));
+        }
+        self.set_status(format!("Label {} / {changed} photo(s)", label.label()));
+        self.refresh_and_notify(cx);
+    }
+
+    pub(crate) fn set_sort_key(&mut self, key: SortKey, cx: &mut Context<Self>) {
+        if self.sort == key {
+            self.sort_direction = self.sort_direction.toggled();
+        } else {
+            self.sort = key;
+            self.sort_direction = SortDirection::Ascending;
+        }
+        self.preview_page = 0;
+        self.filter_changed();
+        self.refresh_and_notify(cx);
+    }
+
+    pub(crate) fn toggle_sort_direction(&mut self, cx: &mut Context<Self>) {
+        self.sort_direction = self.sort_direction.toggled();
+        self.filter_changed();
+        self.refresh_and_notify(cx);
+    }
+
+    // ----- conversion ----------------------------------------------------
+
+    pub(crate) fn open_convert_dialog(&mut self, cx: &mut Context<Self>) {
+        if self.converting.is_some() {
+            self.set_status("Conversion already in progress");
+            cx.notify();
+            return;
+        }
+        if self.scope_ids().is_empty() {
+            self.set_status("No photos to convert");
+            cx.notify();
+            return;
+        }
+        let count = self.scope_ids().len();
+        self.convert_dialog_open = true;
+        self.set_status(format!("Convert / {count} photo(s) in scope"));
+        cx.notify();
+    }
+
+    pub(crate) fn close_convert_dialog(&mut self, cx: &mut Context<Self>) {
+        if self.convert_dialog_open {
+            self.convert_dialog_open = false;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_convert_format(&mut self, format: OutputFormat, cx: &mut Context<Self>) {
+        self.convert_format = format;
+        cx.notify();
+    }
+
+    pub(crate) fn start_conversion(&mut self, cx: &mut Context<Self>) {
+        if self.converting.is_some() {
+            self.set_status("Conversion already in progress");
+            cx.notify();
+            return;
+        }
+        let ids = Arc::new(self.scope_ids().as_ref().clone());
+        if ids.is_empty() {
+            self.set_status("No photos to convert");
+            cx.notify();
+            return;
+        }
+        let project = self.project.clone();
+        let format = self.convert_format;
+        self.convert_dialog_open = false;
+        self.set_status("Choose an output folder…");
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let Ok(receiver) = cx.update(|app| {
+                app.prompt_for_paths(PathPromptOptions {
+                    files: false,
+                    directories: true,
+                    multiple: false,
+                    prompt: Some("Choose output folder".into()),
+                })
+            }) else {
+                return;
+            };
+            let Ok(Ok(Some(paths))) = receiver.await else {
+                return;
+            };
+            let Some(output_dir) = paths.into_iter().next() else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.converting = Some(output_dir.display().to_string());
+                this.set_status(format!(
+                    "Converting {} photo(s) to {} / {}",
+                    ids.len(),
+                    format.label(),
+                    output_dir.display()
+                ));
+                this.log(format!(
+                    "Convert start / {} / {}",
+                    ids.len(),
+                    format.label()
+                ));
+                cx.notify();
+            });
+            let options = ConvertOptions {
+                format,
+                quality: 92,
+            };
+            let report = cx
+                .background_spawn(async move {
+                    convert::convert_photos(&project, &ids, &output_dir, options)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.converting = None;
+                for (name, error) in report.errors.iter().take(4) {
+                    this.log(format!("Convert error / {name}: {error}"));
+                }
+                this.set_status(format!("{} / {}", format.label(), report.summary()));
+                this.log(format!("Convert / {}", report.summary()));
+                if let Some(path) = report.outputs.first() {
+                    this.set_status(format!(
+                        "{} / {} / {}",
+                        format.label(),
+                        report.summary(),
+                        path.parent()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_default()
+                    ));
+                }
+                memory::release_free_pages();
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    // ----- photo preview -------------------------------------------------
+
+    pub(crate) fn clear_photo_preview(&mut self, cx: &mut Context<Self>) {
+        self.photo_preview_target = None;
+        self.photo_preview_image = None;
+        self.photo_preview_error = None;
+        self.photo_preview_load_id = self.photo_preview_load_id.wrapping_add(1);
+        cx.notify();
+    }
+
+    fn close_photo_preview_window(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.photo_preview_window.take() {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        }
+        self.clear_photo_preview(cx);
+    }
+
+    pub(crate) fn open_sheet_builder(&mut self, cx: &mut Context<Self>) {
+        let count = self.scope_ids().len();
+        if count == 0 {
+            self.set_status("No photos to place on a sheet");
+            cx.notify();
+            return;
+        }
+        self.panels.expand_right();
+        self.inspector_mode = InspectorMode::Sheet;
+        self.preview_page = 0;
+        self.set_status(format!("Contact sheet / {count} photo(s) in scope"));
+        self.log(format!("Sheet builder / {count} photo(s)"));
+        cx.notify();
+    }
+
+    pub(crate) fn open_photo_preview(
+        &mut self,
+        photo_id: PhotoId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.project.photo(photo_id).is_none() {
+            return;
+        }
+        self.inspect_photo(photo_id, cx);
+        self.load_photo_preview(photo_id, cx);
+        if let Some(handle) = self.photo_preview_window.as_ref()
+            && handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            let _ = window;
+            return;
+        }
+        self.photo_preview_window = None;
+        let parent = cx.entity();
+        let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Fullscreen(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Photo preview".into()),
+                appears_transparent: true,
+                ..Default::default()
+            }),
+            focus: true,
+            ..Default::default()
+        };
+        cx.spawn(async move |this, cx| {
+            let handle = cx.update(|app| {
+                app.open_window(options, |_, cx| {
+                    cx.new(|cx| PhotoPreviewWindow::new(parent, cx))
+                })
+            });
+            let Ok(handle) = handle else {
+                return;
+            };
+            if let Ok(handle) = handle {
+                let _ = this.update(cx, |this, cx| {
+                    this.photo_preview_window = Some(handle);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    pub(crate) fn load_photo_preview(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
+        let Some(photo) = self.project.photo(photo_id) else {
+            return;
+        };
+        let path = photo.path.to_path_buf();
+        let turns = photo.rotation();
+        self.photo_preview_target = Some(photo_id);
+        self.photo_preview_image = None;
+        self.photo_preview_error = None;
+        self.photo_preview_load_id = self.photo_preview_load_id.wrapping_add(1);
+        let load_id = self.photo_preview_load_id;
+        let generation = self.generation;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { import::preview(&path, PHOTO_PREVIEW_EDGE) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation
+                    || this.photo_preview_target != Some(photo_id)
+                    || this.photo_preview_load_id != load_id
+                {
+                    return;
+                }
+                match result {
+                    Ok(preview) => {
+                        let image = render_image(preview);
+                        this.photo_preview_image = Some(if turns == QuarterTurns::NONE {
+                            image
+                        } else {
+                            rotate_render_image(&image, turns).unwrap_or(image)
+                        });
+                        this.photo_preview_error = None;
+                    }
+                    Err(error) => {
+                        this.photo_preview_image = None;
+                        this.photo_preview_error = Some(error.to_string());
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn step_photo_preview(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let visible = self.visible_indices();
+        if visible.is_empty() {
+            return;
+        }
+        let current = self
+            .photo_preview_target
+            .and_then(|id| {
+                visible
+                    .iter()
+                    .position(|index| self.project.photos[*index].id() == id)
+            })
+            .unwrap_or(0) as isize;
+        let next = (current + delta).clamp(0, visible.len() as isize - 1) as usize;
+        let id = self.project.photos[visible[next]].id();
+        self.inspect_photo(id, cx);
+        self.load_photo_preview(id, cx);
+    }
+
     // ----- photo rename --------------------------------------------------
 
     pub(crate) fn open_photo_context(
@@ -996,17 +1439,31 @@ impl ContactSheet {
         cx.notify();
     }
 
-    pub(crate) fn open_photo_info(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
+    pub(crate) fn inspect_photo(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
         self.photo_context = None;
         let Some(photo) = self.project.photo(photo_id) else {
             return;
         };
-        self.photo_info_target = Some(photo_id);
+        self.panels.expand_right();
+        self.inspected_photo = Some(photo_id);
+        self.inspector_mode = InspectorMode::Photo;
         self.photo_date_error = None;
         let date = photo.captured_at.as_deref().unwrap_or_default().to_string();
         self.photo_date_field
             .update(cx, |field, cx| field.set_value(date, cx));
-        let path = photo.path.to_path_buf();
+        self.schedule_thumb_ids([photo_id], cx);
+        self.ensure_photo_meta(photo_id, cx);
+        cx.notify();
+    }
+
+    fn ensure_photo_meta(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
+        let Some(path) = self
+            .project
+            .photo(photo_id)
+            .map(|photo| photo.path.to_path_buf())
+        else {
+            return;
+        };
         if let std::collections::hash_map::Entry::Vacant(entry) = self.photo_meta.entry(photo_id) {
             entry.insert(PhotoMetaState::Loading);
             let generation = self.generation;
@@ -1025,25 +1482,17 @@ impl ContactSheet {
                     }
                     this.photo_meta
                         .insert(photo_id, PhotoMetaState::Ready(metadata));
-                    if this.photo_info_target == Some(photo_id) {
+                    if this.inspected_photo == Some(photo_id) {
                         cx.notify();
                     }
                 });
             })
             .detach();
         }
-        cx.notify();
-    }
-
-    pub(crate) fn close_photo_info(&mut self, cx: &mut Context<Self>) {
-        if self.photo_info_target.take().is_some() {
-            self.photo_date_error = None;
-            cx.notify();
-        }
     }
 
     pub(crate) fn save_photo_date(&mut self, cx: &mut Context<Self>) {
-        let Some(photo_id) = self.photo_info_target else {
+        let Some(photo_id) = self.inspected_photo else {
             return;
         };
         let value = self.photo_date_field.read(cx).value().trim().to_string();
@@ -1084,6 +1533,8 @@ impl ContactSheet {
             before_selected,
             before_dirty,
         );
+        self.project_changed();
+        self.filter_changed();
         self.photo_date_error = None;
         self.set_status("Capture date updated / project unsaved");
         self.log("Photo date edited");
@@ -1091,7 +1542,7 @@ impl ContactSheet {
     }
 
     pub(crate) fn use_file_date(&mut self, cx: &mut Context<Self>) {
-        let Some(photo_id) = self.photo_info_target else {
+        let Some(photo_id) = self.inspected_photo else {
             return;
         };
         let Some(path) = self.project.photo(photo_id).map(|photo| photo.path.clone()) else {
@@ -1162,8 +1613,12 @@ impl ContactSheet {
         self.thumb_order.retain(|id| *id != photo_id);
         self.rotated_thumbs.retain(|(id, _), _| *id != photo_id);
         self.photo_context = None;
-        if self.photo_info_target == Some(photo_id) {
-            self.photo_info_target = None;
+        if self.inspected_photo == Some(photo_id) {
+            self.inspected_photo = None;
+        }
+        if self.photo_preview_target == Some(photo_id) {
+            self.photo_preview_target = None;
+            self.photo_preview_image = None;
         }
         self.photo_meta.remove(&photo_id);
         self.project_changed();
@@ -1525,6 +1980,7 @@ impl ContactSheet {
                 .collect(),
         );
         self.preview_page = 0;
+        self.inspector_mode = InspectorMode::Sheet;
         self.selection_changed();
         self.title_field
             .update(cx, |field, cx| field.set_value(sheet.name.clone(), cx));
@@ -1588,11 +2044,15 @@ impl ContactSheet {
         self.rename_photo_target = None;
         self.rename_photo_error = None;
         self.photo_context = None;
-        self.photo_info_target = None;
         self.photo_meta.clear();
         self.photo_date_error = None;
         self.rename_options = RenameOptions::default();
         self.preview_page = 0;
+        self.inspector_mode = InspectorMode::Photo;
+        self.inspected_photo = None;
+        self.convert_dialog_open = false;
+        self.convert_format = OutputFormat::Jpeg;
+        self.close_photo_preview_window(cx);
         self.marquee = None;
         self.paper_menu_open = false;
         self.history.clear();
@@ -1656,6 +2116,8 @@ impl ContactSheet {
                     }
                 }
                 if changed {
+                    this.project_changed();
+                    this.filter_changed();
                     cx.notify();
                 }
             });
@@ -1721,6 +2183,11 @@ impl ContactSheet {
                 self.dirty = false;
                 self.history.clear();
                 self.preview_page = 0;
+                self.inspector_mode = InspectorMode::Photo;
+                self.inspected_photo = None;
+                self.convert_dialog_open = false;
+                self.convert_format = OutputFormat::Jpeg;
+                self.close_photo_preview_window(cx);
                 self.marquee = None;
                 self.paper_menu_open = false;
                 self.rename_pending = None;
@@ -1728,7 +2195,6 @@ impl ContactSheet {
                 self.rename_photo_target = None;
                 self.rename_photo_error = None;
                 self.photo_context = None;
-                self.photo_info_target = None;
                 self.photo_meta.clear();
                 self.photo_date_error = None;
                 self.project_changed();
@@ -2435,6 +2901,14 @@ impl Render for ContactSheet {
                 this.close_menu(cx);
                 this.save_sheet(cx);
             }))
+            .on_action(cx.listener(|this, _: &CreateContactSheet, _, cx| {
+                this.close_menu(cx);
+                this.open_sheet_builder(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ConvertSelected, _, cx| {
+                this.close_menu(cx);
+                this.open_convert_dialog(cx);
+            }))
             .on_action(cx.listener(|this, _: &InvertSelection, _, cx| {
                 this.close_menu(cx);
                 this.invert_visible(cx);
@@ -2500,13 +2974,13 @@ impl Render for ContactSheet {
                     this.cancel_photo_rename(cx);
                     return;
                 }
-                if this.photo_info_target.is_some() {
-                    this.close_photo_info(cx);
-                    return;
-                }
                 if this.photo_context.is_some() {
                     this.photo_context = None;
                     cx.notify();
+                    return;
+                }
+                if this.convert_dialog_open {
+                    this.close_convert_dialog(cx);
                     return;
                 }
                 if this.paper_menu_open {

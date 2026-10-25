@@ -13,6 +13,7 @@ mod memory;
 mod menubar;
 mod overlay;
 mod panels;
+mod photo_preview;
 mod preview_window;
 mod selection;
 mod sidebar;
@@ -27,12 +28,14 @@ use gpui::{
 };
 
 use app::{
-    ContactSheet, DeselectPhotos, Dismiss, ExportSheet, ImportFiles, ImportFolder, NewProject,
-    OpenPreview, OpenProject, Quit, Redo, SaveAs, SaveProject, SelectAllPhotos, Undo,
+    ContactSheet, ConvertSelected, CreateContactSheet, DeselectPhotos, Dismiss, ExportSheet,
+    ImportFiles, ImportFolder, NewProject, OpenPreview, OpenProject, Quit, Redo, SaveAs,
+    SaveProject, SelectAllPhotos, Undo,
 };
 
 #[cfg(target_os = "macos")]
 use app::{HideOthers, HideSlate};
+use photo_preview::{ClosePhotoPreview, NextPhoto, PreviousPhoto};
 use preview_window::{ClosePreview, NextPage, PreviousPage};
 
 #[cfg(target_os = "macos")]
@@ -59,6 +62,8 @@ fn main() {
                 KeyBinding::new(&primary("s"), SaveProject, None),
                 KeyBinding::new(&primary("shift-s"), SaveAs, None),
                 KeyBinding::new(&primary("e"), ExportSheet, None),
+                KeyBinding::new(&primary("shift-c"), CreateContactSheet, None),
+                KeyBinding::new(&primary("shift-e"), ConvertSelected, None),
                 KeyBinding::new(&primary("i"), ImportFiles, None),
                 KeyBinding::new(&primary("shift-i"), ImportFolder, None),
                 KeyBinding::new(&primary("shift-a"), SelectAllPhotos, None),
@@ -67,6 +72,9 @@ fn main() {
                 KeyBinding::new("left", PreviousPage, Some("PreviewWindow")),
                 KeyBinding::new("right", NextPage, Some("PreviewWindow")),
                 KeyBinding::new("escape", ClosePreview, Some("PreviewWindow")),
+                KeyBinding::new("left", PreviousPhoto, Some("PhotoPreviewWindow")),
+                KeyBinding::new("right", NextPhoto, Some("PhotoPreviewWindow")),
+                KeyBinding::new("escape", ClosePhotoPreview, Some("PhotoPreviewWindow")),
                 KeyBinding::new("backspace", text_field::Backspace, Some("TextField")),
                 KeyBinding::new("delete", text_field::Delete, Some("TextField")),
                 KeyBinding::new("left", text_field::Left, Some("TextField")),

@@ -152,7 +152,7 @@ fn open_main_window(cx: &mut App, path: Option<PathBuf>) -> Result<()> {
         |_, cx| {
             let view = cx.new(ContactSheet::new);
             if let Some(path) = path {
-                view.update(cx, |this, cx| this.open_project(path, cx));
+                view.update(cx, |this, cx| this.open_project(&path, cx));
             }
             view
         },

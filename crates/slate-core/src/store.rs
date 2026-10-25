@@ -23,6 +23,7 @@ pub struct LocalStore {
 }
 
 impl LocalStore {
+    #[must_use]
     pub fn default_location() -> Self {
         Self {
             path: default_database_path(),
@@ -30,7 +31,8 @@ impl LocalStore {
     }
 
     #[cfg(test)]
-    pub fn at(path: PathBuf) -> Self {
+    #[must_use]
+    pub const fn at(path: PathBuf) -> Self {
         Self { path }
     }
 
@@ -116,6 +118,7 @@ impl LocalStore {
 
 /// Slate's per-user application data. Tests and packaging can override it with
 /// `SLATE_DATA_DIR`.
+#[must_use]
 pub fn data_directory() -> PathBuf {
     if let Some(directory) = std::env::var_os("SLATE_DATA_DIR") {
         return PathBuf::from(directory);

@@ -4,6 +4,7 @@
 //! are written to disk one at a time; the document is never held in memory as a
 //! whole, which is required for a 500k-photo sheet.
 
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufWriter, Cursor, Write};
 use std::path::{Path, PathBuf};
@@ -152,7 +153,7 @@ impl PdfWriter {
     fn finish(mut self, catalog: u32, pages: u32, kids: &[u32]) -> Result<usize> {
         let mut body = format!("/Type /Pages /Count {} /Kids [", kids.len());
         for id in kids {
-            body.push_str(&format!("{id} 0 R "));
+            let _ = write!(body, "{id} 0 R ");
         }
         body.push(']');
         self.object(pages, body.as_bytes())?;
@@ -194,7 +195,7 @@ struct PageContent {
 }
 
 impl PageContent {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             ops: String::new(),
             images: Vec::new(),
@@ -214,7 +215,6 @@ impl PageContent {
     ) {
         let x = mm_to_pt(x_mm);
         let y = mm_to_pt(top_to_bottom(page_h_mm, top_mm));
-        use std::fmt::Write as _;
         let _ = writeln!(
             self.ops,
             "BT\n/{font} {size} Tf\n{} {} {} rg\n1 0 0 1 {x:.3} {y:.3} Tm\n({}) Tj\nET",
@@ -245,7 +245,6 @@ impl PageContent {
         let width = mm_to_pt(placement.image_w_mm);
         let height = mm_to_pt(placement.image_h_mm);
         let (a, b, c, d, e, f) = transform.pdf_matrix(x, y, width, height);
-        use std::fmt::Write as _;
         let _ = writeln!(
             self.ops,
             "q\n{a:.3} {b:.3} {c:.3} {d:.3} {e:.3} {f:.3} cm\n/{name} Do\nQ"
@@ -258,7 +257,6 @@ impl PageContent {
         let y = mm_to_pt(top_to_bottom(page_h_mm, top_mm + height_mm));
         let width = mm_to_pt(width_mm);
         let height = mm_to_pt(height_mm);
-        use std::fmt::Write as _;
         let _ = writeln!(
             self.ops,
             "{} {} {} RG\n0.4 w\n{x:.3} {y:.3} {width:.3} {height:.3} re\nS",
@@ -271,7 +269,6 @@ impl PageContent {
         let y1 = mm_to_pt(top_to_bottom(page_h_mm, y1_mm));
         let x2 = mm_to_pt(x2_mm);
         let y2 = mm_to_pt(top_to_bottom(page_h_mm, y2_mm));
-        use std::fmt::Write as _;
         let _ = writeln!(
             self.ops,
             "{} {} {} RG\n0.4 w\n{x1:.3} {y1:.3} m\n{x2:.3} {y2:.3} l\nS",
@@ -289,7 +286,7 @@ impl PageContent {
         } else {
             resources.push_str(" /XObject << ");
             for (name, id) in &self.images {
-                resources.push_str(&format!("/{name} {id} 0 R "));
+                let _ = write!(resources, "/{name} {id} 0 R ");
             }
             resources.push_str(">>");
         }
@@ -334,14 +331,14 @@ impl UnitTransform {
             height * self.b,
             width * self.c,
             height * self.d,
-            x + width * self.e,
-            y + height * self.f,
+            width.mul_add(self.e, x),
+            height.mul_add(self.f, y),
         )
     }
 }
 
 /// Unit-square transform that matches `import::apply_orientation`.
-fn exif_transform(orientation: u8) -> Option<UnitTransform> {
+const fn exif_transform(orientation: u8) -> Option<UnitTransform> {
     Some(match orientation {
         1 => UnitTransform::IDENTITY,
         2 => UnitTransform {
@@ -428,7 +425,7 @@ enum JpegColor {
 }
 
 impl JpegColor {
-    fn device_space(self) -> &'static str {
+    const fn device_space(self) -> &'static str {
         match self {
             Self::Rgb => "/DeviceRGB",
             Self::Gray => "/DeviceGray",
@@ -436,8 +433,8 @@ impl JpegColor {
         }
     }
 
-    fn decode_parameter(self) -> &'static str {
-        if let Self::Cmyk { inverted: true } = self {
+    const fn decode_parameter(self) -> &'static str {
+        if matches!(self, Self::Cmyk { inverted: true }) {
             " /Decode [1 0 1 0 1 0 1 0]"
         } else {
             ""
@@ -465,7 +462,7 @@ fn jpeg_info(bytes: &[u8]) -> Option<JpegInfo> {
             Some(_) => JpegColor::Cmyk { inverted: true },
             None => JpegColor::Cmyk { inverted: false },
         },
-        _ => return None,
+        PixelFormat::L16 => return None,
     };
     Some(JpegInfo {
         width: u32::from(info.width),
@@ -542,14 +539,14 @@ enum PngColor {
 }
 
 impl PngColor {
-    fn device_space(self) -> &'static str {
+    const fn device_space(self) -> &'static str {
         match self {
             Self::Gray => "/DeviceGray",
             Self::Rgb => "/DeviceRGB",
         }
     }
 
-    fn components(self) -> u8 {
+    const fn components(self) -> u8 {
         match self {
             Self::Gray => 1,
             Self::Rgb => 3,
@@ -833,7 +830,7 @@ fn prepare_photo(photo: &Photo, placement: &Placement) -> PreparedImage {
     }
 }
 
-fn flatten_on_white(image: DynamicImage) -> RgbImage {
+fn flatten_on_white(image: &DynamicImage) -> RgbImage {
     let rgba = image.to_rgba8();
     let mut rgb = RgbImage::new(rgba.width(), rgba.height());
     for (source, target) in rgba.pixels().zip(rgb.pixels_mut()) {
@@ -864,7 +861,7 @@ fn render_photo(photo: &Photo, placement: &Placement) -> Result<(Vec<u8>, u32, u
 
     let target_w = ((placement.image_w_mm * DPI) / 25.4).ceil() as u32;
     let target_h = ((placement.image_h_mm * DPI) / 25.4).ceil() as u32;
-    let image = flatten_on_white(image.thumbnail(target_w.max(1), target_h.max(1)));
+    let image = flatten_on_white(&image.thumbnail(target_w.max(1), target_h.max(1)));
     let (width, height) = (image.width(), image.height());
     let mut bytes = Vec::new();
     let mut encoder = JpegEncoder::new_with_quality(&mut bytes, JPEG_QUALITY);
@@ -882,7 +879,7 @@ fn draw_header(
     photo_count: usize,
 ) {
     let title = ascii_lossy(settings.title_or(project_name));
-    let title_width = layout.page_w_mm - layout.margin_mm * 2.0;
+    let title_width = layout.margin_mm.mul_add(-2.0, layout.page_w_mm);
     let title = truncate_chars(&title, (title_width * MM_TO_PT / (13.0 * 0.58)) as usize);
     content.text(
         layout.page_h_mm,
@@ -913,8 +910,8 @@ fn draw_header(
     );
 
     let page_label = format!("Sheet {page:02} / {page_count:02}");
-    let field_width = layout.page_w_mm - layout.margin_mm * 2.0;
-    let x = layout.margin_mm + field_width - page_label.chars().count() as f32 * 1.28;
+    let field_width = layout.margin_mm.mul_add(-2.0, layout.page_w_mm);
+    let x = (page_label.chars().count() as f32).mul_add(-1.28, layout.margin_mm + field_width);
     content.text(
         layout.page_h_mm,
         x,
@@ -951,7 +948,7 @@ fn draw_footer(
     );
 
     let label = ascii_lossy(project_name);
-    let label_width = layout.page_w_mm - layout.margin_mm * 2.0 - 40.0;
+    let label_width = layout.margin_mm.mul_add(-2.0, layout.page_w_mm) - 40.0;
     let label = truncate_courier(&label, label_width, 6.0);
     content.text(
         layout.page_h_mm,
@@ -964,8 +961,10 @@ fn draw_footer(
     );
 
     let page_label = format!("Page {page:02} / {page_count:02}");
-    let x = layout.margin_mm + (layout.page_w_mm - layout.margin_mm * 2.0)
-        - page_label.chars().count() as f32 * 1.28;
+    let x = (page_label.chars().count() as f32).mul_add(
+        -1.28,
+        layout.margin_mm + layout.margin_mm.mul_add(-2.0, layout.page_w_mm),
+    );
     content.text(
         layout.page_h_mm,
         x,
@@ -1097,8 +1096,7 @@ fn write_page(
                 );
                 let name = page_photos
                     .get(placement.photo_index)
-                    .map(|photo| photo.file_name())
-                    .unwrap_or_else(|| "unknown photo".to_string());
+                    .map_or_else(|| "unknown photo".to_string(), |photo| photo.file_name());
                 missing.push(format!("{name}: {error}"));
             }
         }
@@ -1336,7 +1334,7 @@ mod tests {
         let summary = export_pdf("Test", &settings, &photos, &output).unwrap();
         assert_eq!(summary.pages, 1);
         assert_eq!(summary.photos, 2);
-        assert!(summary.missing.is_empty());
+        assert_eq!(summary.missing.len(), 0);
         let bytes = std::fs::read(&output).unwrap();
         assert!(bytes.starts_with(b"%PDF-"));
         assert!(bytes.len() > 4_000, "pdf should contain image data");
@@ -1373,7 +1371,7 @@ mod tests {
 
         assert_eq!(summary.photos, 1);
         assert_eq!(summary.pages, 1);
-        assert!(summary.missing.is_empty());
+        assert_eq!(summary.missing.len(), 0);
         assert!(pdf_path.exists());
     }
 

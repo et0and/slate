@@ -1,7 +1,7 @@
 //! Import discovery and image decoding.
 //!
 //! Standard photo formats decode through the `image` crate. HEIC/HEIF and
-//! camera RAW rely on macOS ImageIO via `sips`, which also bakes in orientation.
+//! camera RAW rely on macOS `ImageIO` via `sips`, which also bakes in orientation.
 //! A file that cannot be decoded still enters the project: it shows as a
 //! placeholder in the library and in exported sheets, so a batch is never
 //! silently lost.
@@ -35,15 +35,18 @@ pub struct PreviewImage {
 }
 
 impl PreviewImage {
+    #[must_use]
     pub fn width(&self) -> u32 {
         self.image.width()
     }
 
+    #[must_use]
     pub fn height(&self) -> u32 {
         self.image.height()
     }
 
     /// GPUI expects BGRA pixels.
+    #[must_use]
     pub fn into_bgra(self) -> Vec<u8> {
         let mut bgra = self.image.into_raw();
         for pixel in bgra.as_chunks_mut::<4>().0 {
@@ -52,7 +55,7 @@ impl PreviewImage {
         bgra
     }
 
-    fn from_dynamic_image(image: DynamicImage) -> Self {
+    fn from_dynamic_image(image: &DynamicImage) -> Self {
         Self {
             image: composite_on_white(image.to_rgba8()),
         }
@@ -69,6 +72,7 @@ pub struct Probe {
     pub captured_at: Option<String>,
 }
 
+#[must_use]
 pub fn is_supported(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
@@ -90,6 +94,7 @@ fn is_standard(path: &Path) -> bool {
 }
 
 /// Expand files and directories into a deterministic, deduplicated list.
+#[must_use]
 pub fn discover_images(inputs: &[PathBuf]) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for input in inputs {
@@ -139,8 +144,9 @@ fn walk(directory: &Path, found: &mut Vec<PathBuf>, depth: usize) {
     }
 }
 
+#[must_use]
 pub fn file_size(path: &Path) -> u64 {
-    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+    std::fs::metadata(path).map_or(0, |meta| meta.len())
 }
 
 /// Read file and EXIF metadata without decoding the image.
@@ -164,14 +170,14 @@ pub fn probe(path: &Path) -> Result<Probe> {
 #[tracing::instrument(level = "trace", skip_all, fields(max_edge))]
 pub fn preview(path: &Path, max_edge: u32) -> Result<PreviewImage> {
     load_oriented(path, Some(max_edge))
-        .map(PreviewImage::from_dynamic_image)
+        .map(|image| PreviewImage::from_dynamic_image(&image))
         .with_context(|| format!("could not decode {}", path.display()))
 }
 
 /// Decode an in-memory thumbnail, such as a Google Drive preview.
 pub fn preview_bytes(bytes: &[u8], max_edge: u32) -> Result<PreviewImage> {
     let image = image::load_from_memory(bytes).context("could not decode the thumbnail")?;
-    Ok(PreviewImage::from_dynamic_image(resize_to_edge(
+    Ok(PreviewImage::from_dynamic_image(&resize_to_edge(
         image, max_edge,
     )))
 }
@@ -307,6 +313,7 @@ pub struct PhotoMetadata {
     pub rows: Vec<(String, String)>,
 }
 
+#[must_use]
 pub fn read_metadata(path: &Path) -> PhotoMetadata {
     let Ok(file) = File::open(path) else {
         return PhotoMetadata::default();
@@ -372,10 +379,12 @@ fn push_row(rows: &mut Vec<(String, String)>, label: &str, value: Option<String>
     }
 }
 
+#[must_use]
 pub fn normalize_capture_datetime(value: &str) -> Option<String> {
     normalize_datetime(value)
 }
 
+#[must_use]
 pub fn capture_datetime(path: &Path) -> Option<String> {
     read_exif_datetime(path).or_else(|| {
         let modified = std::fs::metadata(path).ok()?.modified().ok()?;
@@ -607,7 +616,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("plain.jpg");
         write_test_jpeg(&path, 20, 20);
-        assert!(read_metadata(&path).rows.is_empty());
+        assert_eq!(read_metadata(&path).rows.len(), 0);
     }
 
     #[test]

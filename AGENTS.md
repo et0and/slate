@@ -7,7 +7,7 @@ Slate Desktop: a cross-platform desktop contact-sheet builder in Rust + GPUI 0.2
 - `cargo run --release` — launch
 - `cargo run --release -- path/to/file.slate` — launch with a project
 - `cargo test --workspace` — core + app tests
-- `cargo lint` — Clippy, all targets, warnings denied
+- `cargo lint` — Clippy, all targets, strict all/pedantic/nursery, warnings denied
 - `cargo lint-fix` — apply Clippy's safe fixes
 - `cargo fmt --all` — format
 - `cargo fmt-check` — verify formatting without writing
@@ -170,6 +170,11 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 ## Anti-slop
 
 Adapted from wwwtom's anti-slop rules, expressed for Rust.
+
+The strict Clippy profile enables `all`, `pedantic` and `nursery`. The allowlist
+in `Cargo.toml` is limited to framework signatures, bounded pixel/PDF casts and
+readability rules where a mechanical fix would make the code worse. Do not add
+broad allowances; use `#[expect]` with a reason for a single justified case.
 
 - Make the smallest correct change. Follow local patterns and improve the file
   you are already in.

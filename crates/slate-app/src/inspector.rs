@@ -45,7 +45,7 @@ impl ContactSheet {
         );
         let page_ids = page_photos
             .iter()
-            .map(|photo| photo.id())
+            .map(slate_core::Photo::id)
             .collect::<Vec<_>>();
         self.schedule_thumb_ids(page_ids, cx);
         let scale = width / sheet_layout.page_w_mm;
@@ -96,18 +96,22 @@ impl ContactSheet {
                 let image_h = placement.image_h_mm * scale;
                 let caption_h = sheet_layout.caption_mm * scale;
 
-                let image_element: AnyElement = match image {
-                    Some(image) => img(image)
-                        .object_fit(gpui::ObjectFit::Contain)
-                        .w(px(image_w))
-                        .h(px(image_h))
-                        .into_any_element(),
-                    None => div()
-                        .w(px(image_w))
-                        .h(px(image_h))
-                        .bg(theme::sheet_photo())
-                        .into_any_element(),
-                };
+                let image_element: AnyElement = image.map_or_else(
+                    || {
+                        div()
+                            .w(px(image_w))
+                            .h(px(image_h))
+                            .bg(theme::sheet_photo())
+                            .into_any_element()
+                    },
+                    |image| {
+                        img(image)
+                            .object_fit(gpui::ObjectFit::Contain)
+                            .w(px(image_w))
+                            .h(px(image_h))
+                            .into_any_element()
+                    },
+                );
 
                 preview_children.push(
                     div()
@@ -129,7 +133,7 @@ impl ContactSheet {
                         .children(placement.caption.as_ref().map(|caption| {
                             div()
                                 .absolute()
-                                .top(px(sheet_layout.image_h_mm * scale + 1.0))
+                                .top(px(sheet_layout.image_h_mm.mul_add(scale, 1.0)))
                                 .left(px(1.0))
                                 .w(px((cell_w - 2.0).max(1.0)))
                                 .h(px((caption_h - 1.0).max(1.0)))
@@ -237,15 +241,14 @@ impl ContactSheet {
             .map(|(_, image)| image.clone())
             .or_else(|| self.preview_image(photo.id(), photo.rotation(), false));
         let selected_count = self.selected.len();
-        let dimensions = photo
-            .oriented_size()
-            .map(|(width, height)| format!("{width} × {height}"))
-            .unwrap_or_else(|| "—".to_string());
+        let dimensions = photo.oriented_size().map_or_else(
+            || "—".to_string(),
+            |(width, height)| format!("{width} × {height}"),
+        );
         let folder = photo
             .path
             .parent()
-            .map(|parent| parent.display().to_string())
-            .unwrap_or_else(|| "—".to_string());
+            .map_or_else(|| "—".to_string(), |parent| parent.display().to_string());
         let tags = if photo.tags.is_empty() {
             "No tags".to_string()
         } else {
@@ -257,9 +260,8 @@ impl ContactSheet {
                 .join("  ")
         };
         let metadata = match self.photo_meta.get(&photo_id) {
-            Some(PhotoMetaState::Loading) => None,
             Some(PhotoMetaState::Ready(meta)) => Some(meta.clone()),
-            None => None,
+            Some(PhotoMetaState::Loading) | None => None,
         };
         let metadata_loading = matches!(
             self.photo_meta.get(&photo_id),
@@ -270,19 +272,21 @@ impl ContactSheet {
         let label = photo.label();
 
         let image_width = (self.panels.right() - 42.0).max(1.0);
-        let thumbnail: AnyElement = match image {
-            Some(image) => {
+        let thumbnail: AnyElement = image.map_or_else(
+            || {
+                div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon(assets::IMAGE, 28.0, theme::faint()))
+                    .into_any_element()
+            },
+            |image| {
                 let (width, height) = fit_image(&image, image_width, 194.0);
                 img(image).w(px(width)).h(px(height)).into_any_element()
-            }
-            None => div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(icon(assets::IMAGE, 28.0, theme::faint()))
-                .into_any_element(),
-        };
+            },
+        );
 
         let mut exif_rows: Vec<AnyElement> = Vec::new();
         match metadata {
@@ -362,7 +366,7 @@ impl ContactSheet {
                             .child(
                                 icon_button("inspector-collapse", assets::PANEL_LEFT).on_click(
                                     cx.listener(|this, _, window, cx| {
-                                        this.toggle_right_pane(window, cx)
+                                        this.toggle_right_pane(window, cx);
                                     }),
                                 ),
                             ),
@@ -474,13 +478,13 @@ impl ContactSheet {
                                     .child(
                                         button("photo-inspector-file-date", "Use file date")
                                             .on_click(cx.listener(|this, _, _, cx| {
-                                                this.use_file_date(cx)
+                                                this.use_file_date(cx);
                                             })),
                                     )
                                     .child(
                                         primary_button("photo-inspector-save-date", "Save date")
                                             .on_click(cx.listener(|this, _, _, cx| {
-                                                this.save_photo_date(cx)
+                                                this.save_photo_date(cx);
                                             })),
                                     ),
                             )
@@ -521,14 +525,14 @@ impl ContactSheet {
                                 button_with_icon("photo-inspector-rotate", assets::ROTATE, "Rotate")
                                     .flex_1()
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.rotate_photo(photo_id, cx)
+                                        this.rotate_photo(photo_id, cx);
                                     })),
                             )
                             .child(
                                 button_with_icon("photo-inspector-reveal", assets::FOLDER, "Reveal")
                                     .flex_1()
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.reveal_photo(photo_id, cx)
+                                        this.reveal_photo(photo_id, cx);
                                     })),
                             ),
                     ),

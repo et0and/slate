@@ -31,6 +31,7 @@ pub struct SheetLayout {
 }
 
 impl SheetLayout {
+    #[must_use]
     pub fn from_settings(settings: &SheetSettings) -> Self {
         let (page_w_mm, page_h_mm) = settings.paper_mm();
         let margin_mm = settings.margin_mm.clamp(2.0, 40.0);
@@ -43,13 +44,14 @@ impl SheetLayout {
         let content_top_mm = margin_mm + header_mm;
         let content_bottom_mm = (page_h_mm - margin_mm - footer_mm).max(content_top_mm);
         let content_h_mm = content_bottom_mm - content_top_mm;
-        let content_w_mm = (page_w_mm - margin_mm * 2.0).max(1.0);
+        let content_w_mm = margin_mm.mul_add(-2.0, page_w_mm).max(1.0);
 
-        let cell_w_mm = ((content_w_mm - gutter_mm * (columns.saturating_sub(1) as f32))
+        let cell_w_mm = (gutter_mm.mul_add(-(columns.saturating_sub(1) as f32), content_w_mm)
             / columns as f32)
             .max(1.0);
-        let cell_h_mm =
-            ((content_h_mm - gutter_mm * (rows.saturating_sub(1) as f32)) / rows as f32).max(1.0);
+        let cell_h_mm = (gutter_mm.mul_add(-(rows.saturating_sub(1) as f32), content_h_mm)
+            / rows as f32)
+            .max(1.0);
 
         let wants_caption = settings.captions || settings.index;
         let caption_mm = if wants_caption {
@@ -76,10 +78,12 @@ impl SheetLayout {
         }
     }
 
-    pub fn per_page(&self) -> usize {
+    #[must_use]
+    pub const fn per_page(&self) -> usize {
         self.columns * self.rows
     }
 
+    #[must_use]
     pub fn caption_enabled(&self) -> bool {
         self.caption_mm > 0.0
     }
@@ -114,11 +118,13 @@ pub struct SheetPlan {
 }
 
 impl SheetPlan {
-    pub fn page_count(&self) -> usize {
+    #[must_use]
+    pub const fn page_count(&self) -> usize {
         self.pages.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.photo_count == 0
     }
 }
@@ -228,8 +234,10 @@ fn placement(
 ) -> Placement {
     let row = slot / layout.columns;
     let column = slot % layout.columns;
-    let cell_x_mm = layout.margin_mm + column as f32 * (layout.cell_w_mm + settings.gutter_mm);
-    let cell_y_mm = layout.content_top_mm + row as f32 * (layout.cell_h_mm + settings.gutter_mm);
+    let cell_x_mm =
+        (column as f32).mul_add(layout.cell_w_mm + settings.gutter_mm, layout.margin_mm);
+    let cell_y_mm =
+        (row as f32).mul_add(layout.cell_h_mm + settings.gutter_mm, layout.content_top_mm);
 
     let (image_w_mm, image_h_mm, rotated) = fit(
         photo.aspect().unwrap_or(1.0),
@@ -288,6 +296,7 @@ pub fn plan_page<P: PhotoSource + ?Sized>(
 
 /// Lay out one page from borrowed photos. The preview uses this so it does not clone
 /// the whole working set just to render twelve cells.
+#[must_use]
 pub fn plan_page_refs(
     settings: &SheetSettings,
     layout: &SheetLayout,
@@ -312,6 +321,7 @@ pub fn plan_page_refs(
     }
 }
 
+#[must_use]
 pub fn caption_text(settings: &SheetSettings, photo_index: usize, photo: &Photo) -> Option<String> {
     if !settings.captions && !settings.index {
         return None;
@@ -484,7 +494,7 @@ mod tests {
         assert!(portrait_page.pages[0].placements[0].rotated);
         assert!(portrait_page.pages[0].placements[0].image_w_mm < 200.0);
 
-        let mut landscape = settings.clone();
+        let mut landscape = settings;
         landscape.orientation = Orientation::Landscape;
         let landscape_page = plan_sheet(&landscape, &[photo(3000, 2000)]);
         assert!(!landscape_page.pages[0].placements[0].rotated);

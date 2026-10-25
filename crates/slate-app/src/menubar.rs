@@ -34,7 +34,7 @@ const PANEL_W: f32 = 280.0;
 const ITEM_H: f32 = 30.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MenuId {
+pub enum MenuId {
     File,
     Edit,
     View,
@@ -44,7 +44,7 @@ pub(crate) enum MenuId {
 }
 
 impl MenuId {
-    fn index(self) -> usize {
+    const fn index(self) -> usize {
         match self {
             Self::File => 0,
             Self::Edit => 1,
@@ -55,7 +55,7 @@ impl MenuId {
         }
     }
 
-    fn width(self) -> f32 {
+    const fn width(self) -> f32 {
         match self {
             Self::File => MENU_FILE_W,
             Self::Edit => MENU_EDIT_W,
@@ -229,7 +229,7 @@ impl ContactSheet {
                         ))))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.close_menu(cx);
-                            this.open_project(path.clone(), cx);
+                            this.open_project(&path, cx);
                         }))
                         .into_any_element(),
                 );

@@ -46,7 +46,7 @@ pub enum Theme {
 }
 
 impl Theme {
-    pub const ALL: [Theme; 11] = [
+    pub const ALL: [Self; 11] = [
         Self::Light,
         Self::Dark,
         Self::OneDark,
@@ -60,7 +60,7 @@ impl Theme {
         Self::Monokai,
     ];
 
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Self::Light => "Light",
             Self::Dark => "Dark",
@@ -76,7 +76,7 @@ impl Theme {
         }
     }
 
-    pub fn key(self) -> &'static str {
+    pub const fn key(self) -> &'static str {
         match self {
             Self::Light => "light",
             Self::Dark => "dark",
@@ -97,7 +97,7 @@ impl Theme {
     }
 
     #[cfg(any(target_os = "macos", test))]
-    pub fn is_dark(self) -> bool {
+    pub const fn is_dark(self) -> bool {
         !matches!(self, Self::Light | Self::SolarizedLight)
     }
 
@@ -115,7 +115,7 @@ impl Theme {
             .unwrap_or(Self::Light)
     }
 
-    fn palette(self) -> Palette {
+    const fn palette(self) -> Palette {
         match self {
             Self::Light => Palette {
                 ink: 0x111111,

@@ -13,7 +13,7 @@ const CENTER_MIN: f32 = 420.0;
 const GUTTERS: f32 = DIVIDER_W * 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ResizeTarget {
+pub enum ResizeTarget {
     Left,
     Right,
 }
@@ -39,11 +39,11 @@ impl Default for PanelLayout {
 }
 
 impl PanelLayout {
-    pub fn left(&self) -> f32 {
+    pub const fn left(&self) -> f32 {
         if self.left_collapsed { 0.0 } else { self.left }
     }
 
-    pub fn right(&self) -> f32 {
+    pub const fn right(&self) -> f32 {
         if self.right_collapsed {
             0.0
         } else {
@@ -67,27 +67,27 @@ impl PanelLayout {
         }
     }
 
-    pub fn left_collapsed(&self) -> bool {
+    pub const fn left_collapsed(&self) -> bool {
         self.left_collapsed
     }
 
-    pub fn right_collapsed(&self) -> bool {
+    pub const fn right_collapsed(&self) -> bool {
         self.right_collapsed
     }
 
-    pub fn toggle_left(&mut self) {
+    pub const fn toggle_left(&mut self) {
         self.left_collapsed = !self.left_collapsed;
     }
 
-    pub fn toggle_right(&mut self) {
+    pub const fn toggle_right(&mut self) {
         self.right_collapsed = !self.right_collapsed;
     }
 
-    pub fn expand_right(&mut self) {
+    pub const fn expand_right(&mut self) {
         self.right_collapsed = false;
     }
 
-    pub fn resizing(&self) -> Option<ResizeTarget> {
+    pub const fn resizing(&self) -> Option<ResizeTarget> {
         self.resizing
     }
 
@@ -99,11 +99,11 @@ impl PanelLayout {
         self.right_collapsed = false;
     }
 
-    pub fn begin(&mut self, target: ResizeTarget) {
+    pub const fn begin(&mut self, target: ResizeTarget) {
         self.resizing = Some(target);
     }
 
-    pub fn end(&mut self) -> bool {
+    pub const fn end(&mut self) -> bool {
         self.resizing.take().is_some()
     }
 

@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
             _ => &["walk", "film"],
         };
         if let Some(photo) = project.photo_mut(id) {
-            photo.set_tags(tags.iter().map(|tag| tag.to_string()).collect());
+            photo.set_tags(tags.iter().map(std::string::ToString::to_string).collect());
         }
     }
 
@@ -75,5 +75,5 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn file_size(path: &Path) -> u64 {
-    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+    std::fs::metadata(path).map_or(0, |meta| meta.len())
 }

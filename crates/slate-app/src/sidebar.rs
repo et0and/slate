@@ -63,9 +63,7 @@ impl ContactSheet {
                 .gap(px(8.0))
                 .child(div().flex().items_center().gap(px(3.0)).children(
                     (1..=StarRating::MAX).map(|value| {
-                        let active = scope_rating
-                            .map(|rating| rating.get() >= value)
-                            .unwrap_or(false);
+                        let active = scope_rating.is_some_and(|rating| rating.get() >= value);
                         rating_button(value, active, cx)
                     }),
                 ))
@@ -84,9 +82,7 @@ impl ContactSheet {
             if scope_count == 0 {
                 "—".to_string()
             } else {
-                scope_label
-                    .map(|label| label.label().to_string())
-                    .unwrap_or_else(|| "Mixed".to_string())
+                scope_label.map_or_else(|| "Mixed".to_string(), |label| label.label().to_string())
             },
             label_open,
             div()
@@ -300,10 +296,10 @@ impl ContactSheet {
         let sample = target_ids
             .first()
             .and_then(|id| self.project.photo(*id))
-            .map(|photo| {
-                batch::preview_name(photo, self.rename_options.start, &self.rename_options)
-            })
-            .unwrap_or_else(|| "—".to_string());
+            .map_or_else(
+                || "—".to_string(),
+                |photo| batch::preview_name(photo, self.rename_options.start, &self.rename_options),
+            );
 
         let start = self.rename_options.start;
         let padding = self.rename_options.padding;
@@ -384,17 +380,17 @@ impl ContactSheet {
                             .gap(px(4.0))
                             .child(text_button("rename-date-token", "{date}").on_click(
                                 cx.listener(|this, _, _, cx| {
-                                    this.append_rename_token("{date}", cx)
+                                    this.append_rename_token("{date}", cx);
                                 }),
                             ))
                             .child(text_button("rename-time-token", "{time}").on_click(
                                 cx.listener(|this, _, _, cx| {
-                                    this.append_rename_token("{time}", cx)
+                                    this.append_rename_token("{time}", cx);
                                 }),
                             ))
                             .child(text_button("rename-datetime-token", "{datetime}").on_click(
                                 cx.listener(|this, _, _, cx| {
-                                    this.append_rename_token("{datetime}", cx)
+                                    this.append_rename_token("{datetime}", cx);
                                 }),
                             )),
                     )

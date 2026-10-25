@@ -48,10 +48,10 @@ impl AxiomConfig {
         let dataset = env::var("AXIOM_DATASET").unwrap_or_else(|_| DEFAULT_DATASET.to_string());
         let service_name =
             env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| DEFAULT_SERVICE.to_string());
-        Some(Self::new(token, dataset, base, service_name))
+        Some(Self::new(token, dataset, &base, service_name))
     }
 
-    fn new(token: String, dataset: String, endpoint: String, service_name: String) -> Self {
+    fn new(token: String, dataset: String, endpoint: &str, service_name: String) -> Self {
         let endpoint = endpoint.trim_end_matches('/');
         let traces_endpoint = if endpoint.ends_with("/v1/traces") {
             endpoint.to_string()
@@ -130,7 +130,7 @@ mod tests {
         let config = AxiomConfig::new(
             "xaat-test".into(),
             "slate-traces".into(),
-            "https://api.axiom.co/".into(),
+            "https://api.axiom.co/",
             "slate-desktop".into(),
         );
         assert_eq!(config.traces_endpoint, "https://api.axiom.co/v1/traces");
@@ -162,7 +162,7 @@ mod tests {
         let config = AxiomConfig::new(
             "token".into(),
             "dataset".into(),
-            "https://api.axiom.co/v1/traces".into(),
+            "https://api.axiom.co/v1/traces",
             "service".into(),
         );
         assert_eq!(config.traces_endpoint, "https://api.axiom.co/v1/traces");

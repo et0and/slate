@@ -51,14 +51,17 @@ impl StarRating {
     pub const NONE: Self = Self(0);
     pub const MAX: u8 = 5;
 
+    #[must_use]
     pub const fn get(self) -> u8 {
         self.0
     }
 
+    #[must_use]
     pub const fn is_rated(self) -> bool {
         self.0 > 0
     }
 
+    #[must_use]
     pub fn clamped(value: u8) -> Self {
         Self(value.min(Self::MAX))
     }
@@ -107,6 +110,7 @@ impl ColorLabel {
         Self::Purple,
     ];
 
+    #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
             Self::None => "None",
@@ -118,6 +122,7 @@ impl ColorLabel {
         }
     }
 
+    #[must_use]
     pub const fn is_set(self) -> bool {
         !matches!(self, Self::None)
     }
@@ -142,18 +147,22 @@ impl std::error::Error for InvalidQuarterTurns {}
 impl QuarterTurns {
     pub const NONE: Self = Self(0);
 
+    #[must_use]
     pub const fn turns(self) -> u8 {
         self.0
     }
 
+    #[must_use]
     pub const fn degrees(self) -> u16 {
         self.0 as u16 * 90
     }
 
+    #[must_use]
     pub const fn is_odd(self) -> bool {
         self.0 % 2 == 1
     }
 
+    #[must_use]
     pub const fn clockwise(self) -> Self {
         Self((self.0 + 1) % 4)
     }
@@ -184,6 +193,7 @@ pub struct Dimensions {
 }
 
 impl Dimensions {
+    #[must_use]
     pub fn new(width: u32, height: u32) -> Option<Self> {
         Some(Self {
             width: NonZeroU32::new(width)?,
@@ -191,19 +201,23 @@ impl Dimensions {
         })
     }
 
+    #[must_use]
     pub const fn width(self) -> u32 {
         self.width.get()
     }
 
+    #[must_use]
     pub const fn height(self) -> u32 {
         self.height.get()
     }
 
+    #[must_use]
     pub fn aspect(self) -> f32 {
         self.width.get() as f32 / self.height.get() as f32
     }
 
-    pub fn oriented(self, turns: QuarterTurns) -> Self {
+    #[must_use]
+    pub const fn oriented(self, turns: QuarterTurns) -> Self {
         if turns.is_odd() {
             Self {
                 width: self.height,
@@ -227,7 +241,8 @@ impl PhotoSize {
         Dimensions::new(width, height).map_or(Self::Unknown, Self::Known)
     }
 
-    pub fn dimensions(self) -> Option<Dimensions> {
+    #[must_use]
+    pub const fn dimensions(self) -> Option<Dimensions> {
         match self {
             Self::Known(dimensions) => Some(dimensions),
             Self::Unknown => None,
@@ -245,10 +260,9 @@ impl Serialize for PhotoSize {
             width: u32,
             height: u32,
         }
-        let (width, height) = match self.dimensions() {
-            Some(dimensions) => (dimensions.width(), dimensions.height()),
-            None => (0, 0),
-        };
+        let (width, height) = self.dimensions().map_or((0, 0), |dimensions| {
+            (dimensions.width(), dimensions.height())
+        });
         Wire { width, height }.serialize(serializer)
     }
 }
@@ -319,6 +333,7 @@ mod path_arc {
 }
 
 impl Photo {
+    #[must_use]
     pub fn new(id: PhotoId, path: PathBuf, size: PhotoSize, bytes: u64) -> Self {
         Self {
             id,
@@ -362,17 +377,20 @@ impl Photo {
         had_tags
     }
 
-    pub fn id(&self) -> PhotoId {
+    #[must_use]
+    pub const fn id(&self) -> PhotoId {
         self.id
     }
 
+    #[must_use]
     pub fn file_name(&self) -> String {
-        self.path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.path.to_string_lossy().into_owned())
+        self.path.file_name().map_or_else(
+            || self.path.to_string_lossy().into_owned(),
+            |name| name.to_string_lossy().into_owned(),
+        )
     }
 
+    #[must_use]
     pub fn extension(&self) -> String {
         self.path
             .extension()
@@ -380,39 +398,45 @@ impl Photo {
             .unwrap_or_default()
     }
 
-    pub fn rotation(&self) -> QuarterTurns {
+    #[must_use]
+    pub const fn rotation(&self) -> QuarterTurns {
         self.rotation
     }
 
-    pub fn rotate_clockwise(&mut self) {
+    pub const fn rotate_clockwise(&mut self) {
         self.rotation = self.rotation.clockwise();
     }
 
-    pub fn rating(&self) -> StarRating {
+    #[must_use]
+    pub const fn rating(&self) -> StarRating {
         self.rating
     }
 
-    pub fn set_rating(&mut self, rating: StarRating) {
+    pub const fn set_rating(&mut self, rating: StarRating) {
         self.rating = rating;
     }
 
-    pub fn label(&self) -> ColorLabel {
+    #[must_use]
+    pub const fn label(&self) -> ColorLabel {
         self.label
     }
 
-    pub fn set_label(&mut self, label: ColorLabel) {
+    pub const fn set_label(&mut self, label: ColorLabel) {
         self.label = label;
     }
 
+    #[must_use]
     pub fn oriented_size(&self) -> Option<(u32, u32)> {
         let dimensions = self.size.dimensions()?.oriented(self.rotation());
         Some((dimensions.width(), dimensions.height()))
     }
 
+    #[must_use]
     pub fn aspect(&self) -> Option<f32> {
         Some(self.size.dimensions()?.oriented(self.rotation()).aspect())
     }
 
+    #[must_use]
     pub fn has_tag(&self, tag: &str) -> bool {
         self.tags.iter().any(|existing| existing == tag)
     }
@@ -435,7 +459,7 @@ impl Default for PositionIndex {
 
 impl PositionIndex {
     fn new(max_id: u64, count: usize) -> Self {
-        if max_id <= u32::MAX as u64
+        if u32::try_from(max_id).is_ok()
             && max_id as usize <= count.saturating_mul(4).saturating_add(1024)
         {
             Self::Dense(ImVector::new())
@@ -472,7 +496,7 @@ impl PositionIndex {
     fn needs_sparse(&self, id: PhotoId) -> bool {
         match self {
             Self::Dense(positions) => {
-                id.0 > u32::MAX as u64
+                id.0 > u64::from(u32::MAX)
                     || id.0 as usize > positions.len().saturating_mul(4).saturating_add(1024)
             }
             Self::Sparse(_) => false,
@@ -507,6 +531,7 @@ impl std::fmt::Display for DuplicatePhotoId {
 impl std::error::Error for DuplicatePhotoId {}
 
 impl PhotoSet {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -543,6 +568,7 @@ impl PhotoSet {
         Ok(())
     }
 
+    #[must_use]
     pub fn get(&self, index: usize) -> Option<&Photo> {
         let chunk_index = self
             .data
@@ -553,6 +579,7 @@ impl PhotoSet {
         self.data.chunks.get(chunk_index)?.get(slot)
     }
 
+    #[must_use]
     pub fn iter(&self) -> PhotoIter<'_> {
         PhotoIter {
             outer: self.data.chunks.iter(),
@@ -560,14 +587,17 @@ impl PhotoSet {
         }
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.data.len
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.data.len == 0
     }
 
+    #[must_use]
     pub fn photo(&self, id: PhotoId) -> Option<&Photo> {
         self.data
             .index
@@ -587,10 +617,12 @@ impl PhotoSet {
         Arc::make_mut(chunk).get_mut(slot)
     }
 
+    #[must_use]
     pub fn position(&self, id: PhotoId) -> Option<usize> {
         self.data.index.get(id)
     }
 
+    #[must_use]
     pub fn shares_data_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.data, &other.data)
     }
@@ -707,7 +739,7 @@ impl Serialize for PhotoSet {
     {
         use serde::ser::SerializeSeq;
         let mut sequence = serializer.serialize_seq(Some(self.len()))?;
-        for photo in self.iter() {
+        for photo in self {
             sequence.serialize_element(photo)?;
         }
         sequence.end()
@@ -735,36 +767,38 @@ pub enum Paper {
 }
 
 impl Paper {
-    pub const ALL: [Paper; 5] = [
-        Paper::A4,
-        Paper::A3,
-        Paper::Letter,
-        Paper::Tabloid,
-        Paper::Custom,
+    pub const ALL: [Self; 5] = [
+        Self::A4,
+        Self::A3,
+        Self::Letter,
+        Self::Tabloid,
+        Self::Custom,
     ];
 
     /// Portrait width and height for a fixed paper size, in millimetres.
     /// Custom paper is resolved through [`SheetSettings::paper_mm`].
-    pub fn mm(self) -> (f32, f32) {
+    #[must_use]
+    pub const fn mm(self) -> (f32, f32) {
         match self {
-            Paper::A4 => (210.0, 297.0),
-            Paper::A3 => (297.0, 420.0),
-            Paper::Letter => (215.9, 279.4),
-            Paper::Tabloid => (279.4, 431.8),
-            Paper::Custom => (210.0, 297.0),
+            Self::A4 | Self::Custom => (210.0, 297.0),
+            Self::A3 => (297.0, 420.0),
+            Self::Letter => (215.9, 279.4),
+            Self::Tabloid => (279.4, 431.8),
         }
     }
 
-    pub fn label(self) -> &'static str {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
         match self {
-            Paper::A4 => "A4",
-            Paper::A3 => "A3",
-            Paper::Letter => "Letter",
-            Paper::Tabloid => "Tabloid",
-            Paper::Custom => "Custom",
+            Self::A4 => "A4",
+            Self::A3 => "A3",
+            Self::Letter => "Letter",
+            Self::Tabloid => "Tabloid",
+            Self::Custom => "Custom",
         }
     }
 
+    #[must_use]
     pub fn next(self) -> Self {
         let index = Self::ALL
             .iter()
@@ -782,17 +816,19 @@ pub enum Orientation {
 }
 
 impl Orientation {
-    pub fn label(self) -> &'static str {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
         match self {
-            Orientation::Portrait => "Portrait",
-            Orientation::Landscape => "Landscape",
+            Self::Portrait => "Portrait",
+            Self::Landscape => "Landscape",
         }
     }
 
-    pub fn toggled(self) -> Self {
+    #[must_use]
+    pub const fn toggled(self) -> Self {
         match self {
-            Orientation::Portrait => Orientation::Landscape,
-            Orientation::Landscape => Orientation::Portrait,
+            Self::Portrait => Self::Landscape,
+            Self::Landscape => Self::Portrait,
         }
     }
 }
@@ -862,6 +898,7 @@ impl SheetSettings {
         self.custom_paper_height_mm = self.custom_paper_height_mm.clamp(50.0, 2000.0);
     }
 
+    #[must_use]
     pub fn title_or<'a>(&'a self, project_name: &'a str) -> &'a str {
         let title = self.title.trim();
         if title.is_empty() {
@@ -871,10 +908,12 @@ impl SheetSettings {
         }
     }
 
+    #[must_use]
     pub fn per_page(&self) -> usize {
         usize::from(self.columns) * usize::from(self.rows)
     }
 
+    #[must_use]
     pub fn paper_mm(&self) -> (f32, f32) {
         let (width, height) = if self.paper == Paper::Custom {
             (self.custom_paper_width_mm, self.custom_paper_height_mm)
@@ -934,6 +973,12 @@ impl Project {
         id
     }
 
+    /// Add a photo and return its allocated identifier.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the internal photo set rejects an identifier that was
+    /// just allocated by [`Self::allocate_photo_id`].
     pub fn add_photo(&mut self, path: PathBuf, width: u32, height: u32, bytes: u64) -> PhotoId {
         let id = self.allocate_photo_id();
         self.photos
@@ -942,6 +987,7 @@ impl Project {
         id
     }
 
+    #[must_use]
     pub fn photo(&self, id: PhotoId) -> Option<&Photo> {
         self.photos.photo(id)
     }
@@ -959,6 +1005,7 @@ impl Project {
         removed
     }
 
+    #[must_use]
     pub fn tag_counts(&self) -> BTreeMap<String, usize> {
         let mut counts = BTreeMap::new();
         for photo in &self.photos {
@@ -969,6 +1016,7 @@ impl Project {
         counts
     }
 
+    #[must_use]
     pub fn untagged_count(&self) -> usize {
         self.photos
             .iter()
@@ -976,6 +1024,7 @@ impl Project {
             .count()
     }
 
+    #[must_use]
     pub fn filter_indices(&self, filter: &Filter, query: &str) -> Vec<usize> {
         let needle = query.trim().to_lowercase();
         self.photos
@@ -999,24 +1048,21 @@ impl Project {
             .saved_sheets
             .iter()
             .position(|sheet| sheet.name.eq_ignore_ascii_case(&name));
-        match existing {
-            Some(index) => {
-                let sheet = &mut self.saved_sheets[index];
-                sheet.settings = settings;
-                sheet.photo_ids = photo_ids;
-                sheet.id
-            }
-            None => {
-                let id = SheetId(self.next_sheet_id.max(1));
-                self.next_sheet_id = id.0 + 1;
-                self.saved_sheets.push(SavedSheet {
-                    id,
-                    name,
-                    settings,
-                    photo_ids,
-                });
-                id
-            }
+        if let Some(index) = existing {
+            let sheet = &mut self.saved_sheets[index];
+            sheet.settings = settings;
+            sheet.photo_ids = photo_ids;
+            sheet.id
+        } else {
+            let id = SheetId(self.next_sheet_id.max(1));
+            self.next_sheet_id = id.0 + 1;
+            self.saved_sheets.push(SavedSheet {
+                id,
+                name,
+                settings,
+                photo_ids,
+            });
+            id
         }
     }
 
@@ -1049,6 +1095,7 @@ impl Project {
         );
     }
 
+    #[must_use]
     pub fn photo_ids(&self) -> Vec<PhotoId> {
         self.photos.iter().map(|photo| photo.id).collect()
     }
@@ -1056,13 +1103,13 @@ impl Project {
     #[tracing::instrument(skip_all)]
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let file = std::fs::File::open(path)?;
-        let mut project: Project = serde_json::from_reader(BufReader::new(file))?;
+        let mut project: Self = serde_json::from_reader(BufReader::new(file))?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
         let relative_ids: Vec<PhotoId> = project
             .photos
             .iter()
             .filter(|photo| photo.path.is_relative())
-            .map(|photo| photo.id())
+            .map(Photo::id)
             .collect();
         for id in relative_ids {
             if let Some(photo) = project.photo_mut(id) {
@@ -1105,15 +1152,16 @@ pub enum Filter {
 }
 
 impl Filter {
+    #[must_use]
     pub fn matches(&self, photo: &Photo) -> bool {
         match self {
-            Filter::All => true,
-            Filter::Untagged => photo.tags.is_empty(),
-            Filter::Tag(tag) => photo.has_tag(tag),
-            Filter::Unrated => !photo.rating.is_rated(),
-            Filter::Rated => photo.rating.is_rated(),
-            Filter::Label(label) => photo.label == *label,
-            Filter::Unlabeled => !photo.label.is_set(),
+            Self::All => true,
+            Self::Untagged => photo.tags.is_empty(),
+            Self::Tag(tag) => photo.has_tag(tag),
+            Self::Unrated => !photo.rating.is_rated(),
+            Self::Rated => photo.rating.is_rated(),
+            Self::Label(label) => photo.label == *label,
+            Self::Unlabeled => !photo.label.is_set(),
         }
     }
 }

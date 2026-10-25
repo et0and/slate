@@ -15,14 +15,14 @@ use crate::selection::Selection;
 const LIMIT: usize = 40;
 
 #[derive(Clone)]
-pub(crate) struct Snapshot {
+pub struct Snapshot {
     pub project: Project,
     pub selected: Arc<Selection>,
     pub dirty: bool,
 }
 
 #[derive(Clone)]
-pub(crate) enum PhotoFieldChange {
+pub enum PhotoFieldChange {
     Tags {
         id: PhotoId,
         before: Vec<String>,
@@ -51,7 +51,7 @@ pub(crate) enum PhotoFieldChange {
 }
 
 #[derive(Clone)]
-pub(crate) struct PhotoEdit {
+pub struct PhotoEdit {
     fields: Arc<Vec<PhotoFieldChange>>,
     before_selected: Arc<Selection>,
     after_selected: Arc<Selection>,
@@ -88,7 +88,7 @@ impl PhotoEdit {
         }
     }
 
-    pub fn dirty(&self, forward: bool) -> bool {
+    pub const fn dirty(&self, forward: bool) -> bool {
         if forward {
             self.after_dirty
         } else {
@@ -97,13 +97,13 @@ impl PhotoEdit {
     }
 }
 
-pub(crate) enum Step {
+pub enum Step {
     Snapshot(Snapshot),
     PhotoEdit(PhotoEdit),
 }
 
 #[derive(Default)]
-pub(crate) struct History {
+pub struct History {
     undo: Vec<Step>,
     redo: Vec<Step>,
 }
@@ -149,11 +149,11 @@ impl History {
         Some(step)
     }
 
-    pub fn can_undo(&self) -> bool {
+    pub const fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
 
-    pub fn can_redo(&self) -> bool {
+    pub const fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
 

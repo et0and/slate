@@ -29,10 +29,11 @@ struct GridMetrics {
 }
 
 fn grid_metrics(viewport: f32, left_edge: f32, right_edge: f32) -> GridMetrics {
-    let center = (viewport - left_edge - right_edge).max(CELL_MIN + GRID_PAD * 2.0);
-    let content = (center - GRID_PAD * 2.0).max(CELL_MIN);
+    let center = (viewport - left_edge - right_edge).max(GRID_PAD.mul_add(2.0, CELL_MIN));
+    let content = GRID_PAD.mul_add(-2.0, center).max(CELL_MIN);
     let columns = (((content + GAP) / (CELL_MIN + GAP)).floor() as usize).max(1);
-    let cell_w = ((content - GAP * (columns.saturating_sub(1)) as f32) / columns as f32).max(1.0);
+    let cell_w =
+        (GAP.mul_add(-((columns.saturating_sub(1)) as f32), content) / columns as f32).max(1.0);
     let thumb_h = (cell_w * THUMB_RATIO).max(120.0);
     GridMetrics {
         columns,
@@ -61,16 +62,16 @@ impl ContactSheet {
             );
             let columns = metrics.columns;
             let rows = visible.len().div_ceil(columns);
-            let visible_for_grid = visible.clone();
+            let visible_for_grid = visible;
             let scroll = self.grid_scroll.clone();
             let list = uniform_list(
                 "library-grid",
                 rows,
                 cx.processor(
-                    move |this: &mut ContactSheet,
+                    move |this: &mut Self,
                           range: std::ops::Range<usize>,
                           _: &mut Window,
-                          cx: &mut Context<ContactSheet>| {
+                          cx: &mut Context<Self>| {
                         let mut indices = Vec::with_capacity(range.len() * columns);
                         let mut rendered = Vec::with_capacity(range.len());
                         for row in range {
@@ -134,10 +135,10 @@ impl ContactSheet {
             (
                 photo.id(),
                 photo.file_name(),
-                photo
-                    .oriented_size()
-                    .map(|(width, height)| format!("{width} × {height}"))
-                    .unwrap_or_else(|| "—".to_string()),
+                photo.oriented_size().map_or_else(
+                    || "—".to_string(),
+                    |(width, height)| format!("{width} × {height}"),
+                ),
                 if photo.tags.is_empty() {
                     None
                 } else {
@@ -162,29 +163,34 @@ impl ContactSheet {
         let image = self.thumb_image(id, rotation);
         let failure = self.thumb_failed(id).map(str::to_string);
 
-        let preview: AnyElement = if let Some(image) = image {
-            img(image)
-                .object_fit(gpui::ObjectFit::Contain)
-                .size_full()
-                .into_any_element()
-        } else if failure.is_some() {
-            div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(icon(assets::IMAGE_OFF, 20.0, theme::faint()))
-                .into_any_element()
-        } else {
-            div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(icon(assets::IMAGE, 20.0, theme::faint()))
-                .opacity(0.45)
-                .into_any_element()
-        };
+        let preview: AnyElement = image.map_or_else(
+            || {
+                if failure.is_some() {
+                    div()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon(assets::IMAGE_OFF, 20.0, theme::faint()))
+                        .into_any_element()
+                } else {
+                    div()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon(assets::IMAGE, 20.0, theme::faint()))
+                        .opacity(0.45)
+                        .into_any_element()
+                }
+            },
+            |image| {
+                img(image)
+                    .object_fit(gpui::ObjectFit::Contain)
+                    .size_full()
+                    .into_any_element()
+            },
+        );
 
         let eye = div()
             .id(ElementId::Name(SharedString::from(format!(
@@ -387,15 +393,16 @@ impl ContactSheet {
         cx: &mut Context<Self>,
     ) {
         let target = photo_id.is_none_or(|id| !self.selected.contains(id));
-        let mut changed = false;
-        if let Some(photo_id) = photo_id {
+        let changed = if let Some(photo_id) = photo_id {
             let selected = Arc::make_mut(&mut self.selected);
-            changed = if target {
+            if target {
                 selected.insert(photo_id)
             } else {
                 selected.remove(photo_id)
-            };
-        }
+            }
+        } else {
+            false
+        };
         self.marquee = Some(Marquee {
             start: position,
             current: position,
@@ -617,9 +624,11 @@ mod tests {
     #[test]
     fn grid_cells_fill_the_available_width() {
         let metrics = grid_metrics(1440.0, 280.0, 384.0);
-        let width = metrics.cell_w * metrics.columns as f32
-            + GAP * metrics.columns.saturating_sub(1) as f32;
-        let content = 1440.0 - 280.0 - 384.0 - GRID_PAD * 2.0;
+        let width = GAP.mul_add(
+            metrics.columns.saturating_sub(1) as f32,
+            metrics.cell_w * metrics.columns as f32,
+        );
+        let content = GRID_PAD.mul_add(-2.0, 1440.0 - 280.0 - 384.0);
         assert!((width - content).abs() < 0.01, "{width} != {content}");
     }
 }

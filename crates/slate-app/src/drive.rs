@@ -829,6 +829,11 @@ pub fn upload_pdf(
     let path = path.to_path_buf();
     let requested_name = requested_name.to_string();
     run(async move {
+        #[derive(Deserialize)]
+        struct Created {
+            id: String,
+            name: String,
+        }
         let (client, access_token) = authorized_client(&config, &account).await?;
         let files = Files::new(client);
         let query = format!("'{folder_id}' in parents and {FOLDER_QUERY}");
@@ -904,11 +909,6 @@ pub fn upload_pdf(
             bail!("Drive upload failed: {status} {text}");
         }
 
-        #[derive(Deserialize)]
-        struct Created {
-            id: String,
-            name: String,
-        }
         let created: Created = response
             .json()
             .await
@@ -975,10 +975,10 @@ fn unique_name(existing: &[String], requested: &str) -> String {
         _ => (requested, None),
     };
     for index in 2..10_000 {
-        let candidate = match extension {
-            Some(extension) => format!("{stem}-{index}.{extension}"),
-            None => format!("{stem}-{index}"),
-        };
+        let candidate = extension.map_or_else(
+            || format!("{stem}-{index}"),
+            |extension| format!("{stem}-{index}.{extension}"),
+        );
         if !existing
             .iter()
             .any(|name| name.eq_ignore_ascii_case(&candidate))

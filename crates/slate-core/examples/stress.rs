@@ -40,12 +40,11 @@ fn main() -> anyhow::Result<()> {
         }
     }
     let started = Instant::now();
-    let (path, generated) = match path {
-        Some(path) => (path, None),
-        None => {
-            let path = generate(photos)?;
-            (path, Some(started.elapsed()))
-        }
+    let (path, generated) = if let Some(path) = path {
+        (path, None)
+    } else {
+        let path = generate(photos)?;
+        (path, Some(started.elapsed()))
     };
     let bytes = std::fs::metadata(&path)?.len();
     let file_mb = bytes as f64 / (1024.0 * 1024.0);

@@ -15,6 +15,8 @@ use crate::widgets::{
     button, disabled_button, group_label, icon, icon_button, mono_text, primary_button, ui_text,
 };
 
+const RENAME_ROW_H: f32 = 76.0;
+
 impl ContactSheet {
     pub(crate) fn render_overlay(
         &mut self,
@@ -47,17 +49,16 @@ impl ContactSheet {
             "conflicts"
         };
 
-        const RENAME_ROW_H: f32 = 76.0;
         let list_height = (entries as f32 * RENAME_ROW_H).clamp(1.0, 410.0);
         let plan_for_list = Arc::clone(&plan);
         let list = uniform_list(
             "rename-list",
             entries,
             cx.processor(
-                move |_: &mut ContactSheet,
+                move |_: &mut Self,
                       range: std::ops::Range<usize>,
                       _: &mut Window,
-                      _: &mut Context<ContactSheet>| {
+                      _: &mut Context<Self>| {
                     range
                         .map(|index| {
                             let entry = &plan_for_list.entries[index];
@@ -303,7 +304,7 @@ impl ContactSheet {
                                 .text_size(px(theme::TEXT_BODY))
                                 .text_color(if active { theme::ink() } else { theme::muted() })
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.set_convert_format(choice, cx)
+                                    this.set_convert_format(choice, cx);
                                 }))
                                 .child(choice.label())
                                 .into_any_element()
@@ -370,7 +371,7 @@ impl ContactSheet {
         let menu = self.photo_context.clone()?;
         let viewport = window.viewport_size();
         let width = 224.0_f32;
-        let height = 5.0 * 36.0 + 2.0 + 8.0;
+        let height = 5.0f32.mul_add(36.0, 2.0) + 8.0;
         let left = f32::from(menu.position.x)
             .min(f32::from(viewport.width) - width - 8.0)
             .max(8.0);
@@ -396,7 +397,7 @@ impl ContactSheet {
                 .cursor_pointer()
                 .hover(|style| style.bg(theme::accent_soft()))
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    this.begin_photo_rename(photo_id, window, cx)
+                    this.begin_photo_rename(photo_id, window, cx);
                 }))
                 .child(icon(assets::PENCIL, 15.0, theme::muted()))
                 .child(ui_text(theme::TEXT_BODY, theme::ink()).child("Rename…"))
@@ -506,7 +507,7 @@ impl ContactSheet {
         let current = self
             .rename_photo_target
             .and_then(|id| self.project.photo(id))
-            .map(|photo| photo.file_name())
+            .map(slate_core::Photo::file_name)
             .unwrap_or_default();
         let error = self.rename_photo_error.clone();
         let panel = div()

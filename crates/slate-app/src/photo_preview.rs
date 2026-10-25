@@ -51,18 +51,20 @@ impl Render for PhotoPreviewWindow {
         };
         let details = target
             .and_then(|id| self.parent.read(cx).project.photo(id))
-            .map(|photo| {
-                let size = photo
-                    .oriented_size()
-                    .map(|(width, height)| format!("{width} × {height}"))
-                    .unwrap_or_else(|| "Unknown size".to_string());
-                let kind = photo.extension().to_ascii_uppercase();
-                (
-                    photo.file_name(),
-                    format!("{size} / {kind} / {}", format_bytes(photo.bytes)),
-                )
-            })
-            .unwrap_or_else(|| ("No photo".to_string(), String::new()));
+            .map_or_else(
+                || ("No photo".to_string(), String::new()),
+                |photo| {
+                    let size = photo.oriented_size().map_or_else(
+                        || "Unknown size".to_string(),
+                        |(width, height)| format!("{width} × {height}"),
+                    );
+                    let kind = photo.extension().to_ascii_uppercase();
+                    (
+                        photo.file_name(),
+                        format!("{size} / {kind} / {}", format_bytes(photo.bytes)),
+                    )
+                },
+            );
 
         let close = div()
             .id("photo-preview-close")
@@ -77,8 +79,8 @@ impl Render for PhotoPreviewWindow {
             .hover(|style| style.bg(rgba_white(0.14)))
             .on_click(cx.listener(|this, _, window, cx| {
                 this.parent
-                    .update(cx, |parent, cx| parent.clear_photo_preview(cx));
-                window.remove_window()
+                    .update(cx, super::app::ContactSheet::clear_photo_preview);
+                window.remove_window();
             }))
             .child(icon(assets::X, 16.0, rgb(0xf3f3f1)));
 
@@ -95,8 +97,20 @@ impl Render for PhotoPreviewWindow {
             }),
         );
 
-        let body: AnyElement =
-            if let Some(image) = image {
+        let body: AnyElement = image.map_or_else(
+            || {
+                div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(ui_text(theme::TEXT_BODY, rgba_white(0.55)).child(
+                        error.unwrap_or_else(|| "Loading high-resolution preview…".to_string()),
+                    ))
+                    .into_any_element()
+            },
+            |image| {
                 div()
                     .flex_1()
                     .min_h(px(0.0))
@@ -111,18 +125,8 @@ impl Render for PhotoPreviewWindow {
                             .h_full(),
                     )
                     .into_any_element()
-            } else {
-                div()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(ui_text(theme::TEXT_BODY, rgba_white(0.55)).child(
-                        error.unwrap_or_else(|| "Loading high-resolution preview…".to_string()),
-                    ))
-                    .into_any_element()
-            };
+            },
+        );
 
         div()
             .key_context("PhotoPreviewWindow")
@@ -143,8 +147,8 @@ impl Render for PhotoPreviewWindow {
             }))
             .on_action(cx.listener(|this, _: &ClosePhotoPreview, window, cx| {
                 this.parent
-                    .update(cx, |parent, cx| parent.clear_photo_preview(cx));
-                window.remove_window()
+                    .update(cx, super::app::ContactSheet::clear_photo_preview);
+                window.remove_window();
             }))
             .child(
                 div()

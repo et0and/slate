@@ -20,6 +20,7 @@ pub enum OutputFormat {
 impl OutputFormat {
     pub const ALL: [Self; 4] = [Self::Jpeg, Self::Png, Self::WebP, Self::Tiff];
 
+    #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
             Self::Jpeg => "JPEG",
@@ -29,6 +30,7 @@ impl OutputFormat {
         }
     }
 
+    #[must_use]
     pub const fn extension(self) -> &'static str {
         match self {
             Self::Jpeg => "jpg",
@@ -38,7 +40,7 @@ impl OutputFormat {
         }
     }
 
-    fn image_format(self) -> ImageFormat {
+    const fn image_format(self) -> ImageFormat {
         match self {
             Self::Jpeg => ImageFormat::Jpeg,
             Self::Png => ImageFormat::Png,
@@ -72,6 +74,7 @@ pub struct ConvertReport {
 }
 
 impl ConvertReport {
+    #[must_use]
     pub fn summary(&self) -> String {
         format!(
             "Converted {} / skipped {}{}",
@@ -133,23 +136,24 @@ pub fn convert_photos(
 }
 
 fn convert_one(source: &Path, target: &Path, options: ConvertOptions) -> anyhow::Result<()> {
+    let ConvertOptions { format, quality } = options;
     let image = import::load_oriented(source, None)?;
-    match options.format {
+    match format {
         OutputFormat::Jpeg => {
-            let image = flatten_on_white(image);
+            let image = flatten_on_white(&image);
             let file = std::fs::File::create(target)?;
             let mut encoder =
-                JpegEncoder::new_with_quality(BufWriter::new(file), options.quality.clamp(1, 100));
+                JpegEncoder::new_with_quality(BufWriter::new(file), quality.clamp(1, 100));
             encoder.encode_image(&image)?;
         }
         _ => {
-            image.save_with_format(target, options.format.image_format())?;
+            image.save_with_format(target, format.image_format())?;
         }
     }
     Ok(())
 }
 
-fn flatten_on_white(image: DynamicImage) -> RgbImage {
+fn flatten_on_white(image: &DynamicImage) -> RgbImage {
     let rgba: RgbaImage = image.to_rgba8();
     let mut rgb = RgbImage::new(rgba.width(), rgba.height());
     for (x, y, pixel) in rgba.enumerate_pixels() {
@@ -178,7 +182,7 @@ mod tests {
             ImageBuffer::from_fn(8, 6, |x, y| Rgb([x as u8 * 10, y as u8 * 10, 90]));
         image.save(&source).unwrap();
         let mut project = Project::new("Convert");
-        let id = project.add_photo(source.clone(), 8, 6, 1);
+        let id = project.add_photo(source, 8, 6, 1);
         let output = directory.path().join("out");
         for format in OutputFormat::ALL {
             let report = convert_photos(

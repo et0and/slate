@@ -9,7 +9,7 @@ use slate_core::model::{ColorLabel, Filter, PhotoId, Project, StarRating};
 use crate::selection::Selection;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SortKey {
+pub enum SortKey {
     Name,
     CapturedAt,
     Size,
@@ -28,7 +28,7 @@ impl SortKey {
         Self::Label,
     ];
 
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Name => "Name",
             Self::CapturedAt => "Date",
@@ -41,20 +41,20 @@ impl SortKey {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SortDirection {
+pub enum SortDirection {
     Ascending,
     Descending,
 }
 
 impl SortDirection {
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Ascending => "Ascending",
             Self::Descending => "Descending",
         }
     }
 
-    pub(crate) fn toggled(self) -> Self {
+    pub(crate) const fn toggled(self) -> Self {
         match self {
             Self::Ascending => Self::Descending,
             Self::Descending => Self::Ascending,
@@ -63,7 +63,7 @@ impl SortDirection {
 }
 
 #[derive(Default)]
-pub(crate) struct ViewState {
+pub struct ViewState {
     project_dirty: bool,
     filter_dirty: bool,
     selection_dirty: bool,
@@ -90,15 +90,15 @@ impl ViewState {
         }
     }
 
-    pub(crate) fn invalidate_project(&mut self) {
+    pub(crate) const fn invalidate_project(&mut self) {
         self.project_dirty = true;
     }
 
-    pub(crate) fn invalidate_filter(&mut self) {
+    pub(crate) const fn invalidate_filter(&mut self) {
         self.filter_dirty = true;
     }
 
-    pub(crate) fn invalidate_selection(&mut self) {
+    pub(crate) const fn invalidate_selection(&mut self) {
         self.selection_dirty = true;
     }
 
@@ -142,27 +142,27 @@ impl ViewState {
         Arc::clone(&self.tags)
     }
 
-    pub(crate) fn untagged(&self) -> usize {
+    pub(crate) const fn untagged(&self) -> usize {
         self.untagged
     }
 
-    pub(crate) fn rated(&self) -> usize {
+    pub(crate) const fn rated(&self) -> usize {
         self.rated
     }
 
-    pub(crate) fn unrated(&self) -> usize {
+    pub(crate) const fn unrated(&self) -> usize {
         self.unrated
     }
 
-    pub(crate) fn label_counts(&self) -> [usize; ColorLabel::ALL.len()] {
+    pub(crate) const fn label_counts(&self) -> [usize; ColorLabel::ALL.len()] {
         self.label_counts
     }
 
-    pub(crate) fn scope_rating(&self) -> Option<StarRating> {
+    pub(crate) const fn scope_rating(&self) -> Option<StarRating> {
         self.scope_rating
     }
 
-    pub(crate) fn scope_label(&self) -> Option<ColorLabel> {
+    pub(crate) const fn scope_label(&self) -> Option<ColorLabel> {
         self.scope_label
     }
 
@@ -294,7 +294,7 @@ impl ViewState {
             scope.extend(
                 self.visible
                     .iter()
-                    .filter_map(|index| project.photos.get(*index).map(|photo| photo.id())),
+                    .filter_map(|index| project.photos.get(*index).map(slate_core::Photo::id)),
             );
         } else {
             // Keep the visible sort order for selected photos. Append selected
@@ -309,7 +309,7 @@ impl ViewState {
                 }
             }
             if !remaining.is_empty() {
-                for photo in project.photos.iter() {
+                for photo in &project.photos {
                     if remaining.remove(&photo.id()) {
                         scope.push(photo.id());
                     }

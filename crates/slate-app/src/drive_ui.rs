@@ -23,13 +23,13 @@ use crate::widgets::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DriveMode {
+pub enum DriveMode {
     Import,
     Export,
 }
 
 impl DriveMode {
-    fn title(self) -> &'static str {
+    const fn title(self) -> &'static str {
         match self {
             Self::Import => "Import from Google Drive",
             Self::Export => "Export PDF to Google Drive",
@@ -38,12 +38,12 @@ impl DriveMode {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct DriveFolder {
+pub struct DriveFolder {
     pub id: String,
     pub name: String,
 }
 
-pub(crate) struct DrivePicker {
+pub struct DrivePicker {
     pub mode: DriveMode,
     pub folder_id: String,
     pub folder_name: String,
@@ -75,13 +75,13 @@ impl DrivePicker {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct DriveNotice {
+pub struct DriveNotice {
     pub title: String,
     pub lines: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct DriveDownload {
+pub struct DriveDownload {
     pub total: usize,
 }
 
@@ -246,7 +246,7 @@ impl ContactSheet {
                         if mode == DriveMode::Export {
                             entries.retain(|entry| entry.is_folder);
                         }
-                        thumb_entries = entries.clone();
+                        thumb_entries.clone_from(&entries);
                         picker.entries = entries;
                         picker.error = None;
                     }
@@ -267,8 +267,8 @@ impl ContactSheet {
         let Some(picker) = &mut self.drive_picker else {
             return;
         };
-        picker.folder_id = id.clone();
-        picker.folder_name = name.clone();
+        picker.folder_id.clone_from(&id);
+        picker.folder_name.clone_from(&name);
         picker.crumbs.push(DriveFolder { id, name });
         self.reload_drive_folder(cx);
     }
@@ -405,15 +405,14 @@ impl ContactSheet {
             .project_path
             .as_ref()
             .and_then(|path| path.parent())
-            .map(PathBuf::from)
-            .unwrap_or_else(slate_core::store::data_directory);
+            .map_or_else(slate_core::store::data_directory, PathBuf::from);
         let directory = base
             .join("Drive imports")
             .join(crate::app::slug(&folder_name));
         let total = entries.len();
         let generation = self.generation;
         if crate::app::is_untitled(&self.project.name) && !folder_name.is_empty() {
-            self.project.name = folder_name.clone();
+            self.project.name = folder_name;
             self.dirty = true;
         }
         self.drive_picker = None;
@@ -670,28 +669,31 @@ impl ContactSheet {
         for (index, entry) in visible.iter().enumerate() {
             let angle = ((index as f32 - center) * 4.0 * 10.0).round() as i16;
             let image = self.drive_stack_image(entry, angle);
-            let preview: AnyElement = if let Some(image) = image {
-                img(image)
-                    .object_fit(gpui::ObjectFit::Contain)
-                    .size_full()
-                    .into_any_element()
-            } else {
-                div()
-                    .size_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(theme::photo_bg())
-                    .border_1()
-                    .border_color(theme::rule())
-                    .child(icon(assets::IMAGE, 24.0, theme::faint()))
-                    .into_any_element()
-            };
+            let preview: AnyElement = image.map_or_else(
+                || {
+                    div()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(theme::photo_bg())
+                        .border_1()
+                        .border_color(theme::rule())
+                        .child(icon(assets::IMAGE, 24.0, theme::faint()))
+                        .into_any_element()
+                },
+                |image| {
+                    img(image)
+                        .object_fit(gpui::ObjectFit::Contain)
+                        .size_full()
+                        .into_any_element()
+                },
+            );
             stack = stack.child(
                 div()
                     .absolute()
-                    .top(px(36.0 + index as f32 * 3.0))
-                    .left(px(16.0 + index as f32 * 2.0))
+                    .top(px((index as f32).mul_add(3.0, 36.0)))
+                    .left(px((index as f32).mul_add(2.0, 16.0)))
                     .w(px(180.0))
                     .h(px(132.0))
                     .child(preview)
@@ -944,10 +946,7 @@ impl ContactSheet {
                 "drive-list",
                 entries.len(),
                 cx.processor(
-                    move |this: &mut ContactSheet,
-                          range: std::ops::Range<usize>,
-                          _: &mut Window,
-                          cx| {
+                    move |this: &mut Self, range: std::ops::Range<usize>, _: &mut Window, cx| {
                         range
                             .map(|index| {
                                 let entry = rows[index].clone();
@@ -990,41 +989,44 @@ impl ContactSheet {
                                             this.toggle_drive_selection(row_id.clone(), cx);
                                         }
                                     }))
-                                    .child(if let Some(thumbnail) = thumbnail {
-                                        div()
-                                            .size(px(40.0))
-                                            .flex_shrink_0()
-                                            .overflow_hidden()
-                                            .bg(theme::photo_bg())
-                                            .border_1()
-                                            .border_color(theme::rule())
-                                            .child(
-                                                img(thumbnail)
-                                                    .object_fit(gpui::ObjectFit::Cover)
-                                                    .size_full(),
-                                            )
-                                            .into_any_element()
-                                    } else {
-                                        div()
-                                            .size(px(40.0))
-                                            .flex_shrink_0()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .bg(theme::photo_bg())
-                                            .border_1()
-                                            .border_color(theme::rule())
-                                            .child(icon(
-                                                if is_folder {
-                                                    assets::FOLDER
-                                                } else {
-                                                    assets::IMAGE
-                                                },
-                                                17.0,
-                                                theme::muted(),
-                                            ))
-                                            .into_any_element()
-                                    })
+                                    .child(thumbnail.map_or_else(
+                                        || {
+                                            div()
+                                                .size(px(40.0))
+                                                .flex_shrink_0()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .bg(theme::photo_bg())
+                                                .border_1()
+                                                .border_color(theme::rule())
+                                                .child(icon(
+                                                    if is_folder {
+                                                        assets::FOLDER
+                                                    } else {
+                                                        assets::IMAGE
+                                                    },
+                                                    17.0,
+                                                    theme::muted(),
+                                                ))
+                                                .into_any_element()
+                                        },
+                                        |thumbnail| {
+                                            div()
+                                                .size(px(40.0))
+                                                .flex_shrink_0()
+                                                .overflow_hidden()
+                                                .bg(theme::photo_bg())
+                                                .border_1()
+                                                .border_color(theme::rule())
+                                                .child(
+                                                    img(thumbnail)
+                                                        .object_fit(gpui::ObjectFit::Cover)
+                                                        .size_full(),
+                                                )
+                                                .into_any_element()
+                                        },
+                                    ))
                                     .child(
                                         div()
                                             .flex()
@@ -1126,10 +1128,7 @@ impl ContactSheet {
                                     .line_height(px(23.0))
                                     .child(mode.title()),
                             )
-                            .child(
-                                mono_text(theme::TEXT_LABEL, theme::faint())
-                                    .child(folder_name.clone()),
-                            ),
+                            .child(mono_text(theme::TEXT_LABEL, theme::faint()).child(folder_name)),
                     )
                     .child(
                         icon_button("drive-picker-close", assets::X)
@@ -1226,8 +1225,8 @@ fn rotate_render_image_degrees(image: &RenderImage, degrees: f32) -> Option<Arc<
         for x in 0..width {
             let dx = x as f32 - center_x;
             let dy = y as f32 - center_y;
-            let source_x = cos * dx + sin * dy + center_x;
-            let source_y = -sin * dx + cos * dy + center_y;
+            let source_x = f32::mul_add(sin, dy, cos * dx) + center_x;
+            let source_y = f32::mul_add(cos, dy, -sin * dx) + center_y;
             if source_x >= 0.0
                 && source_y >= 0.0
                 && source_x < width as f32

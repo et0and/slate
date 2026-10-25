@@ -74,15 +74,15 @@ actions!(
     ]
 );
 
-#[derive(Clone, PartialEq, gpui::Action)]
+#[derive(Clone, PartialEq, Eq, gpui::Action)]
 #[action(no_json, namespace = contact_sheet)]
-pub(crate) struct OpenRecent {
+pub struct OpenRecent {
     pub path: PathBuf,
 }
 
-#[derive(Clone, PartialEq, gpui::Action)]
+#[derive(Clone, PartialEq, Eq, gpui::Action)]
 #[action(no_json, namespace = contact_sheet)]
-pub(crate) struct SetTheme {
+pub struct SetTheme {
     pub theme: theme::Theme,
 }
 
@@ -99,7 +99,7 @@ pub enum ThumbState {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Marquee {
+pub struct Marquee {
     pub start: Point<Pixels>,
     pub current: Point<Pixels>,
     pub target: bool,
@@ -107,26 +107,26 @@ pub(crate) struct Marquee {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PhotoContextMenu {
+pub struct PhotoContextMenu {
     pub photo_id: PhotoId,
     pub position: Point<Pixels>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum PhotoMetaState {
+pub enum PhotoMetaState {
     Loading,
     Ready(import::PhotoMetadata),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum InspectorMode {
+pub enum InspectorMode {
     #[default]
     Photo,
     Sheet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum SidebarSection {
+pub enum SidebarSection {
     Rating,
     Label,
     Sort,
@@ -135,7 +135,7 @@ pub(crate) enum SidebarSection {
 }
 
 impl SidebarSection {
-    pub(crate) fn key(self) -> &'static str {
+    pub(crate) const fn key(self) -> &'static str {
         match self {
             Self::Rating => "rating",
             Self::Label => "label",
@@ -297,7 +297,7 @@ impl ContactSheet {
                     });
                 })
                 .on_submit(move |_, app| {
-                    let _ = submit_weak.update(app, |this, cx| this.preview_rename(cx));
+                    let _ = submit_weak.update(app, Self::preview_rename);
                 })
         });
 
@@ -305,7 +305,7 @@ impl ContactSheet {
             let weak = weak.clone();
             TextField::new(cx, "Tag, e.g. street").on_submit(move |value, app| {
                 let value = value.to_string();
-                let _ = weak.update(app, |this, cx| this.apply_tag_value(value, cx, true));
+                let _ = weak.update(app, |this, cx| this.apply_tag_value(&value, cx, true));
             })
         });
 
@@ -438,15 +438,15 @@ impl ContactSheet {
         );
     }
 
-    pub(crate) fn project_changed(&mut self) {
+    pub(crate) const fn project_changed(&mut self) {
         self.view.invalidate_project();
     }
 
-    pub(crate) fn selection_changed(&mut self) {
+    pub(crate) const fn selection_changed(&mut self) {
         self.view.invalidate_selection();
     }
 
-    pub(crate) fn filter_changed(&mut self) {
+    pub(crate) const fn filter_changed(&mut self) {
         self.view.invalidate_filter();
     }
 
@@ -836,11 +836,11 @@ impl ContactSheet {
     fn apply_history_step(&mut self, step: Step, forward: bool, cx: &mut Context<Self>) {
         match step {
             Step::Snapshot(snapshot) => self.restore(snapshot, cx),
-            Step::PhotoEdit(edit) => self.apply_photo_edit(edit, forward, cx),
+            Step::PhotoEdit(edit) => self.apply_photo_edit(&edit, forward, cx),
         }
     }
 
-    fn apply_photo_edit(&mut self, edit: PhotoEdit, forward: bool, cx: &mut Context<Self>) {
+    fn apply_photo_edit(&mut self, edit: &PhotoEdit, forward: bool, cx: &mut Context<Self>) {
         let rotation_changed = edit
             .fields()
             .iter()
@@ -978,7 +978,7 @@ impl ContactSheet {
         let removed = self.project.remove_photos(&ids);
         let removed_ids: HashSet<PhotoId> = ids.iter().copied().collect();
         let selected = Arc::make_mut(&mut self.selected);
-        for id in removed_ids.iter() {
+        for id in &removed_ids {
             selected.remove(*id);
             self.thumbs.remove(id);
             self.thumbs_queued.remove(id);
@@ -1012,15 +1012,14 @@ impl ContactSheet {
 
     pub(crate) fn apply_tag(&mut self, cx: &mut Context<Self>, clear_field: bool) {
         let tag = self.tag_field.read(cx).value().to_string();
-        self.apply_tag_value(tag, cx, clear_field);
+        self.apply_tag_value(&tag, cx, clear_field);
     }
 
-    pub(crate) fn apply_tag_value(
-        &mut self,
-        tag: String,
-        cx: &mut Context<Self>,
-        clear_field: bool,
-    ) {
+    #[expect(
+        clippy::needless_collect,
+        reason = "snapshot before mutating the project"
+    )]
+    pub(crate) fn apply_tag_value(&mut self, tag: &str, cx: &mut Context<Self>, clear_field: bool) {
         let ids = self.scope_ids();
         let tag = tag.trim().to_string();
         if tag.is_empty() {
@@ -1065,6 +1064,10 @@ impl ContactSheet {
         cx.notify();
     }
 
+    #[expect(
+        clippy::needless_collect,
+        reason = "snapshot before mutating the project"
+    )]
     pub(crate) fn remove_tag(&mut self, cx: &mut Context<Self>) {
         let ids = self.scope_ids();
         let tag = self.tag_field.read(cx).value().trim().to_string();
@@ -1103,6 +1106,10 @@ impl ContactSheet {
         cx.notify();
     }
 
+    #[expect(
+        clippy::needless_collect,
+        reason = "snapshot before mutating the project"
+    )]
     pub(crate) fn clear_tags(&mut self, cx: &mut Context<Self>) {
         let ids = self.scope_ids();
         let before_selected = Arc::clone(&self.selected);
@@ -1135,6 +1142,10 @@ impl ContactSheet {
 
     // ----- rating, labels and sorting ------------------------------------
 
+    #[expect(
+        clippy::needless_collect,
+        reason = "snapshot before mutating the project"
+    )]
     pub(crate) fn apply_rating(&mut self, rating: StarRating, cx: &mut Context<Self>) {
         let ids = self.scope_ids();
         if ids.is_empty() {
@@ -1170,6 +1181,10 @@ impl ContactSheet {
         self.refresh_and_notify(cx);
     }
 
+    #[expect(
+        clippy::needless_collect,
+        reason = "snapshot before mutating the project"
+    )]
     pub(crate) fn apply_label(&mut self, label: ColorLabel, cx: &mut Context<Self>) {
         let ids = self.scope_ids();
         if ids.is_empty() {
@@ -1605,16 +1620,12 @@ impl ContactSheet {
         let value = self.photo_date_field.read(cx).value().trim().to_string();
         let normalized = if value.is_empty() {
             None
+        } else if let Some(value) = import::normalize_capture_datetime(&value) {
+            Some(value)
         } else {
-            match import::normalize_capture_datetime(&value) {
-                Some(value) => Some(value),
-                None => {
-                    self.photo_date_error =
-                        Some("Use YYYY-MM-DD HH:MM:SS, or leave blank.".to_string());
-                    cx.notify();
-                    return;
-                }
-            }
+            self.photo_date_error = Some("Use YYYY-MM-DD HH:MM:SS, or leave blank.".to_string());
+            cx.notify();
+            return;
         };
         let Some(photo) = self.project.photo(photo_id) else {
             return;
@@ -2053,12 +2064,12 @@ impl ContactSheet {
         let before = self.project.saved_sheets.len();
         self.checkpoint();
         self.project.saved_sheets.retain(|sheet| sheet.id != id);
-        if self.project.saved_sheets.len() != before {
+        if self.project.saved_sheets.len() == before {
+            self.history.discard_last();
+        } else {
             self.dirty = true;
             self.log("Sheet deleted");
             self.set_status("Sheet deleted / project unsaved");
-        } else {
-            self.history.discard_last();
         }
         cx.notify();
     }
@@ -2076,7 +2087,7 @@ impl ContactSheet {
         self.checkpoint();
         self.project.sheet = sheet.settings.clone();
         if self.project.sheet.title.trim().is_empty() {
-            self.project.sheet.title = sheet.name.clone();
+            self.project.sheet.title.clone_from(&sheet.name);
         }
         self.selected = Arc::new(
             sheet
@@ -2251,13 +2262,13 @@ impl ContactSheet {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
-            let _ = this.update(cx, |this, cx| this.open_project(path, cx));
+            let _ = this.update(cx, |this, cx| this.open_project(&path, cx));
         })
         .detach();
     }
 
-    pub(crate) fn open_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        match Project::load(&path) {
+    pub(crate) fn open_project(&mut self, path: &Path, cx: &mut Context<Self>) {
+        match Project::load(path) {
             Ok(project) => {
                 self.generation += 1;
                 self.import_queue.clear();
@@ -2283,12 +2294,12 @@ impl ContactSheet {
                 self.search_field
                     .update(cx, |field, cx| field.set_value("", cx));
                 self.title_field.update(cx, |field, cx| {
-                    field.set_value(project.sheet.title.clone(), cx)
+                    field.set_value(project.sheet.title.clone(), cx);
                 });
                 self.project = project;
                 self.sync_paper_fields(cx);
                 self.backfill_capture_dates(cx);
-                self.project_path = Some(path.clone());
+                self.project_path = Some(path.to_path_buf());
                 self.dirty = false;
                 self.history.clear();
                 self.preview_page = 0;
@@ -2492,14 +2503,8 @@ impl ContactSheet {
         self.log(format!("Import / {} new files", new_paths.len()));
         self.set_status(format!(
             "Importing {}/{}",
-            self.import_state
-                .as_ref()
-                .map(|state| state.done)
-                .unwrap_or(0),
-            self.import_state
-                .as_ref()
-                .map(|state| state.total)
-                .unwrap_or(0)
+            self.import_state.as_ref().map_or(0, |state| state.done),
+            self.import_state.as_ref().map_or(0, |state| state.total)
         ));
         self.pump_import(cx);
         cx.notify();
@@ -2539,29 +2544,28 @@ impl ContactSheet {
     }
 
     fn accept_import(&mut self, path: PathBuf, result: anyhow::Result<Probe>) {
+        self.importing_paths.remove(&path);
         let id = match result {
             Ok(probe) => {
-                let id =
-                    self.project
-                        .add_photo(path.clone(), probe.width, probe.height, probe.bytes);
+                let id = self
+                    .project
+                    .add_photo(path, probe.width, probe.height, probe.bytes);
                 if let Some(photo) = self.project.photo_mut(id) {
                     photo.captured_at = probe.captured_at.map(String::into_boxed_str);
                 }
                 id
             }
             Err(error) => {
-                let id = self
-                    .project
-                    .add_photo(path.clone(), 0, 0, import::file_size(&path));
+                let bytes = import::file_size(&path);
+                let file_name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let id = self.project.add_photo(path, 0, 0, bytes);
                 if let Some(state) = &mut self.import_state
                     && state.errors.len() < 4
                 {
-                    state.errors.push(format!(
-                        "{}: {error}",
-                        path.file_name()
-                            .map(|name| name.to_string_lossy().into_owned())
-                            .unwrap_or_default()
-                    ));
+                    state.errors.push(format!("{file_name}: {error}"));
                 }
                 self.insert_thumb(id, ThumbState::Failed(error.to_string()));
                 id
@@ -2590,7 +2594,6 @@ impl ContactSheet {
         if let Some(state) = &mut self.import_state {
             state.done += 1;
         }
-        self.importing_paths.remove(&path);
         self.dirty = true;
     }
 
@@ -2647,7 +2650,7 @@ impl ContactSheet {
     ) {
         let ids: Vec<PhotoId> = indices
             .into_iter()
-            .filter_map(|index| self.project.photos.get(index).map(|photo| photo.id()))
+            .filter_map(|index| self.project.photos.get(index).map(slate_core::Photo::id))
             .collect();
         self.schedule_thumb_ids(ids, cx);
     }
@@ -2738,12 +2741,12 @@ impl ContactSheet {
     }
 
     pub(crate) fn rotate_photo(&mut self, id: PhotoId, cx: &mut Context<Self>) {
-        let Some(name) = self.project.photo(id).map(|photo| photo.file_name()) else {
+        let Some(name) = self.project.photo(id).map(slate_core::Photo::file_name) else {
             return;
         };
         let before_selected = Arc::clone(&self.selected);
         let before_dirty = self.dirty;
-        let before = self.project.photo(id).map(|photo| photo.rotation());
+        let before = self.project.photo(id).map(slate_core::Photo::rotation);
         let Some(photo) = self.project.photo_mut(id) else {
             return;
         };
@@ -2885,7 +2888,7 @@ impl ContactSheet {
             let _ = this.update(cx, |this, cx| {
                 this.exporting = None;
                 match result {
-                    Ok(summary) => this.export_finished(&title, summary),
+                    Ok(summary) => this.export_finished(&title, &summary),
                     Err(error) => {
                         this.log(format!("Export failed: {error}"));
                         this.set_status(format!("Export failed / {error}"));
@@ -2897,7 +2900,7 @@ impl ContactSheet {
         .detach();
     }
 
-    fn export_finished(&mut self, title: &str, summary: ExportSummary) {
+    fn export_finished(&mut self, title: &str, summary: &ExportSummary) {
         let kilobytes = summary.bytes / 1024;
         let missing = summary.missing.len();
         self.log(format!(
@@ -3057,7 +3060,7 @@ impl Render for ContactSheet {
             }))
             .on_action(cx.listener(|this, action: &OpenRecent, _, cx| {
                 this.close_menu(cx);
-                this.open_project(action.path.clone(), cx);
+                this.open_project(&action.path, cx);
             }))
             .on_action(cx.listener(|this, action: &SetTheme, _, cx| {
                 this.set_theme(action.theme, cx);
@@ -3106,7 +3109,7 @@ impl Render for ContactSheet {
                 cx.notify();
             }))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-                this.begin_import(paths.paths().to_vec(), cx)
+                this.begin_import(paths.paths().to_vec(), cx);
             }))
             .on_mouse_move(cx.listener(Self::pointer_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::pointer_up))
@@ -3180,7 +3183,7 @@ fn rotate_render_image(image: &RenderImage, turns: QuarterTurns) -> Option<Arc<R
     Some(Arc::new(RenderImage::new(vec![Frame::new(buffer)])))
 }
 
-pub(crate) fn render_image(preview: PreviewImage) -> Arc<RenderImage> {
+pub fn render_image(preview: PreviewImage) -> Arc<RenderImage> {
     let width = preview.width();
     let height = preview.height();
     let bgra = preview.into_bgra();
@@ -3194,7 +3197,7 @@ fn paper_mm_text(mm: f32) -> String {
     text.strip_suffix(".0").unwrap_or(&text).to_string()
 }
 
-pub(crate) fn is_untitled(name: &str) -> bool {
+pub fn is_untitled(name: &str) -> bool {
     let name = name.trim();
     name.is_empty() || name.eq_ignore_ascii_case("untitled")
 }
@@ -3207,7 +3210,7 @@ fn ensure_extension(path: PathBuf, extension: &str) -> PathBuf {
     }
 }
 
-pub(crate) fn slug(value: &str) -> String {
+pub fn slug(value: &str) -> String {
     let mut output = String::new();
     let mut last_dash = false;
     for character in value.to_lowercase().chars() {
@@ -3337,15 +3340,15 @@ mod tests {
             assert_eq!(view.inspector_mode, InspectorMode::Photo);
         });
 
-        view.update(cx, |view, cx| view.open_sheet_builder(cx));
+        view.update(cx, super::ContactSheet::open_sheet_builder);
         cx.run_until_parked();
         view.update(cx, |view, _| {
-            assert_eq!(view.inspector_mode, InspectorMode::Sheet)
+            assert_eq!(view.inspector_mode, InspectorMode::Sheet);
         });
         draw_root(&view, cx);
         assert!(cx.debug_bounds("sheet-inspector").is_some());
 
-        view.update(cx, |view, cx| view.open_convert_dialog(cx));
+        view.update(cx, super::ContactSheet::open_convert_dialog);
         cx.run_until_parked();
         draw_root(&view, cx);
         assert!(cx.debug_bounds("convert-dialog").is_some());
@@ -3369,7 +3372,7 @@ mod tests {
         let (view, cx) = cx.add_window_view(|_, cx| ContactSheet::new(cx));
         view.update(cx, |view, cx| {
             view.project = ui_sample_project();
-            view.selected = Arc::new([PhotoId(1)].into_iter().collect());
+            view.selected = Arc::new(std::iter::once(PhotoId(1)).collect());
             view.selection_changed();
             view.inspect_photo(PhotoId(1), cx);
         });
@@ -3398,7 +3401,7 @@ mod tests {
         let (view, cx) = cx.add_window_view(|_, cx| ContactSheet::new(cx));
         view.update(cx, |view, cx| {
             view.project = ui_project();
-            view.selected = Arc::new([PhotoId(1)].into_iter().collect());
+            view.selected = Arc::new(std::iter::once(PhotoId(1)).collect());
             view.selection_changed();
             view.apply_rating(StarRating::try_from(4).unwrap(), cx);
             view.apply_label(ColorLabel::Red, cx);
@@ -3414,7 +3417,7 @@ mod tests {
             );
         });
 
-        view.update(cx, |view, cx| view.undo(cx));
+        view.update(cx, super::ContactSheet::undo);
         view.update(cx, |view, _| {
             assert_eq!(
                 view.project.photo(PhotoId(1)).unwrap().rating(),
@@ -3426,7 +3429,7 @@ mod tests {
             );
         });
 
-        view.update(cx, |view, cx| view.undo(cx));
+        view.update(cx, super::ContactSheet::undo);
         view.update(cx, |view, _| {
             assert_eq!(
                 view.project.photo(PhotoId(1)).unwrap().rating(),
@@ -3441,7 +3444,7 @@ mod tests {
         let (view, cx) = cx.add_window_view(|_, cx| ContactSheet::new(cx));
         view.update(cx, |view, cx| {
             view.project = ui_project();
-            view.selected = Arc::new([PhotoId(1)].into_iter().collect());
+            view.selected = Arc::new(std::iter::once(PhotoId(1)).collect());
             view.selection_changed();
             view.project_changed();
             view.filter_changed();
@@ -3468,7 +3471,7 @@ mod tests {
         let (view, cx) = cx.add_window_view(|_, cx| ContactSheet::new(cx));
         view.update(cx, |view, cx| {
             view.project = ui_project();
-            view.selected = Arc::new([PhotoId(1)].into_iter().collect());
+            view.selected = Arc::new(std::iter::once(PhotoId(1)).collect());
             view.selection_changed();
             view.project_changed();
             view.filter_changed();
@@ -3478,7 +3481,7 @@ mod tests {
 
         cx.dispatch_action(CreateContactSheet);
         view.update(cx, |view, _| {
-            assert_eq!(view.inspector_mode, InspectorMode::Sheet)
+            assert_eq!(view.inspector_mode, InspectorMode::Sheet);
         });
 
         cx.dispatch_action(ConvertSelected);

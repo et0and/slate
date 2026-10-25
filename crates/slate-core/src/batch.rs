@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{ColorLabel, Photo, PhotoId, Project, StarRating};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RenameOptions {
     pub prefix: String,
     pub suffix: String,
@@ -42,7 +42,8 @@ pub struct RenamePlan {
 }
 
 impl RenamePlan {
-    pub fn can_apply(&self) -> bool {
+    #[must_use]
+    pub const fn can_apply(&self) -> bool {
         !self.entries.is_empty() && self.conflicts == 0
     }
 }
@@ -54,11 +55,13 @@ pub struct RenameReport {
 }
 
 impl RenameReport {
-    pub fn renamed_count(&self) -> usize {
+    #[must_use]
+    pub const fn renamed_count(&self) -> usize {
         self.renamed.len()
     }
 }
 
+#[must_use]
 pub fn sanitize_fragment(input: &str) -> String {
     input
         .chars()
@@ -137,10 +140,12 @@ fn target_name(photo: &Photo, number: u32, options: &RenameOptions) -> String {
 }
 
 /// Filename a single photo would receive; used for live previews in the UI.
+#[must_use]
 pub fn preview_name(photo: &Photo, number: u32, options: &RenameOptions) -> String {
     target_name(photo, number, options)
 }
 
+#[must_use]
 pub fn plan_rename(project: &Project, selected: &[PhotoId], options: &RenameOptions) -> RenamePlan {
     let selected: HashSet<PhotoId> = selected.iter().copied().collect();
     let mut plan = RenamePlan::default();
@@ -173,8 +178,7 @@ pub fn plan_rename(project: &Project, selected: &[PhotoId], options: &RenameOpti
         let to = photo
             .path
             .parent()
-            .map(|parent| parent.join(&name))
-            .unwrap_or_else(|| PathBuf::from(&name));
+            .map_or_else(|| PathBuf::from(&name), |parent| parent.join(&name));
 
         if to.as_path() == photo.path.as_ref() {
             plan.skipped += 1;
@@ -217,6 +221,7 @@ pub fn plan_rename(project: &Project, selected: &[PhotoId], options: &RenameOpti
 
 /// Apply the filesystem half of a rename plan. The caller owns the project
 /// update so this can run on the background executor.
+#[must_use]
 pub fn apply_rename_paths(plan: &RenamePlan) -> RenameReport {
     let mut report = RenameReport::default();
     for entry in &plan.entries {
@@ -258,6 +263,7 @@ pub fn apply_rename(project: &mut Project, plan: &RenamePlan) -> RenameReport {
     report
 }
 
+#[must_use]
 pub fn sanitize_tag(input: &str) -> Option<String> {
     let mut tag = String::new();
     let mut last_dash = false;
@@ -458,8 +464,8 @@ mod tests {
         };
         let plan = plan_rename(&project, &project.photo_ids(), &options);
         assert_eq!(plan.entries.len(), 2);
-        assert!(!plan.entries[0].conflict.is_some());
-        assert!(!plan.entries[1].conflict.is_some());
+        assert!(plan.entries[0].conflict.is_none());
+        assert!(plan.entries[1].conflict.is_none());
     }
 
     #[test]
@@ -473,7 +479,7 @@ mod tests {
         let mut project = Project::new("Test");
         project.photos = PhotoSet::from_vec(vec![Photo::new(
             PhotoId(1),
-            original.clone(),
+            original,
             PhotoSize::new(10, 10),
             1,
         )])
@@ -496,7 +502,7 @@ mod tests {
         };
         let plan = plan_rename(&project, &[PhotoId(1)], &options);
         assert_eq!(plan.skipped, 1);
-        assert!(plan.entries.is_empty());
+        assert_eq!(plan.entries.len(), 0);
     }
 
     #[test]
@@ -509,8 +515,8 @@ mod tests {
 
         let mut project = Project::new("Test");
         project.photos = PhotoSet::from_vec(vec![
-            Photo::new(PhotoId(1), first.clone(), PhotoSize::new(10, 10), 1),
-            Photo::new(PhotoId(2), second.clone(), PhotoSize::new(10, 10), 1),
+            Photo::new(PhotoId(1), first, PhotoSize::new(10, 10), 1),
+            Photo::new(PhotoId(2), second, PhotoSize::new(10, 10), 1),
         ])
         .unwrap();
 
@@ -523,7 +529,7 @@ mod tests {
         let plan = plan_rename(&project, &project.photo_ids(), &options);
         let report = apply_rename(&mut project, &plan);
         assert_eq!(report.renamed_count(), 2);
-        assert!(report.errors.is_empty());
+        assert_eq!(report.errors.len(), 0);
         assert!(directory.path().join("SHOOT001.jpg").exists());
         assert_eq!(project.photos[0].path.file_name().unwrap(), "SHOOT001.jpg");
     }

@@ -1,7 +1,7 @@
 //! Returning freed allocator pages after large project loads.
 
 #[cfg(target_os = "macos")]
-pub(crate) fn release_free_pages() {
+pub fn release_free_pages() {
     use std::ffi::c_void;
 
     unsafe extern "C" {

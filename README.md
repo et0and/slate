@@ -109,8 +109,9 @@ cargo lint
 cargo fmt-check
 ```
 
-`cargo lint` runs Clippy across every target and denies warnings. `cargo
-lint-fix` applies Clippy's safe fixes. CI runs the same commands.
+`cargo lint` runs Clippy across every target with `all`, `pedantic` and
+`nursery` enabled, and denies warnings. `cargo lint-fix` applies Clippy's safe
+fixes. CI runs the same commands.
 
 ## Releases
 

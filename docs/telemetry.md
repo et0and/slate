@@ -52,6 +52,22 @@ The batch span processor sends spans in the background. Slate flushes it when
 the process exits. If the exporter cannot start, Slate continues without
 telemetry.
 
+## Local Axiom check
+
+After exporting the Axiom variables, run the ignored live test:
+
+```sh
+cargo test -p slate-app live_axiom_export -- --ignored
+```
+
+The test sends one `slate.telemetry.smoke` span and calls `force_flush`. It fails
+if Axiom rejects the token or dataset.
+
+The `wwwtom` ingest token is scoped to `tom-traces` and `tom-logs`. For a local
+Slate check with that token, set `AXIOM_DATASET=tom-traces`. Do not use that
+shared dataset for production Slate telemetry. Mint a Slate token with ingest
+access to `slate-traces` instead.
+
 ## Local logs
 
 With no `AXIOM_TOKEN`, set `RUST_LOG` to write plain-text tracing output to

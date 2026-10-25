@@ -146,6 +146,18 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires AXIOM_TOKEN and an ingest-capable dataset"]
+    fn live_axiom_export() {
+        let guard = init().expect("telemetry config");
+        let span = tracing::info_span!("slate.telemetry.smoke");
+        let entered = span.enter();
+        tracing::info!("smoke export");
+        drop(entered);
+        guard.provider.force_flush().expect("Axiom flush");
+        drop(guard);
+    }
+
+    #[test]
     fn an_explicit_traces_path_is_not_duplicated() {
         let config = AxiomConfig::new(
             "token".into(),

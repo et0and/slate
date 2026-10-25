@@ -1,9 +1,20 @@
+#![cfg_attr(target_os = "macos", allow(dead_code))]
+
 //! In-window menu bar and its dropdown panels.
 
-use gpui::{AnyElement, Context, ElementId, MouseButton, Stateful, div, prelude::*, px};
+use gpui::{
+    AnyElement, Context, ElementId, Menu, MenuItem, MouseButton, Stateful, SystemMenuType, div,
+    prelude::*, px,
+};
 
-use crate::app::ContactSheet;
+use crate::app::{
+    About, ContactSheet, DeselectPhotos, ExportDrive, ExportSheet, HideOthers, HideSlate,
+    ImportDrive, ImportFiles, ImportFolder, InvertSelection, LinkDrive, NewProject, OpenPreview,
+    OpenProject, OpenRecent, OpenWebsite, Quit, Redo, RemoveSelected, ReportIssue, ResetPanels,
+    SaveAs, SaveProject, SaveSheet, SelectAllPhotos, SetTheme, Undo, UnlinkDrive,
+};
 use crate::assets;
+use crate::drive_ui::DriveMode;
 use crate::theme;
 use crate::widgets::{icon, mono_text, shift_shortcut_label, shortcut_label, ui_text};
 
@@ -12,6 +23,7 @@ const MENU_TEXT_INSET: f32 = 8.0;
 const MENU_FILE_W: f32 = 36.0;
 const MENU_EDIT_W: f32 = 36.0;
 const MENU_VIEW_W: f32 = 40.0;
+const MENU_DRIVE_W: f32 = 42.0;
 const MENU_HISTORY_W: f32 = 56.0;
 const MENU_HELP_W: f32 = 38.0;
 const PANEL_W: f32 = 280.0;
@@ -22,6 +34,7 @@ pub(crate) enum MenuId {
     File,
     Edit,
     View,
+    Drive,
     History,
     Help,
 }
@@ -32,8 +45,9 @@ impl MenuId {
             Self::File => 0,
             Self::Edit => 1,
             Self::View => 2,
-            Self::History => 3,
-            Self::Help => 4,
+            Self::Drive => 3,
+            Self::History => 4,
+            Self::Help => 5,
         }
     }
 
@@ -42,6 +56,7 @@ impl MenuId {
             Self::File => MENU_FILE_W,
             Self::Edit => MENU_EDIT_W,
             Self::View => MENU_VIEW_W,
+            Self::Drive => MENU_DRIVE_W,
             Self::History => MENU_HISTORY_W,
             Self::Help => MENU_HELP_W,
         }
@@ -53,8 +68,11 @@ impl MenuId {
                 Self::File => 0.0,
                 Self::Edit => MENU_FILE_W,
                 Self::View => MENU_FILE_W + MENU_EDIT_W,
-                Self::History => MENU_FILE_W + MENU_EDIT_W + MENU_VIEW_W,
-                Self::Help => MENU_FILE_W + MENU_EDIT_W + MENU_VIEW_W + MENU_HISTORY_W,
+                Self::Drive => MENU_FILE_W + MENU_EDIT_W + MENU_VIEW_W,
+                Self::History => MENU_FILE_W + MENU_EDIT_W + MENU_VIEW_W + MENU_DRIVE_W,
+                Self::Help => {
+                    MENU_FILE_W + MENU_EDIT_W + MENU_VIEW_W + MENU_DRIVE_W + MENU_HISTORY_W
+                }
             }
     }
 }
@@ -67,6 +85,7 @@ impl ContactSheet {
             .child(self.menu_trigger(MenuId::File, "File", cx))
             .child(self.menu_trigger(MenuId::Edit, "Edit", cx))
             .child(self.menu_trigger(MenuId::View, "View", cx))
+            .child(self.menu_trigger(MenuId::Drive, "Drive", cx))
             .child(self.menu_trigger(MenuId::History, "History", cx))
             .child(self.menu_trigger(MenuId::Help, "Help", cx))
             .into_any_element()
@@ -124,6 +143,7 @@ impl ContactSheet {
             MenuId::File => self.file_menu(cx),
             MenuId::Edit => self.edit_menu(cx),
             MenuId::View => self.view_menu(cx),
+            MenuId::Drive => self.drive_menu(cx),
             MenuId::History => self.history_menu(),
             MenuId::Help => self.help_menu(cx),
         };
@@ -166,6 +186,18 @@ impl ContactSheet {
 
     fn file_menu(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut rows = vec![
+            menu_item(
+                "menu-new",
+                assets::FILE_PLUS,
+                "New project",
+                Some(shortcut_label("N")),
+                true,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.close_menu(cx);
+                this.new_project(cx);
+            }))
+            .into_any_element(),
             menu_item(
                 "menu-open",
                 assets::FOLDER,
@@ -382,17 +414,26 @@ impl ContactSheet {
     }
 
     fn view_menu(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let themes = [
-            theme::Theme::Light,
-            theme::Theme::Dark,
-            theme::Theme::OneDark,
-            theme::Theme::Monokai,
-            theme::Theme::Catppuccin,
+        let mut rows: Vec<AnyElement> = vec![
+            menu_item(
+                "menu-preview",
+                assets::IMAGE,
+                "Open preview window",
+                Some(shift_shortcut_label("P")),
+                true,
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.close_menu(cx);
+                this.open_preview_window(window, cx);
+            }))
+            .into_any_element(),
+            separator(),
         ];
-        let mut rows: Vec<AnyElement> = themes
-            .into_iter()
-            .map(|choice| self.theme_menu_item(choice, cx))
-            .collect();
+        rows.extend(
+            theme::Theme::ALL
+                .into_iter()
+                .map(|choice| self.theme_menu_item(choice, cx)),
+        );
         rows.push(separator());
         rows.push(
             menu_item(
@@ -449,6 +490,100 @@ impl ContactSheet {
             .into_any_element()
     }
 
+    fn drive_menu(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut rows = Vec::new();
+        let Some(account) = self.drive_account.clone() else {
+            rows.push(section_label("Google Drive"));
+            rows.push(
+                menu_item(
+                    "drive-link",
+                    assets::EXTERNAL_LINK,
+                    if self.drive_linking {
+                        "Waiting for browser…"
+                    } else {
+                        "Link Google Drive…"
+                    },
+                    None,
+                    !self.drive_linking,
+                )
+                .when(!self.drive_linking, |item| {
+                    item.on_click(cx.listener(|this, _, _, cx| {
+                        this.link_google_drive(cx);
+                    }))
+                })
+                .into_any_element(),
+            );
+            return rows;
+        };
+
+        let can_use =
+            !self.drive_linking && self.drive_download.is_none() && self.exporting.is_none();
+        rows.push(section_label("Google Drive"));
+        rows.push(
+            div()
+                .h(px(24.0))
+                .px(px(10.0))
+                .flex()
+                .items_center()
+                .child(
+                    mono_text(theme::TEXT_META, theme::faint())
+                        .truncate()
+                        .child(account.label()),
+                )
+                .into_any_element(),
+        );
+        rows.push(separator());
+        rows.push(
+            menu_item(
+                "drive-import",
+                assets::FOLDER_PLUS,
+                "Import from Drive…",
+                None,
+                can_use,
+            )
+            .when(can_use, |item| {
+                item.on_click(cx.listener(|this, _, _, cx| {
+                    this.open_drive_picker(DriveMode::Import, cx);
+                }))
+            })
+            .into_any_element(),
+        );
+        rows.push(
+            menu_item(
+                "drive-export",
+                assets::UPLOAD,
+                "Export sheet to Drive…",
+                None,
+                can_use,
+            )
+            .when(can_use, |item| {
+                item.on_click(cx.listener(|this, _, _, cx| {
+                    this.open_drive_picker(DriveMode::Export, cx);
+                }))
+            })
+            .into_any_element(),
+        );
+        let can_unlink =
+            !self.drive_linking && self.drive_download.is_none() && self.exporting.is_none();
+        rows.push(separator());
+        rows.push(
+            menu_item(
+                "drive-unlink",
+                assets::X,
+                "Unlink Google Drive",
+                None,
+                can_unlink,
+            )
+            .when(can_unlink, |item| {
+                item.on_click(cx.listener(|this, _, _, cx| {
+                    this.unlink_google_drive(cx);
+                }))
+            })
+            .into_any_element(),
+        );
+        rows
+    }
+
     fn history_menu(&mut self) -> Vec<AnyElement> {
         let entries: Vec<String> = self.log.iter().rev().take(8).cloned().collect();
         if entries.is_empty() {
@@ -489,10 +624,136 @@ impl ContactSheet {
             menu_item("menu-about", assets::INFO, "About", None, true)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.menu_open = None;
-                    this.about_open = true;
-                    cx.notify();
+                    this.open_about_window(cx);
                 }))
                 .into_any_element(),
+        ]
+    }
+}
+
+impl ContactSheet {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn sync_native_menus(&self, cx: &mut Context<Self>) {
+        cx.set_menus(self.native_menus());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn sync_native_menus(&self, _cx: &mut Context<Self>) {}
+
+    #[cfg(target_os = "macos")]
+    fn native_menus(&self) -> Vec<Menu> {
+        let app_menu = Menu {
+            name: "Slate".into(),
+            items: vec![
+                MenuItem::action("About Slate", About),
+                MenuItem::separator(),
+                MenuItem::action("Hide Slate", HideSlate),
+                MenuItem::action("Hide Others", HideOthers),
+                MenuItem::separator(),
+                MenuItem::os_submenu("Services", SystemMenuType::Services),
+                MenuItem::separator(),
+                MenuItem::action("Quit Slate", Quit),
+            ],
+        };
+
+        let mut file_items = vec![
+            MenuItem::action("New project", NewProject),
+            MenuItem::action("Open project…", OpenProject),
+        ];
+        if !self.recent_projects.is_empty() {
+            file_items.push(MenuItem::submenu(Menu {
+                name: "Recent".into(),
+                items: self
+                    .recent_projects
+                    .iter()
+                    .take(4)
+                    .map(|recent| {
+                        MenuItem::action(
+                            recent.name.clone(),
+                            OpenRecent {
+                                path: recent.path.clone(),
+                            },
+                        )
+                    })
+                    .collect(),
+            }));
+        }
+        file_items.extend([
+            MenuItem::separator(),
+            MenuItem::action("Save", SaveProject),
+            MenuItem::action("Save as…", SaveAs),
+            MenuItem::action("Save sheet", SaveSheet),
+            MenuItem::separator(),
+            MenuItem::action("Import files…", ImportFiles),
+            MenuItem::action("Import folder…", ImportFolder),
+            MenuItem::separator(),
+            MenuItem::action("Export PDF…", ExportSheet),
+        ]);
+
+        let edit_items = vec![
+            MenuItem::action("Undo", Undo),
+            MenuItem::action("Redo", Redo),
+            MenuItem::separator(),
+            MenuItem::action("Select all visible", SelectAllPhotos),
+            MenuItem::action("Deselect all", DeselectPhotos),
+            MenuItem::action("Invert selection", InvertSelection),
+            MenuItem::separator(),
+            MenuItem::action("Remove from project", RemoveSelected),
+        ];
+
+        let mut view_items = vec![
+            MenuItem::action("Open preview window", OpenPreview),
+            MenuItem::separator(),
+        ];
+        view_items.extend(theme::Theme::ALL.into_iter().map(|choice| {
+            let label = if self.theme == choice {
+                format!("✓ {}", choice.label())
+            } else {
+                choice.label().to_string()
+            };
+            MenuItem::action(label, SetTheme { theme: choice })
+        }));
+        view_items.push(MenuItem::separator());
+        view_items.push(MenuItem::action("Reset panel widths", ResetPanels));
+
+        let drive_items = if self.drive_account.is_some() {
+            vec![
+                MenuItem::action("Import from Drive…", ImportDrive),
+                MenuItem::action("Export sheet to Drive…", ExportDrive),
+                MenuItem::separator(),
+                MenuItem::action("Unlink Google Drive", UnlinkDrive),
+            ]
+        } else {
+            vec![MenuItem::action("Link Google Drive…", LinkDrive)]
+        };
+
+        let help_items = vec![
+            MenuItem::action("Slate website", OpenWebsite),
+            MenuItem::action("Report an issue", ReportIssue),
+        ];
+
+        vec![
+            app_menu,
+            Menu {
+                name: "File".into(),
+                items: file_items,
+            },
+            Menu {
+                name: "Edit".into(),
+                items: edit_items,
+            },
+            Menu {
+                name: "View".into(),
+                items: view_items,
+            },
+            Menu {
+                name: "Drive".into(),
+                items: drive_items,
+            },
+            Menu {
+                name: "Help".into(),
+                items: help_items,
+            },
         ]
     }
 }

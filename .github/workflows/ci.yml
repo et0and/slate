@@ -63,6 +63,19 @@ jobs:
             libxcb-composite0-dev \
             libxcb-damage0-dev
 
+      - name: Check for committed OAuth credentials
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          if git grep -I -l -e "GOCSPX""-" -- .; then
+            echo "::error::Google OAuth client secret is present in the repository."
+            exit 1
+          fi
+          if git ls-files | grep -E '(^|/)(google-oauth|google-drive)\.json$|(^|/)client_secret_.*\.json$'; then
+            echo "::error::Google OAuth credential file is tracked."
+            exit 1
+          fi
+
       - name: Check formatting
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check

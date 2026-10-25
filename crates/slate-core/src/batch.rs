@@ -73,6 +73,36 @@ pub fn sanitize_fragment(input: &str) -> String {
         .to_string()
 }
 
+fn expand_date_tokens(value: &str, photo: &Photo) -> String {
+    let (date, time) = photo
+        .captured_at
+        .as_deref()
+        .and_then(|value| value.split_once(' '))
+        .unwrap_or(("", ""));
+    let time = time.replace(':', "-");
+    let datetime = if date.is_empty() || time.is_empty() {
+        String::new()
+    } else {
+        format!("{date}_{time}")
+    };
+    let year = date.get(0..4).unwrap_or("");
+    let month = date.get(5..7).unwrap_or("");
+    let day = date.get(8..10).unwrap_or("");
+    let hour = time.get(0..2).unwrap_or("");
+    let minute = time.get(3..5).unwrap_or("");
+    let second = time.get(6..8).unwrap_or("");
+    value
+        .replace("{date}", date)
+        .replace("{time}", &time)
+        .replace("{datetime}", &datetime)
+        .replace("{year}", year)
+        .replace("{month}", month)
+        .replace("{day}", day)
+        .replace("{hour}", hour)
+        .replace("{minute}", minute)
+        .replace("{second}", second)
+}
+
 fn target_name_parts(
     photo: &Photo,
     number: u32,
@@ -85,6 +115,8 @@ fn target_name_parts(
         number,
         width = usize::from(padding.clamp(1, 8))
     );
+    let prefix = sanitize_fragment(&expand_date_tokens(prefix, photo));
+    let suffix = sanitize_fragment(&expand_date_tokens(suffix, photo));
     let extension = photo.extension();
     let stem = format!("{prefix}{padded}{suffix}");
     if extension.is_empty() {
@@ -98,8 +130,8 @@ fn target_name(photo: &Photo, number: u32, options: &RenameOptions) -> String {
     target_name_parts(
         photo,
         number,
-        &sanitize_fragment(&options.prefix),
-        &sanitize_fragment(&options.suffix),
+        &options.prefix,
+        &options.suffix,
         options.padding,
     )
 }
@@ -111,8 +143,6 @@ pub fn preview_name(photo: &Photo, number: u32, options: &RenameOptions) -> Stri
 
 pub fn plan_rename(project: &Project, selected: &[PhotoId], options: &RenameOptions) -> RenamePlan {
     let selected: HashSet<PhotoId> = selected.iter().copied().collect();
-    let prefix = sanitize_fragment(&options.prefix);
-    let suffix = sanitize_fragment(&options.suffix);
     let mut plan = RenamePlan::default();
     let photos: Vec<&Photo> = if selected.len().saturating_mul(4) < project.photos.len() {
         let mut positions: Vec<usize> = selected
@@ -136,8 +166,8 @@ pub fn plan_rename(project: &Project, selected: &[PhotoId], options: &RenameOpti
         let name = target_name_parts(
             photo,
             options.start.saturating_add(plan.entries.len() as u32),
-            &prefix,
-            &suffix,
+            &options.prefix,
+            &options.suffix,
             options.padding,
         );
         let to = photo
@@ -480,6 +510,30 @@ mod tests {
             "do not overwrite"
         );
         assert!(original.exists());
+    }
+
+    #[test]
+    fn date_time_tokens_use_the_capture_timestamp() {
+        let mut photo = Photo::new(
+            PhotoId(1),
+            PathBuf::from("/tmp/one.jpg"),
+            PhotoSize::new(10, 10),
+            1,
+        );
+        photo.captured_at = Some("2025-08-17 09:41:03".into());
+        let options = RenameOptions {
+            prefix: "{datetime}-".into(),
+            start: 7,
+            padding: 2,
+            suffix: "-{year}".into(),
+        };
+        assert_eq!(
+            preview_name(&photo, 7, &options),
+            "2025-08-17_09-41-03-07-2025.jpg"
+        );
+
+        photo.captured_at = None;
+        assert_eq!(preview_name(&photo, 7, &options), "-07-.jpg");
     }
 
     #[test]

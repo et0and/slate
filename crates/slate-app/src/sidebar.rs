@@ -1,13 +1,18 @@
 //! Left rail: import, search, tags, rename and activity.
 
-use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, prelude::*, px, rgba};
+use gpui::{
+    AnyElement, Context, ElementId, MouseButton, SharedString, Window, div, prelude::*, px, rgba,
+};
 
 use slate_core::batch;
 use slate_core::model::Filter;
 
 use crate::app::ContactSheet;
+use crate::assets;
 use crate::theme;
-use crate::widgets::{button, group_label, label, micro, mono_text, stepper, text_button, ui_text};
+use crate::widgets::{
+    button, group_label, icon_button, label, micro, mono_text, stepper, text_button, ui_text,
+};
 
 impl ContactSheet {
     pub(crate) fn render_sidebar(
@@ -212,6 +217,39 @@ impl ContactSheet {
                     ),
             )
             .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(label("Date tokens"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .child(text_button("rename-date-token", "{date}").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.append_rename_token("{date}", cx)
+                                }),
+                            ))
+                            .child(text_button("rename-time-token", "{time}").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.append_rename_token("{time}", cx)
+                                }),
+                            ))
+                            .child(text_button("rename-datetime-token", "{datetime}").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.append_rename_token("{datetime}", cx)
+                                }),
+                            )),
+                    )
+                    .child(
+                        mono_text(theme::TEXT_MICRO, theme::faint())
+                            .line_height(px(14.0))
+                            .child("Use in prefix or suffix; falls back to the file date."),
+                    ),
+            )
+            .child(
                 button("rename-review", "Review")
                     .w_full()
                     .on_click(cx.listener(|this, _, _, cx| this.preview_rename(cx))),
@@ -226,6 +264,16 @@ impl ContactSheet {
             .bg(theme::panel())
             .child(
                 div()
+                    .h(px(theme::WINDOW_CHROME_TOP))
+                    .w_full()
+                    .flex_shrink_0()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, _, window, _| window.start_window_move()),
+                    ),
+            )
+            .child(
+                div()
                     .id("sidebar-scroll")
                     .flex_1()
                     .min_h(px(0.0))
@@ -236,23 +284,39 @@ impl ContactSheet {
                             .pt(px(14.0))
                             .pb(px(10.0))
                             .flex()
-                            .flex_col()
-                            .gap(px(4.0))
+                            .items_start()
+                            .justify_between()
+                            .gap(px(8.0))
                             .child(
-                                ui_text(theme::TEXT_TITLE, theme::ink())
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .truncate()
-                                    .child(self.project.name.clone()),
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(4.0))
+                                    .child(
+                                        ui_text(theme::TEXT_TITLE, theme::ink())
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .truncate()
+                                            .child(self.project.name.clone()),
+                                    )
+                                    .child(
+                                        mono_text(theme::TEXT_META, theme::faint())
+                                            .truncate()
+                                            .child(
+                                                self.project_path
+                                                    .as_ref()
+                                                    .map(|path| compact_path(path))
+                                                    .unwrap_or_else(|| "No file".to_string()),
+                                            ),
+                                    ),
                             )
                             .child(
-                                mono_text(theme::TEXT_META, theme::faint())
-                                    .truncate()
-                                    .child(
-                                        self.project_path
-                                            .as_ref()
-                                            .map(|path| compact_path(path))
-                                            .unwrap_or_else(|| "No file".to_string()),
-                                    ),
+                                icon_button("sidebar-collapse", assets::CHEVRON_LEFT).on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.toggle_left_pane(window, cx)
+                                    }),
+                                ),
                             ),
                     )
                     .child(search_block)

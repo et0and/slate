@@ -9,8 +9,9 @@ Slate Desktop: a cross-platform desktop contact-sheet builder in Rust + GPUI 0.2
 - `cargo test --workspace` — core + app tests
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo fmt --all`
-- Release: push a `v*` tag; `.github/workflows/release.yml` builds and publishes
-  macOS, Linux and Windows artifacts.
+- Release: merge to `main`; semantic-release reads Conventional Commits, updates
+  the version and changelog, tags `v*`, creates the GitHub Release, and builds
+  macOS, Linux and Windows artifacts from that tag.
 - `cargo run -p slate-core --example sample_sheet` — regenerate `target/sample`
   and the design-check PDFs
 
@@ -23,16 +24,29 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 
 - One file per domain in core. Do not add GPUI dependencies to `slate-core`.
 - `slate-app` owns all dialogs, async tasks, thumbnails and interaction state.
-- Keep the app single-window unless the whole state model is reworked.
-- `panels.rs` owns the drag-resizable rail geometry. Keep the centre at
-  `CENTER_MIN` and clamp the widths on every render.
-- `menubar.rs` owns every in-window menu. Do not add native duplicate menus.
+- The main editing window is single-window. Sheet preview and About are native
+  GPUI child windows; keep them as read-only views over `ContactSheet` instead
+  of drawing modal overlays.
+- `panels.rs` owns the drag-resizable rail geometry and the collapsed state.
+  Keep the centre at `CENTER_MIN`, clamp the widths on every render, and use
+  `left_edge`/`right_edge` for library/marquee geometry. A collapsed pane
+  becomes a narrow rail with one expand button; resetting panel widths expands
+  both panes.
+- `menubar.rs` owns every menu. On macOS, build native menus with
+  `cx.set_menus` and hide the in-window topbar; on other platforms, keep the
+  in-window menus. Do not duplicate a command on the same platform. Sync the
+  native menus when recent projects, the theme or the Drive account changes.
 - `history.rs` snapshots project and selection before mutating actions. A
   successful file rename clears history; a save marks older snapshots dirty.
   Keep both invariants when adding commands.
 - `slate-core/store.rs` is a local SQLite catalogue only; `.slate` files
   stay portable. Remember a project after open/save and keep the recent list
-  bounded.
+  bounded. `store::data_directory()` is the one application-data path.
+- `drive.rs` owns Google OAuth, the refresh token, Drive listing and streaming
+  transfers. `drive_ui.rs` owns the Drive browser, thumbnails, selected stack,
+  setup notice and the import/export workflows. Keep every Drive command in the
+  Drive menu. Drive list responses must explicitly request `size` and
+  `thumbnailLink`; thumbnails are bounded and cached.
 
 ## Rules
 
@@ -42,13 +56,19 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   `oriented_size` account for it; PDF export applies the same turns. Never
   mutate the stored pixel width/height for rotation.
 - New project fields need `#[serde(default)]` and `Project::normalize` coverage
-  so existing project files keep opening.
+  so existing project files keep opening. Custom paper stores its free-entry
+  width and height on `SheetSettings`; read the final page size through
+  `paper_mm()`, never `Paper::mm()` directly. `Photo.captured_at` is
+  `YYYY-MM-DD HH:MM:SS`; bulk rename expands its date tokens from it.
 - Async project replacement increments `generation`; every thumbnail and import
   task checks it before touching state.
 - Keep background concurrency bounded: 3 import/thumbnail jobs.
 - The library uses `uniform_list`; never build all photo cells. Schedule thumbs
   only for the rendered range and keep the cache at `THUMB_CACHE`. The 10,000
-  photo path must stay virtualised.
+  photo path must stay virtualised. A left press toggles the cell and starts a
+  marquee; dragging selects or deselects every cell in the rectangle. Right
+  press opens the per-photo menu: rename, properties, reveal, copy path and
+  remove. Do not add a second click toggle.
 - JPEG thumbnails and PDF images go through `jpeg-decoder`'s reduced IDCT. Do
   not decode a full-resolution JPEG just to make a preview. Call
   `memory::release_free_pages` after a project open or import drains.
@@ -63,23 +83,45 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - Text field callbacks must not read or update the same field from inside its
   own event handler (GPUI entity re-borrow panic). Pass values through the
   callback instead.
+- Photo properties read EXIF on demand in a background task and cache the
+  result; never decode an image for the properties panel. Editing the capture
+  date updates `Photo.captured_at` in the `.slate` project only. Do not claim to
+  write EXIF to the original file without a separate, backed-up file-writing
+  path.
 - Rename targets are checked against existing files and duplicate targets before
   enabling Apply rename. Never add a clobbering rename path.
 - PDFs are flat, RGB, no layers. Images are capped at 300 DPI for their cell.
 - HEIC/RAW decoding goes through macOS `sips`; keep the fallback path working on
   other platforms by returning an error that the UI can display.
+- Google Drive uses a Desktop OAuth client with PKCE and the fixed loopback
+  callback `http://127.0.0.1:53682/oauth2callback`. Google still requires a
+  secret for this client at the token endpoint. Official builds use
+  `token_broker`; local development may use a local `client_secret`. Never
+  compile a secret or token into a binary, commit one, or log one.
+- Use `google-drive` for OAuth and folder listing. Transfers stream through
+  `reqwest`; never buffer a complete photo or PDF in memory. Avoid
+  `FileOps::create_or_update` because its update branch drops the patched
+  metadata. Drive downloads check `generation` before they touch the project.
 - `vendor/xattr` is a patched 0.2.3 crate: libc 0.2.191 removed `ENOATTR` on
   Linux. Remove the patch when `zed-async-tar` stops pulling xattr 0.2.
+
+- The macOS main-window title stays empty. Use the native app menu and native
+  command menus; do not set a visible main-window title. The titlebar is
+  transparent, so the sidebar, library and inspector backgrounds run to the
+  window edge. Keep `theme::WINDOW_CHROME_TOP` clear for the traffic lights and
+  use the sidebar strip as the drag region. Native child windows keep their
+  standard titles.
 
 ## Style
 
 High contrast, terminal-inspired: bundled Geist for names and actions, bundled
 Geist Mono for data and shortcut hints, 1 px rules, square controls, SVG icons,
 no rounded corners and no decorative gradients. Light and Dark are monochrome.
-One Dark, Monokai and Catppuccin use their palette accent only for selected
-badges, checkboxes, focused fields and primary controls; do not add other
-colour uses. Theme choices live under View only. Use shadows to lift the topbar, menus, photo frames, paper preview
-and modals; do not add glass or blur.
+Palette themes use their accent only for selected badges, checkboxes, focused
+fields and primary controls; do not add other colour uses. Theme choices live
+under View only and iterate `Theme::ALL`. Use the `TEXT_*` tokens; body copy is
+13 pt, labels 11 pt and metadata 10 pt. Use shadows to lift menus, photo frames,
+paper preview and modals; do not add glass or blur.
 
 Sentence case everywhere. Do not add uppercase copy, `to_uppercase()` calls or
 CSS `text-transform: uppercase`. Acronyms such as PDF, RGB and DPI are fine.
@@ -94,10 +136,11 @@ primary actions. Put every global command in the menu bar; do not duplicate
 export, save, import, selection or theme controls in the panels.
 
 The first panel starts with the compact project name and path and carries the
-selected count. The masthead carries only the menu bar; do not repeat the
-project name or add action buttons there. Menu boxes start at an 8 px inset so
-their labels sit on the same 16 px text gutter as the panels; hover fills the
-full topbar height. Do not switch menus on hover.
+selected count. On Windows and Linux the masthead carries only the in-window
+menu bar; on macOS the native menu bar replaces it. Do not repeat the project
+name or add action buttons there. Menu boxes start at an 8 px inset so their
+labels sit on the same 16 px text gutter as the panels; hover fills the full
+topbar height. Do not switch menus on hover.
 
 Use `theme.rs` tokens, `widgets.rs` controls and `assets.rs` icons instead of
 one-off styles. Load Geist in `main.rs`; never fall back to a system font.
@@ -106,12 +149,21 @@ one-off styles. Load Geist in `main.rs`; never fall back to a system font.
 
 - `.github/workflows/ci.yml` runs fmt, clippy and tests on macOS, Linux and
   Windows.
-- `.github/workflows/release.yml` packages a universal macOS `Slate.app`, a
-  Linux tarball and a Windows zip on `v*` tags.
+- `.github/workflows/release.yml` runs semantic-release on `main`, then packages
+  a universal macOS `Slate.app`, a Linux tarball and a Windows zip from the
+  release tag. See `docs/release.md` for the versioning and notarization rules.
+- Conventional commit subjects are release input. The first release is the
+  bootstrapped `v0.0.1` tag; after that `feat` is minor, `fix` and `perf` are
+  patch, breaking changes are major, and `chore`/docs do not release. Squash
+  titles must follow the same format.
 - Use only GitHub-owned actions, pinned to full commit SHAs. No third-party
   actions, no floating tags.
-- Do not add a third-party release action; the release job uses `gh` with the
-  workflow token.
+- Do not add a third-party release action; semantic-release is installed through
+  npm and the upload job uses `gh` with the workflow token.
+- macOS release builds use a Developer ID certificate, hardened runtime and
+  `notarytool` when the six secrets in `docs/release.md` are configured. Do not
+  commit certificates, passwords or notarization credentials. Without those
+  secrets the workflow produces an ad-hoc signed build and warns.
 
 ## Tests
 

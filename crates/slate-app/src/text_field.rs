@@ -639,7 +639,7 @@ impl Render for TextField {
             })
             .px(px(9.0))
             .font_family(theme::FONT_UI)
-            .text_size(px(11.5))
+            .text_size(px(theme::TEXT_BODY))
             .text_color(theme::ink())
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))

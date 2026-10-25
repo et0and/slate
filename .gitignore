@@ -1,3 +1,10 @@
 /target
+/node_modules
 .DS_Store
 *.swp
+google-oauth.json
+google-drive.json
+client_secret*.json
+.env
+.env.*
+!.env.example

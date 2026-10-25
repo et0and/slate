@@ -9,56 +9,89 @@ use gpui::{Rgba, rgb};
 pub const FONT_UI: &str = "Geist";
 pub const FONT_MONO: &str = "Geist Mono";
 
-pub const TEXT_TITLE: f32 = 12.5;
-pub const TEXT_BODY: f32 = 11.0;
-pub const TEXT_LABEL: f32 = 10.0;
-pub const TEXT_META: f32 = 9.0;
-pub const TEXT_MICRO: f32 = 8.5;
+/// macOS text styles, rounded to the nearest practical size. Body copy is
+/// 13 pt; 11 pt is the small label style and 10 pt is the mini/caption style.
+pub const TEXT_TITLE: f32 = 15.0;
+pub const TEXT_BODY: f32 = 13.0;
+pub const TEXT_LABEL: f32 = 11.0;
+pub const TEXT_META: f32 = 10.0;
+pub const TEXT_MICRO: f32 = 9.0;
 
-pub const CONTROL_H: f32 = 30.0;
-pub const ROW_H: f32 = 32.0;
-pub const TOPBAR_H: f32 = 44.0;
-pub const STATUS_H: f32 = 30.0;
-pub const FIELD: f32 = 32.0;
+pub const CONTROL_H: f32 = 32.0;
+pub const ROW_H: f32 = 36.0;
+pub const TOPBAR_H: f32 = 46.0;
+pub const STATUS_H: f32 = 32.0;
+pub const FIELD: f32 = 34.0;
+
+/// Space at the top of the window for the native traffic lights when the
+/// titlebar is transparent. Other platforms keep their in-window top bar.
+#[cfg(target_os = "macos")]
+pub const WINDOW_CHROME_TOP: f32 = 38.0;
+#[cfg(not(target_os = "macos"))]
+pub const WINDOW_CHROME_TOP: f32 = 0.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Theme {
     Light,
     Dark,
     OneDark,
-    Monokai,
+    Nord,
+    SolarizedLight,
+    SolarizedDark,
+    TokyoNight,
     Catppuccin,
+    RosePine,
+    Gruvbox,
+    Monokai,
 }
 
 impl Theme {
+    pub const ALL: [Theme; 11] = [
+        Self::Light,
+        Self::Dark,
+        Self::OneDark,
+        Self::Nord,
+        Self::SolarizedLight,
+        Self::SolarizedDark,
+        Self::TokyoNight,
+        Self::Catppuccin,
+        Self::RosePine,
+        Self::Gruvbox,
+        Self::Monokai,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Light => "Light",
             Self::Dark => "Dark",
             Self::OneDark => "One Dark",
-            Self::Monokai => "Monokai",
+            Self::Nord => "Nord",
+            Self::SolarizedLight => "Solarized Light",
+            Self::SolarizedDark => "Solarized Dark",
+            Self::TokyoNight => "Tokyo Night",
             Self::Catppuccin => "Catppuccin",
+            Self::RosePine => "Rosé Pine",
+            Self::Gruvbox => "Gruvbox",
+            Self::Monokai => "Monokai",
         }
+    }
+
+    pub fn is_dark(self) -> bool {
+        !matches!(self, Self::Light | Self::SolarizedLight)
     }
 
     fn index(self) -> u8 {
-        match self {
-            Self::Light => 0,
-            Self::Dark => 1,
-            Self::OneDark => 2,
-            Self::Monokai => 3,
-            Self::Catppuccin => 4,
-        }
+        Self::ALL
+            .iter()
+            .position(|theme| *theme == self)
+            .unwrap_or(0) as u8
     }
 
     fn from_index(index: u8) -> Self {
-        match index {
-            1 => Self::Dark,
-            2 => Self::OneDark,
-            3 => Self::Monokai,
-            4 => Self::Catppuccin,
-            _ => Self::Light,
-        }
+        Self::ALL
+            .get(index as usize)
+            .copied()
+            .unwrap_or(Self::Light)
     }
 
     fn palette(self) -> Palette {
@@ -102,18 +135,57 @@ impl Theme {
                 accent: 0x61afef,
                 accent_text: 0x11151b,
             },
-            Self::Monokai => Palette {
-                ink: 0xf8f8f2,
-                paper: 0x1f1f1c,
-                panel: 0x272822,
-                surface: 0x2f3028,
-                muted: 0xc5c5b9,
-                faint: 0x8a8b80,
-                rule: 0x46473d,
-                soft: 0x35362e,
-                photo: 0x2d2e26,
-                accent: 0xf92672,
-                accent_text: 0x1f1f1c,
+            Self::Nord => Palette {
+                ink: 0xeceff4,
+                paper: 0x2e3440,
+                panel: 0x292e39,
+                surface: 0x3b4252,
+                muted: 0xd8dee9,
+                faint: 0x7b88a1,
+                rule: 0x434c5e,
+                soft: 0x353c4a,
+                photo: 0x333a47,
+                accent: 0x88c0d0,
+                accent_text: 0x2e3440,
+            },
+            Self::SolarizedLight => Palette {
+                ink: 0x073642,
+                paper: 0xfdf6e3,
+                panel: 0xf7f0dd,
+                surface: 0xffffff,
+                muted: 0x586e75,
+                faint: 0x93a1a1,
+                rule: 0xe6dfcc,
+                soft: 0xeee8d5,
+                photo: 0xe9e3d0,
+                accent: 0x268bd2,
+                accent_text: 0xfdf6e3,
+            },
+            Self::SolarizedDark => Palette {
+                ink: 0xeee8d5,
+                paper: 0x002b36,
+                panel: 0x073642,
+                surface: 0x0a3a46,
+                muted: 0x93a1a1,
+                faint: 0x657b83,
+                rule: 0x174b57,
+                soft: 0x12404b,
+                photo: 0x0e3944,
+                accent: 0x2aa198,
+                accent_text: 0x002b36,
+            },
+            Self::TokyoNight => Palette {
+                ink: 0xc0caf5,
+                paper: 0x1a1b26,
+                panel: 0x16161e,
+                surface: 0x24283b,
+                muted: 0x9aa5ce,
+                faint: 0x565f89,
+                rule: 0x2f334d,
+                soft: 0x292e42,
+                photo: 0x202333,
+                accent: 0x7aa2f7,
+                accent_text: 0x1a1b26,
             },
             Self::Catppuccin => Palette {
                 ink: 0xcdd6f4,
@@ -127,6 +199,45 @@ impl Theme {
                 photo: 0x24243a,
                 accent: 0xcba6f7,
                 accent_text: 0x11111b,
+            },
+            Self::RosePine => Palette {
+                ink: 0xe0def4,
+                paper: 0x191724,
+                panel: 0x1f1d2e,
+                surface: 0x26233a,
+                muted: 0x908caa,
+                faint: 0x6e6a86,
+                rule: 0x403d52,
+                soft: 0x2a273f,
+                photo: 0x21202e,
+                accent: 0xc4a7e7,
+                accent_text: 0x191724,
+            },
+            Self::Gruvbox => Palette {
+                ink: 0xebdbb2,
+                paper: 0x1d2021,
+                panel: 0x282828,
+                surface: 0x32302f,
+                muted: 0xbdae93,
+                faint: 0x928374,
+                rule: 0x504945,
+                soft: 0x3c3836,
+                photo: 0x2f2e2b,
+                accent: 0xfabd2f,
+                accent_text: 0x1d2021,
+            },
+            Self::Monokai => Palette {
+                ink: 0xf8f8f2,
+                paper: 0x1f1f1c,
+                panel: 0x272822,
+                surface: 0x2f3028,
+                muted: 0xc5c5b9,
+                faint: 0x8a8b80,
+                rule: 0x46473d,
+                soft: 0x35362e,
+                photo: 0x2d2e26,
+                accent: 0xf92672,
+                accent_text: 0x1f1f1c,
             },
         }
     }
@@ -224,4 +335,94 @@ pub fn accent_text() -> Rgba {
 
 pub fn photo_bg() -> Rgba {
     rgb(palette().photo)
+}
+
+/// Match the native window chrome to the app palette. Without this, macOS
+/// keeps the titlebar in the system appearance even when the interface is
+/// explicitly light or dark.
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
+pub fn configure_window_chrome() {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    unsafe {
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        let windows: *mut Object = msg_send![app, windows];
+        let count: usize = msg_send![windows, count];
+        for index in 0..count {
+            let window: *mut Object = msg_send![windows, objectAtIndex: index];
+            if window.is_null() {
+                continue;
+            }
+            let () = msg_send![window, setTitlebarAppearsTransparent: true];
+            let () = msg_send![window, setTitlebarSeparatorStyle: 0usize];
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn configure_window_chrome() {}
+
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
+pub fn apply_native_appearance(theme: Theme) {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    #[link(name = "AppKit", kind = "framework")]
+    unsafe extern "C" {
+        static NSAppearanceNameAqua: *mut Object;
+        static NSAppearanceNameDarkAqua: *mut Object;
+    }
+
+    unsafe {
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        let name = if theme.is_dark() {
+            NSAppearanceNameDarkAqua
+        } else {
+            NSAppearanceNameAqua
+        };
+        let appearance: *mut Object = msg_send![class!(NSAppearance), appearanceNamed: name];
+        if !app.is_null() && !appearance.is_null() {
+            let () = msg_send![app, setAppearance: appearance];
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn apply_native_appearance(_theme: Theme) {}
+
+#[cfg(test)]
+mod tests {
+    use super::Theme;
+
+    #[test]
+    fn every_theme_has_a_stable_index() {
+        for theme in Theme::ALL {
+            assert_eq!(Theme::from_index(theme.index()), theme);
+        }
+    }
+
+    #[test]
+    fn light_theme_names_are_unique() {
+        for (index, theme) in Theme::ALL.iter().enumerate() {
+            assert!(
+                !Theme::ALL
+                    .iter()
+                    .skip(index + 1)
+                    .any(|other| other.label() == theme.label())
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_light_palettes_are_light() {
+        for theme in Theme::ALL {
+            assert_eq!(
+                theme.is_dark(),
+                !matches!(theme, Theme::Light | Theme::SolarizedLight)
+            );
+        }
+    }
 }

@@ -1,8 +1,11 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod about_window;
 mod app;
 mod assets;
 mod chrome;
+mod drive;
+mod drive_ui;
 mod history;
 mod inspector;
 mod library;
@@ -10,6 +13,7 @@ mod memory;
 mod menubar;
 mod overlay;
 mod panels;
+mod preview_window;
 mod sidebar;
 mod text_field;
 mod theme;
@@ -22,9 +26,11 @@ use gpui::{
 };
 
 use app::{
-    ContactSheet, DeselectPhotos, Dismiss, ExportSheet, ImportFiles, ImportFolder, OpenProject,
-    Quit, Redo, SaveAs, SaveProject, SelectAllPhotos, Undo,
+    ContactSheet, DeselectPhotos, Dismiss, ExportSheet, HideOthers, HideSlate, ImportFiles,
+    ImportFolder, NewProject, OpenPreview, OpenProject, Quit, Redo, SaveAs, SaveProject,
+    SelectAllPhotos, Undo,
 };
+use preview_window::{ClosePreview, NextPage, PreviousPage};
 
 #[cfg(target_os = "macos")]
 const PRIMARY_MODIFIER: &str = "cmd";
@@ -42,8 +48,10 @@ fn main() {
             assets::install_fonts(cx);
             let bindings = vec![
                 KeyBinding::new(&primary("q"), Quit, None),
+                KeyBinding::new(&primary("n"), NewProject, None),
                 KeyBinding::new(&primary("z"), Undo, None),
                 KeyBinding::new(&primary("shift-z"), Redo, None),
+                KeyBinding::new(&primary("shift-p"), OpenPreview, None),
                 KeyBinding::new(&primary("o"), OpenProject, None),
                 KeyBinding::new(&primary("s"), SaveProject, None),
                 KeyBinding::new(&primary("shift-s"), SaveAs, None),
@@ -53,6 +61,9 @@ fn main() {
                 KeyBinding::new(&primary("shift-a"), SelectAllPhotos, None),
                 KeyBinding::new(&primary("shift-d"), DeselectPhotos, None),
                 KeyBinding::new("escape", Dismiss, None),
+                KeyBinding::new("left", PreviousPage, Some("PreviewWindow")),
+                KeyBinding::new("right", NextPage, Some("PreviewWindow")),
+                KeyBinding::new("escape", ClosePreview, Some("PreviewWindow")),
                 KeyBinding::new("backspace", text_field::Backspace, Some("TextField")),
                 KeyBinding::new("delete", text_field::Delete, Some("TextField")),
                 KeyBinding::new("left", text_field::Left, Some("TextField")),
@@ -75,6 +86,8 @@ fn main() {
                     text_field::ShowCharacterPalette,
                     Some("TextField"),
                 ));
+                bindings.push(KeyBinding::new("cmd-h", HideSlate, None));
+                bindings.push(KeyBinding::new("cmd-alt-h", HideOthers, None));
                 bindings
             };
             cx.bind_keys(bindings);
@@ -87,8 +100,8 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(size(px(1080.0), px(720.0))),
                     titlebar: Some(TitlebarOptions {
-                        title: Some("Contact sheet".into()),
-                        appears_transparent: false,
+                        title: Some("".into()),
+                        appears_transparent: true,
                         ..Default::default()
                     }),
                     focus: true,

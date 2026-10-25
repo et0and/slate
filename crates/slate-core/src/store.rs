@@ -89,26 +89,31 @@ impl LocalStore {
     }
 }
 
-fn default_database_path() -> PathBuf {
+/// Slate's per-user application data. Tests and packaging can override it with
+/// `SLATE_DATA_DIR`.
+pub fn data_directory() -> PathBuf {
     if let Some(directory) = std::env::var_os("SLATE_DATA_DIR") {
-        return PathBuf::from(directory).join("metadata.sqlite3");
+        return PathBuf::from(directory);
     }
     #[cfg(target_os = "macos")]
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home)
-            .join("Library/Application Support/slate-desktop/metadata.sqlite3");
+        return PathBuf::from(home).join("Library/Application Support/slate-desktop");
     }
     #[cfg(target_os = "windows")]
     if let Some(app_data) = std::env::var_os("APPDATA") {
-        return PathBuf::from(app_data).join("slate-desktop/metadata.sqlite3");
+        return PathBuf::from(app_data).join("slate-desktop");
     }
     if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
-        return PathBuf::from(data_home).join("slate-desktop/metadata.sqlite3");
+        return PathBuf::from(data_home).join("slate-desktop");
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".local/share/slate-desktop/metadata.sqlite3");
+        return PathBuf::from(home).join(".local/share/slate-desktop");
     }
-    PathBuf::from("metadata.sqlite3")
+    PathBuf::from(".")
+}
+
+fn default_database_path() -> PathBuf {
+    data_directory().join("metadata.sqlite3")
 }
 
 #[cfg(test)]

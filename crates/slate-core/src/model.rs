@@ -188,6 +188,10 @@ pub struct Photo {
     /// User rotation in clockwise quarter turns.
     #[serde(default)]
     pub rotation: QuarterTurns,
+    /// Camera capture time as `YYYY-MM-DD HH:MM:SS`, falling back to the
+    /// file's modified time for images without EXIF metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captured_at: Option<String>,
 }
 
 impl Photo {
@@ -199,6 +203,7 @@ impl Photo {
             bytes,
             tags: Vec::new(),
             rotation: QuarterTurns::NONE,
+            captured_at: None,
         }
     }
 
@@ -395,18 +400,27 @@ pub enum Paper {
     A3,
     Letter,
     Tabloid,
+    Custom,
 }
 
 impl Paper {
-    pub const ALL: [Paper; 4] = [Paper::A4, Paper::A3, Paper::Letter, Paper::Tabloid];
+    pub const ALL: [Paper; 5] = [
+        Paper::A4,
+        Paper::A3,
+        Paper::Letter,
+        Paper::Tabloid,
+        Paper::Custom,
+    ];
 
-    /// Portrait width and height, in millimetres.
+    /// Portrait width and height for a fixed paper size, in millimetres.
+    /// Custom paper is resolved through [`SheetSettings::paper_mm`].
     pub fn mm(self) -> (f32, f32) {
         match self {
             Paper::A4 => (210.0, 297.0),
             Paper::A3 => (297.0, 420.0),
             Paper::Letter => (215.9, 279.4),
             Paper::Tabloid => (279.4, 431.8),
+            Paper::Custom => (210.0, 297.0),
         }
     }
 
@@ -416,6 +430,7 @@ impl Paper {
             Paper::A3 => "A3",
             Paper::Letter => "Letter",
             Paper::Tabloid => "Tabloid",
+            Paper::Custom => "Custom",
         }
     }
 
@@ -455,6 +470,10 @@ impl Orientation {
 #[serde(default)]
 pub struct SheetSettings {
     pub paper: Paper,
+    /// Used when `paper` is [`Paper::Custom`].
+    pub custom_paper_width_mm: f32,
+    /// Used when `paper` is [`Paper::Custom`].
+    pub custom_paper_height_mm: f32,
     pub orientation: Orientation,
     pub columns: u8,
     pub rows: u8,
@@ -473,6 +492,8 @@ impl Default for SheetSettings {
     fn default() -> Self {
         Self {
             paper: Paper::A4,
+            custom_paper_width_mm: 210.0,
+            custom_paper_height_mm: 297.0,
             orientation: Orientation::Portrait,
             columns: 3,
             rows: 4,
@@ -500,6 +521,14 @@ impl SheetSettings {
         if !self.gutter_mm.is_finite() {
             self.gutter_mm = 4.0;
         }
+        if !self.custom_paper_width_mm.is_finite() {
+            self.custom_paper_width_mm = 210.0;
+        }
+        if !self.custom_paper_height_mm.is_finite() {
+            self.custom_paper_height_mm = 297.0;
+        }
+        self.custom_paper_width_mm = self.custom_paper_width_mm.clamp(50.0, 2000.0);
+        self.custom_paper_height_mm = self.custom_paper_height_mm.clamp(50.0, 2000.0);
     }
 
     pub fn title_or<'a>(&'a self, project_name: &'a str) -> &'a str {
@@ -516,7 +545,11 @@ impl SheetSettings {
     }
 
     pub fn paper_mm(&self) -> (f32, f32) {
-        let (width, height) = self.paper.mm();
+        let (width, height) = if self.paper == Paper::Custom {
+            (self.custom_paper_width_mm, self.custom_paper_height_mm)
+        } else {
+            self.paper.mm()
+        };
         match self.orientation {
             Orientation::Portrait => (width, height),
             Orientation::Landscape => (height, width),
@@ -754,6 +787,19 @@ mod tests {
     }
 
     #[test]
+    fn custom_paper_sizes_are_clamped() {
+        let mut settings = SheetSettings {
+            paper: Paper::Custom,
+            custom_paper_width_mm: 2.0,
+            custom_paper_height_mm: 9_000.0,
+            ..Default::default()
+        };
+        settings.normalize();
+        assert_eq!(settings.custom_paper_width_mm, 50.0);
+        assert_eq!(settings.custom_paper_height_mm, 2000.0);
+    }
+
+    #[test]
     fn quarter_turns_reject_invalid_values() {
         assert!(QuarterTurns::try_from(4).is_err());
         assert!(serde_json::from_str::<QuarterTurns>("4").is_err());
@@ -845,7 +891,12 @@ mod tests {
             .tags
             .push("street".into());
         project.photo_mut(PhotoId(1)).unwrap().rotation = QuarterTurns::try_from(1).unwrap();
+        project.photo_mut(PhotoId(1)).unwrap().captured_at =
+            Some("2025-08-17 09:41:03".to_string());
         project.sheet.columns = 5;
+        project.sheet.paper = Paper::Custom;
+        project.sheet.custom_paper_width_mm = 120.0;
+        project.sheet.custom_paper_height_mm = 180.0;
         project.upsert_saved_sheet("street".into(), project.sheet.clone(), vec![id]);
 
         let directory = tempfile::tempdir().unwrap();
@@ -856,9 +907,16 @@ mod tests {
         assert_eq!(loaded.name, "Test");
         assert_eq!(loaded.photos.len(), 2);
         assert_eq!(loaded.sheet.columns, 5);
+        assert_eq!(loaded.sheet.paper, Paper::Custom);
+        assert_eq!(loaded.sheet.custom_paper_width_mm, 120.0);
+        assert_eq!(loaded.sheet.custom_paper_height_mm, 180.0);
         assert_eq!(loaded.saved_sheets.len(), 1);
         assert_eq!(loaded.saved_sheets[0].photo_ids, vec![id]);
         assert_eq!(loaded.photos[0].rotation.turns(), 1);
+        assert_eq!(
+            loaded.photos[0].captured_at.as_deref(),
+            Some("2025-08-17 09:41:03")
+        );
     }
 
     #[test]
@@ -924,6 +982,8 @@ mod tests {
         assert_eq!(project.sheet.columns, 2);
         assert_eq!(project.sheet.rows, 2);
         assert_eq!(project.sheet.paper, Paper::A4);
+        assert_eq!(project.sheet.custom_paper_width_mm, 210.0);
+        assert_eq!(project.sheet.custom_paper_height_mm, 297.0);
         assert!(project.sheet.captions);
         assert_eq!(project.photo_ids().len(), 0);
     }

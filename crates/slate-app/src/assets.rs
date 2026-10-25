@@ -22,7 +22,9 @@ macro_rules! icons {
 
 icons! {
     CHECK => "icons/check.svg",
+    COPY => "icons/copy.svg",
     CHEVRON_LEFT => "icons/chevron-left.svg",
+    CHEVRON_DOWN => "icons/chevron-down.svg",
     CHEVRON_RIGHT => "icons/chevron-right.svg",
     PLUS => "icons/plus.svg",
     MINUS => "icons/minus.svg",
@@ -32,6 +34,7 @@ icons! {
     FILE_PLUS => "icons/file-plus.svg",
     SAVE => "icons/save.svg",
     DOWNLOAD => "icons/download.svg",
+    UPLOAD => "icons/upload.svg",
     TRASH => "icons/trash.svg",
     EXTERNAL_LINK => "icons/external-link.svg",
     IMAGE => "icons/image.svg",
@@ -44,6 +47,7 @@ icons! {
     REDO => "icons/redo.svg",
     CLOCK => "icons/clock.svg",
     INFO => "icons/info.svg",
+    PENCIL => "icons/pencil.svg",
     LAYOUT => "icons/layout.svg",
 }
 

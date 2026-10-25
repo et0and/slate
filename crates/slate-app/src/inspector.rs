@@ -3,25 +3,28 @@
 use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, img, prelude::*, px};
 
 use slate_core::layout;
+use slate_core::model::Paper;
 
 use crate::app::ContactSheet;
 use crate::assets;
 use crate::theme;
 use crate::widgets::{
-    button, checkbox, group_label, icon, label, micro, mini_button, mono_text, setting_row,
-    stepper, ui_text,
+    button, checkbox, group_label, icon, icon_button, label, micro, mini_button, mono_text,
+    setting_row, stepper, ui_text,
 };
 
-const PREVIEW_WIDTH: f32 = 280.0;
+const PREVIEW_WIDTH: f32 = 300.0;
 
 impl ContactSheet {
-    pub(crate) fn render_inspector(
+    pub(crate) fn render_sheet_preview(
         &mut self,
-        _window: &mut Window,
+        width: f32,
+        current: usize,
+        interactive: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let page_count = self.page_count();
-        let current = self.preview_page.min(page_count.saturating_sub(1));
+        let current = current.min(page_count.saturating_sub(1));
         let scope = self.scope_ids();
         let per_page = self.project.sheet.per_page().max(1);
         let first_index = current.saturating_mul(per_page);
@@ -45,8 +48,9 @@ impl ContactSheet {
             .map(|photo| photo.id())
             .collect::<Vec<_>>();
         self.schedule_thumb_ids(page_ids, cx);
-        let scale = PREVIEW_WIDTH / sheet_layout.page_w_mm;
+        let scale = width / sheet_layout.page_w_mm;
         let preview_height = sheet_layout.page_h_mm * scale;
+        let type_scale = (width / PREVIEW_WIDTH).clamp(1.0, 3.0);
         let empty = page_photos.is_empty();
 
         let mut preview_children: Vec<AnyElement> = Vec::new();
@@ -70,7 +74,7 @@ impl ContactSheet {
                         .top(px(sheet_layout.margin_mm * scale))
                         .left(px(sheet_layout.margin_mm * scale))
                         .font_family(theme::FONT_MONO)
-                        .text_size(px(4.5))
+                        .text_size(px(4.5 * type_scale))
                         .text_color(theme::sheet_ink())
                         .child(self.project.sheet.title_or(&self.project.name).to_string())
                         .into_any_element(),
@@ -112,6 +116,7 @@ impl ContactSheet {
                         .left(px(cell_x))
                         .w(px(cell_w))
                         .h(px(cell_h))
+                        .overflow_hidden()
                         .border_1()
                         .border_color(theme::sheet_rule())
                         .child(
@@ -130,7 +135,7 @@ impl ContactSheet {
                                 .h(px((caption_h - 1.0).max(1.0)))
                                 .overflow_hidden()
                                 .font_family(theme::FONT_MONO)
-                                .text_size(px(4.2))
+                                .text_size(px(4.2 * type_scale))
                                 .text_color(theme::sheet_muted())
                                 .child(caption.clone())
                         }))
@@ -156,7 +161,7 @@ impl ContactSheet {
                         .top(px(rule_y + 2.0))
                         .left(px(sheet_layout.margin_mm * scale))
                         .font_family(theme::FONT_MONO)
-                        .text_size(px(4.2))
+                        .text_size(px(4.2 * type_scale))
                         .text_color(theme::sheet_muted())
                         .child(format!("Page {} of {page_count}", current + 1))
                         .into_any_element(),
@@ -178,7 +183,7 @@ impl ContactSheet {
         }
 
         let preview = div()
-            .w(px(PREVIEW_WIDTH))
+            .w(px(width))
             .h(px(preview_height))
             .relative()
             .overflow_hidden()
@@ -187,6 +192,28 @@ impl ContactSheet {
             .border_color(theme::rule())
             .shadow_lg()
             .children(preview_children);
+        if interactive {
+            preview
+                .id("preview-open")
+                .cursor_pointer()
+                .hover(|style| style.border_color(theme::accent()))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.open_preview_window(window, cx);
+                }))
+                .into_any_element()
+        } else {
+            preview.into_any_element()
+        }
+    }
+
+    pub(crate) fn render_inspector(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let current = self.current_page();
+        let page_count = self.page_count();
+        let preview = self.render_sheet_preview(PREVIEW_WIDTH, current, true, cx);
 
         let page_controls = div()
             .flex()
@@ -202,7 +229,7 @@ impl ContactSheet {
             )
             .child(
                 mono_text(theme::TEXT_META, theme::faint())
-                    .w(px(46.0))
+                    .w(px(52.0))
                     .text_align(gpui::TextAlign::Center)
                     .child(format!("{} / {}", current + 1, page_count)),
             )
@@ -223,7 +250,18 @@ impl ContactSheet {
             .flex()
             .flex_col()
             .gap(px(10.0))
-            .child(div().flex().justify_end().child(page_controls))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        icon_button("inspector-collapse", assets::CHEVRON_RIGHT).on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_right_pane(window, cx)),
+                        ),
+                    )
+                    .child(page_controls),
+            )
             .child(div().w_full().flex().justify_center().child(preview));
 
         let title_block = div()
@@ -275,32 +313,112 @@ impl ContactSheet {
             cx.listener(|this, _, _, cx| this.nudge_gutter(1.0, cx)),
         );
 
+        let paper = self.project.sheet.paper;
+        let paper_label = if paper == Paper::Custom {
+            format!(
+                "{:.0} × {:.0} mm",
+                self.project.sheet.custom_paper_width_mm, self.project.sheet.custom_paper_height_mm
+            )
+        } else {
+            paper.label().to_string()
+        };
+        let paper_control = button("paper-select", paper_label)
+            .px(px(9.0))
+            .text_size(px(theme::TEXT_LABEL))
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_paper_menu(cx)))
+            .child(icon(assets::CHEVRON_DOWN, 11.0, theme::muted()));
+        let paper_options: AnyElement = div()
+            .mx(px(20.0))
+            .mb(px(6.0))
+            .border_1()
+            .border_color(theme::rule())
+            .bg(theme::surface())
+            .shadow_sm()
+            .children(Paper::ALL.into_iter().enumerate().map(|(index, choice)| {
+                let active = choice == paper;
+                div()
+                    .id(ElementId::Name(SharedString::from(format!(
+                        "paper-option-{index}"
+                    ))))
+                    .h(px(32.0))
+                    .px(px(10.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .cursor_pointer()
+                    .border_b_1()
+                    .border_color(theme::rule())
+                    .bg(if active {
+                        theme::accent_soft()
+                    } else {
+                        theme::surface()
+                    })
+                    .hover(|style| style.bg(theme::accent_soft()))
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_paper(choice, cx)))
+                    .child(
+                        ui_text(
+                            theme::TEXT_BODY,
+                            if active { theme::ink() } else { theme::muted() },
+                        )
+                        .child(choice.label()),
+                    )
+                    .children(active.then(|| icon(assets::CHECK, 13.0, theme::accent())))
+                    .into_any_element()
+            }))
+            .into_any_element();
+        let paper_menu = self.paper_menu_open.then_some(paper_options);
+        let custom_paper = (paper == Paper::Custom).then(|| {
+            div()
+                .px(px(20.0))
+                .pb(px(10.0))
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .child(label("Custom size"))
+                .child(
+                    div()
+                        .flex()
+                        .items_end()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap(px(3.0))
+                                .child(label("Width"))
+                                .child(self.custom_width_field.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap(px(3.0))
+                                .child(label("Height"))
+                                .child(self.custom_height_field.clone()),
+                        ),
+                )
+                .child(
+                    mono_text(theme::TEXT_MICRO, theme::faint()).child("Millimetres; 50–2000 mm."),
+                )
+                .into_any_element()
+        });
+
         let settings = div()
             .flex()
             .flex_col()
             .pb(px(12.0))
             .child(group_label("Layout").px(px(20.0)).pt(px(12.0)).pb(px(4.0)))
-            .child(setting_row(
-                "Paper",
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(2.0))
-                    .child(
-                        mono_text(theme::TEXT_BODY, theme::ink())
-                            .child(self.project.sheet.paper.label()),
-                    )
-                    .child(
-                        mini_button("paper-next", assets::CHEVRON_RIGHT)
-                            .on_click(cx.listener(|this, _, _, cx| this.cycle_paper(cx))),
-                    ),
-            ))
+            .child(setting_row("Paper", paper_control))
+            .children(paper_menu)
+            .children(custom_paper)
             .child(setting_row(
                 "Orientation",
                 button("orientation-toggle", self.project.sheet.orientation.label())
-                    .h(px(26.0))
+                    .h(px(30.0))
                     .px(px(9.0))
-                    .text_size(px(theme::TEXT_META))
+                    .text_size(px(theme::TEXT_LABEL))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_orientation(cx))),
             ))
             .child(setting_row("Grid", grid_control))
@@ -366,7 +484,7 @@ impl ContactSheet {
                     )
                     .child(
                         mono_text(theme::TEXT_MICRO, theme::faint())
-                            .line_height(px(12.0))
+                            .line_height(px(14.0))
                             .child(meta),
                     )
                     .child(

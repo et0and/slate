@@ -50,8 +50,9 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 
 ## Rules
 
-- Sheet geometry must come from `layout::plan_sheet`; the preview and PDF must
-  never compute their own cells.
+- Sheet geometry must come from `layout::plan_page` / `plan_page_refs`; the
+  preview and streaming PDF must never compute their own cells. Keep
+  `plan_sheet` for tests and whole-plan diagnostics, not for export.
 - `Photo.rotation` is clockwise quarter turns. `Photo::aspect` and
   `oriented_size` account for it; PDF export applies the same turns. Never
   mutate the stored pixel width/height for rotation.
@@ -64,11 +65,24 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   task checks it before touching state.
 - Keep background concurrency bounded: 3 import/thumbnail jobs.
 - The library uses `uniform_list`; never build all photo cells. Schedule thumbs
-  only for the rendered range and keep the cache at `THUMB_CACHE`. The 10,000
-  photo path must stay virtualised. A left press toggles the cell and starts a
-  marquee; dragging selects or deselects every cell in the rectangle. Right
-  press opens the per-photo menu: rename, properties, reveal, copy path and
-  remove. Do not add a second click toggle.
+  only for the rendered range and keep the cache at `THUMB_CACHE`. A left press
+  toggles the cell and starts a marquee; dragging selects or deselects every
+  cell in the rectangle. Right press opens the per-photo menu: rename,
+  properties, reveal, copy path and remove. Do not add a second click toggle.
+- Empty selection means "all visible"; never materialise a 500k-photo selection
+  just to open a project.
+- Import probes metadata only. Generate a thumbnail when a cell becomes visible;
+  do not decode one preview per imported file just to evict it from the cache.
+  Append imported photos to `ViewState` incrementally; full view reconciles
+  happen once at import completion, not every 100 ms.
+- Photo edits use `history` field deltas (tags, rotation, capture date). Do not
+  add a full-project snapshot for a single-photo edit. Whole-project snapshots
+  are for sheet/saved-sheet changes, import and removal boundaries.
+- Save projects, plan renames and apply rename filesystem work on the background
+  executor. Never block the UI with a 500k-photo JSON write or file operation.
+- PDF export writes one page at a time. Do not create a `SheetPlan` or hold all
+  page pixels for a 500k-photo export; the output is already tens of thousands
+  of pages.
 - JPEG thumbnails and PDF images go through `jpeg-decoder`'s reduced IDCT. Do
   not decode a full-resolution JPEG just to make a preview. Call
   `memory::release_free_pages` after a project open or import drains.

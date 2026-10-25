@@ -53,6 +53,8 @@ Slate supports popular colour themes, with support for custom themes coming soon
 
 GPUI draws the interface on the GPU (Metal on macOS). Only visible thumbnails are uploaded as textures; image decoding, Drive transfers, PDF export and EXIF reads run on bounded background workers.
 
+Large imports read file and EXIF metadata first. Thumbnails decode only when a cell becomes visible. PDF pages stream to disk one at a time, and photo edits use field-level undo deltas instead of copying the whole library.
+
 Reproduce the core numbers with:
 
 ```sh

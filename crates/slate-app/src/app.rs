@@ -17,16 +17,14 @@ use image::{Frame, RgbaImage};
 use slate_core::PreviewImage;
 use slate_core::batch::{self, RenameOptions, RenamePlan};
 use slate_core::import::{self, Probe};
-use slate_core::model::{
-    Filter, Paper, Photo, PhotoId, Project, QuarterTurns, SheetId, SheetSettings,
-};
+use slate_core::model::{Filter, Paper, PhotoId, Project, QuarterTurns, SheetId, SheetSettings};
 use slate_core::pdf::{self, ExportSummary};
 use slate_core::store::{LocalStore, RecentProject};
 
 use crate::about_window::AboutWindow;
 use crate::drive::{self, DriveEntry};
 use crate::drive_ui::{DriveDownload, DriveMode, DriveNotice, DrivePicker};
-use crate::history::{History, Snapshot};
+use crate::history::{History, PhotoEdit, PhotoFieldChange, Snapshot, Step};
 use crate::memory;
 use crate::panels::{DIVIDER_W, PanelLayout, ResizeTarget};
 use crate::preview_window::PreviewWindow;
@@ -139,6 +137,7 @@ pub struct ContactSheet {
     pub(crate) import_queue: VecDeque<PathBuf>,
     pub(crate) importing_paths: HashSet<PathBuf>,
     pub(crate) imports_in_flight: usize,
+    pub(crate) import_selects: bool,
     pub(crate) import_state: Option<ImportState>,
     pub(crate) last_import_render: Instant,
 
@@ -148,6 +147,7 @@ pub struct ContactSheet {
     pub(crate) marquee: Option<Marquee>,
     pub(crate) paper_menu_open: bool,
     pub(crate) rename_pending: Option<Arc<RenamePlan>>,
+    pub(crate) rename_applying: bool,
     pub(crate) rename_photo_target: Option<PhotoId>,
     pub(crate) rename_photo_error: Option<String>,
     pub(crate) photo_context: Option<PhotoContextMenu>,
@@ -294,6 +294,7 @@ impl ContactSheet {
             import_queue: VecDeque::new(),
             importing_paths: HashSet::new(),
             imports_in_flight: 0,
+            import_selects: false,
             import_state: None,
             last_import_render: Instant::now(),
             preview_page: 0,
@@ -302,6 +303,7 @@ impl ContactSheet {
             marquee: None,
             paper_menu_open: false,
             rename_pending: None,
+            rename_applying: false,
             rename_photo_target: None,
             rename_photo_error: None,
             photo_context: None,
@@ -400,13 +402,6 @@ impl ContactSheet {
     pub(crate) fn scope_ids(&mut self) -> Arc<Vec<PhotoId>> {
         self.ensure_view();
         self.view.scope()
-    }
-
-    pub(crate) fn export_photos(&mut self) -> Vec<Photo> {
-        self.scope_ids()
-            .iter()
-            .filter_map(|id| self.project.photo(*id).cloned())
-            .collect()
     }
 
     // ----- status --------------------------------------------------------
@@ -642,6 +637,24 @@ impl ContactSheet {
         self.history.checkpoint(self.snapshot());
     }
 
+    fn push_photo_edit(
+        &mut self,
+        fields: Vec<PhotoFieldChange>,
+        before_selected: Arc<HashSet<PhotoId>>,
+        before_dirty: bool,
+    ) {
+        if fields.is_empty() {
+            return;
+        }
+        self.history.push_photo_edit(PhotoEdit::new(
+            fields,
+            before_selected,
+            Arc::clone(&self.selected),
+            before_dirty,
+            self.dirty,
+        ));
+    }
+
     fn remember_current_project(&mut self) {
         let Some(path) = self.project_path.clone() else {
             return;
@@ -703,11 +716,54 @@ impl ContactSheet {
         .any(|field| field.read(cx).focus_handle(cx).is_focused(window))
     }
 
+    fn apply_history_step(&mut self, step: Step, forward: bool, cx: &mut Context<Self>) {
+        match step {
+            Step::Snapshot(snapshot) => self.restore(snapshot, cx),
+            Step::PhotoEdit(edit) => self.apply_photo_edit(edit, forward, cx),
+        }
+    }
+
+    fn apply_photo_edit(&mut self, edit: PhotoEdit, forward: bool, cx: &mut Context<Self>) {
+        for field in edit.fields() {
+            match field {
+                PhotoFieldChange::Tags { id, before, after } => {
+                    if let Some(photo) = self.project.photo_mut(*id) {
+                        photo.tags = if forward {
+                            after.clone()
+                        } else {
+                            before.clone()
+                        };
+                    }
+                }
+                PhotoFieldChange::Rotation { id, before, after } => {
+                    if let Some(photo) = self.project.photo_mut(*id) {
+                        photo.rotation = if forward { *after } else { *before };
+                    }
+                }
+                PhotoFieldChange::CapturedAt { id, before, after } => {
+                    if let Some(photo) = self.project.photo_mut(*id) {
+                        photo.captured_at = if forward {
+                            after.clone()
+                        } else {
+                            before.clone()
+                        };
+                    }
+                }
+            }
+        }
+        self.selected = edit.selected(forward);
+        self.dirty = edit.dirty(forward);
+        self.rotated_thumbs.clear();
+        self.project_changed();
+        self.selection_changed();
+        self.refresh_and_notify(cx);
+    }
+
     pub(crate) fn undo(&mut self, cx: &mut Context<Self>) {
         if self.rename_pending.is_some() {
             self.set_status("Finish or cancel the rename first");
         } else if let Some(previous) = self.history.undo(self.snapshot()) {
-            self.restore(previous, cx);
+            self.apply_history_step(previous, false, cx);
             self.set_status("Undone");
             self.log("Undo");
         } else {
@@ -720,7 +776,7 @@ impl ContactSheet {
         if self.rename_pending.is_some() {
             self.set_status("Finish or cancel the rename first");
         } else if let Some(next) = self.history.redo(self.snapshot()) {
-            self.restore(next, cx);
+            self.apply_history_step(next, true, cx);
             self.set_status("Redone");
             self.log("Redo");
         } else {
@@ -827,13 +883,28 @@ impl ContactSheet {
             cx.notify();
             return;
         }
-        self.checkpoint();
+        let before_selected = Arc::clone(&self.selected);
+        let before_dirty = self.dirty;
+        let before_tags: Vec<(PhotoId, Vec<String>)> = ids
+            .iter()
+            .filter_map(|id| {
+                self.project
+                    .photo(*id)
+                    .map(|photo| (*id, photo.tags.clone()))
+            })
+            .collect();
         let changed = batch::add_tag(&mut self.project, &ids, &tag);
         self.project_changed();
         if changed > 0 {
             self.dirty = true;
-        } else {
-            self.history.discard_last();
+            let fields: Vec<PhotoFieldChange> = before_tags
+                .into_iter()
+                .filter_map(|(id, before)| {
+                    let after = self.project.photo(id)?.tags.clone();
+                    (before != after).then_some(PhotoFieldChange::Tags { id, before, after })
+                })
+                .collect();
+            self.push_photo_edit(fields, before_selected, before_dirty);
         }
         if clear_field {
             self.tag_field
@@ -852,13 +923,28 @@ impl ContactSheet {
             cx.notify();
             return;
         }
-        self.checkpoint();
+        let before_selected = Arc::clone(&self.selected);
+        let before_dirty = self.dirty;
+        let before_tags: Vec<(PhotoId, Vec<String>)> = ids
+            .iter()
+            .filter_map(|id| {
+                self.project
+                    .photo(*id)
+                    .map(|photo| (*id, photo.tags.clone()))
+            })
+            .collect();
         let changed = batch::remove_tag(&mut self.project, &ids, &tag);
         self.project_changed();
         if changed > 0 {
             self.dirty = true;
-        } else {
-            self.history.discard_last();
+            let fields: Vec<PhotoFieldChange> = before_tags
+                .into_iter()
+                .filter_map(|(id, before)| {
+                    let after = self.project.photo(id)?.tags.clone();
+                    (before != after).then_some(PhotoFieldChange::Tags { id, before, after })
+                })
+                .collect();
+            self.push_photo_edit(fields, before_selected, before_dirty);
         }
         self.tag_field
             .update(cx, |field, cx| field.set_value("", cx));
@@ -869,13 +955,28 @@ impl ContactSheet {
 
     pub(crate) fn clear_tags(&mut self, cx: &mut Context<Self>) {
         let ids = self.scope_ids();
-        self.checkpoint();
+        let before_selected = Arc::clone(&self.selected);
+        let before_dirty = self.dirty;
+        let before_tags: Vec<(PhotoId, Vec<String>)> = ids
+            .iter()
+            .filter_map(|id| {
+                self.project
+                    .photo(*id)
+                    .map(|photo| (*id, photo.tags.clone()))
+            })
+            .collect();
         let changed = batch::clear_tags(&mut self.project, &ids);
         self.project_changed();
         if changed > 0 {
             self.dirty = true;
-        } else {
-            self.history.discard_last();
+            let fields: Vec<PhotoFieldChange> = before_tags
+                .into_iter()
+                .filter_map(|(id, before)| {
+                    let after = self.project.photo(id)?.tags.clone();
+                    (before != after).then_some(PhotoFieldChange::Tags { id, before, after })
+                })
+                .collect();
+            self.push_photo_edit(fields, before_selected, before_dirty);
         }
         self.set_status(format!("Cleared tags on {changed} photo(s)"));
         self.log(format!("Tags cleared / {changed} photo(s)"));
@@ -966,11 +1067,22 @@ impl ContactSheet {
             cx.notify();
             return;
         }
-        self.checkpoint();
+        let before_selected = Arc::clone(&self.selected);
+        let before_dirty = self.dirty;
+        let before = photo.captured_at.clone();
         if let Some(photo) = self.project.photo_mut(photo_id) {
-            photo.captured_at = normalized;
+            photo.captured_at = normalized.clone();
         }
         self.dirty = true;
+        self.push_photo_edit(
+            vec![PhotoFieldChange::CapturedAt {
+                id: photo_id,
+                before,
+                after: normalized,
+            }],
+            before_selected,
+            before_dirty,
+        );
         self.photo_date_error = None;
         self.set_status("Capture date updated / project unsaved");
         self.log("Photo date edited");
@@ -1150,31 +1262,56 @@ impl ContactSheet {
     }
 
     pub(crate) fn preview_rename(&mut self, cx: &mut Context<Self>) {
+        if self.rename_applying {
+            self.set_status("Rename already in progress");
+            cx.notify();
+            return;
+        }
         let ids = self.scope_ids();
         if ids.is_empty() {
             self.set_status("Select photos to rename");
             cx.notify();
             return;
         }
-        let plan = batch::plan_rename(&self.project, &ids, &self.rename_options);
-        if plan.entries.is_empty() {
-            self.set_status("No changes / names already match");
-            self.log(format!("Rename: 0 changes / {} skipped", plan.skipped));
-            cx.notify();
-            return;
-        }
-        let conflicts = plan.conflicts;
-        if conflicts > 0 {
-            self.set_status(format!("{conflicts} rename conflict(s)"));
-        } else {
-            self.set_status(format!("Rename ready / {} files", plan.entries.len()));
-        }
-        self.rename_scroll = UniformListScrollHandle::default();
-        self.rename_pending = Some(Arc::new(plan));
+        let project = self.project.clone();
+        let options = self.rename_options.clone();
+        let generation = self.generation;
+        self.rename_pending = None;
+        self.set_status("Planning rename…");
         cx.notify();
+        cx.spawn(async move |this, cx| {
+            let plan = cx
+                .background_spawn(async move { batch::plan_rename(&project, &ids, &options) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                if plan.entries.is_empty() {
+                    this.set_status("No changes / names already match");
+                    this.log(format!("Rename: 0 changes / {} skipped", plan.skipped));
+                    cx.notify();
+                    return;
+                }
+                if plan.conflicts > 0 {
+                    this.set_status(format!("{} rename conflict(s)", plan.conflicts));
+                } else {
+                    this.set_status(format!("Rename ready / {} files", plan.entries.len()));
+                }
+                this.rename_scroll = UniformListScrollHandle::default();
+                this.rename_pending = Some(Arc::new(plan));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn apply_rename(&mut self, cx: &mut Context<Self>) {
+        if self.rename_applying {
+            self.set_status("Rename already in progress");
+            cx.notify();
+            return;
+        }
         let Some(plan) = self.rename_pending.take() else {
             return;
         };
@@ -1184,41 +1321,67 @@ impl ContactSheet {
             cx.notify();
             return;
         }
-        let report = batch::apply_rename(&mut self.project, &plan);
-        if report.renamed_count() > 0 {
-            self.project_changed();
-            self.dirty = true;
-            self.history.clear();
-            self.log("History cleared after rename");
-        }
-        for (_, error) in &report.errors {
-            self.log(format!("Rename error: {error}"));
-        }
-        if report.renamed_count() > 0 {
-            if let Some(path) = self.project_path.clone() {
-                self.write_project(path, cx);
-            } else {
-                self.log("Rename applied / project unsaved");
-            }
-        }
-        self.set_status(format!(
-            "Renamed {} file(s){}",
-            report.renamed_count(),
-            if report.errors.is_empty() {
-                String::new()
-            } else {
-                format!(" / {} error(s)", report.errors.len())
-            }
-        ));
-        self.log(format!(
-            "Rename / {} ok / {} error",
-            report.renamed_count(),
-            report.errors.len()
-        ));
+        self.rename_applying = true;
+        let generation = self.generation;
+        self.set_status("Renaming files…");
+        self.log(format!("Rename start / {} files", plan.entries.len()));
         cx.notify();
+        cx.spawn(async move |this, cx| {
+            let report = cx
+                .background_spawn(async move { batch::apply_rename_paths(&plan) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.rename_applying = false;
+                if this.generation != generation {
+                    return;
+                }
+                for (photo_id, path, _) in &report.renamed {
+                    if let Some(photo) = this.project.photo_mut(*photo_id) {
+                        photo.path = path.clone();
+                    }
+                }
+                if report.renamed_count() > 0 {
+                    this.project_changed();
+                    this.dirty = true;
+                    this.history.clear();
+                    this.log("History cleared after rename");
+                }
+                for (_, error) in &report.errors {
+                    this.log(format!("Rename error: {error}"));
+                }
+                if report.renamed_count() > 0 {
+                    if let Some(path) = this.project_path.clone() {
+                        this.write_project(path, cx);
+                    } else {
+                        this.log("Rename applied / project unsaved");
+                    }
+                }
+                this.set_status(format!(
+                    "Renamed {} file(s){}",
+                    report.renamed_count(),
+                    if report.errors.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" / {} error(s)", report.errors.len())
+                    }
+                ));
+                this.log(format!(
+                    "Rename / {} ok / {} error",
+                    report.renamed_count(),
+                    report.errors.len()
+                ));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        if self.rename_applying {
+            self.set_status("Rename already in progress");
+            cx.notify();
+            return;
+        }
         self.rename_pending = None;
         self.set_status("Rename cancelled");
         cx.notify();
@@ -1410,11 +1573,13 @@ impl ContactSheet {
         self.import_queue.clear();
         self.importing_paths.clear();
         self.imports_in_flight = 0;
+        self.import_selects = false;
         self.import_state = None;
         self.drive_picker = None;
         self.drive_notice = None;
         self.drive_download = None;
         self.rename_pending = None;
+        self.rename_applying = false;
         self.rename_photo_target = None;
         self.rename_photo_error = None;
         self.photo_context = None;
@@ -1523,6 +1688,7 @@ impl ContactSheet {
                 self.import_queue.clear();
                 self.importing_paths.clear();
                 self.imports_in_flight = 0;
+                self.import_selects = false;
                 self.import_state = None;
                 self.drive_picker = None;
                 self.drive_notice = None;
@@ -1533,7 +1699,9 @@ impl ContactSheet {
                 self.thumb_queue.clear();
                 self.thumbs_in_flight = 0;
                 self.grid_scroll = UniformListScrollHandle::default();
-                self.selected = Arc::new(project.photos.iter().map(|photo| photo.id()).collect());
+                // Empty means "all visible"; do not materialise a 500k-entry
+                // selection set just to open a large project.
+                self.selected = Arc::new(HashSet::new());
                 self.filter = Filter::All;
                 self.search.clear();
                 self.search_field
@@ -1551,6 +1719,7 @@ impl ContactSheet {
                 self.marquee = None;
                 self.paper_menu_open = false;
                 self.rename_pending = None;
+                self.rename_applying = false;
                 self.rename_photo_target = None;
                 self.rename_photo_error = None;
                 self.photo_context = None;
@@ -1603,22 +1772,46 @@ impl ContactSheet {
     }
 
     fn write_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        match self.project.save(&path) {
-            Ok(()) => {
-                self.project_path = Some(path.clone());
-                self.dirty = false;
-                self.history.mark_saved();
-                self.remember_current_project();
-                self.sync_native_menus(cx);
-                self.log("Write complete");
-                self.set_status(format!("Project written / {}", path.display()));
-            }
-            Err(error) => {
-                self.log(format!("Save failed: {error}"));
-                self.set_status(format!("Save failed / {error}"));
-            }
-        }
+        let project = self.project.clone();
+        let generation = self.generation;
+        let task_path = path.clone();
+        let was_dirty = self.dirty;
+        // Optimistically clear the dirty flag. Any edit during the background
+        // write sets it again, so completion only marks history saved when the
+        // snapshot still matches the live project.
+        self.dirty = false;
+        self.log(format!("Write start / {}", path.display()));
+        self.set_status(format!("Saving / {}", path.display()));
         cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { project.save(&task_path) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                match result {
+                    Ok(()) => {
+                        this.project_path = Some(path.clone());
+                        if !this.dirty {
+                            this.history.mark_saved();
+                        }
+                        this.remember_current_project();
+                        this.sync_native_menus(cx);
+                        this.log("Write complete");
+                        this.set_status(format!("Project written / {}", path.display()));
+                    }
+                    Err(error) => {
+                        this.dirty = was_dirty || this.dirty;
+                        this.log(format!("Save failed: {error}"));
+                        this.set_status(format!("Save failed / {error}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     // ----- import --------------------------------------------------------
@@ -1677,15 +1870,17 @@ impl ContactSheet {
     }
 
     fn enqueue_import(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        let existing: HashSet<PathBuf> = self
+        let existing: HashSet<&Path> = self
             .project
             .photos
             .iter()
-            .map(|photo| photo.path.clone())
+            .map(|photo| photo.path.as_path())
             .collect();
         let new_paths: Vec<PathBuf> = paths
             .into_iter()
-            .filter(|path| !existing.contains(path) && !self.importing_paths.contains(path))
+            .filter(|path| {
+                !existing.contains(path.as_path()) && !self.importing_paths.contains(path)
+            })
             .collect();
 
         if new_paths.is_empty() {
@@ -1696,6 +1891,8 @@ impl ContactSheet {
         }
 
         self.checkpoint();
+        self.ensure_view();
+        self.import_selects = !self.selected.is_empty();
         if is_untitled(&self.project.name)
             && let Some(name) = new_paths[0].parent().and_then(|parent| parent.file_name())
         {
@@ -1736,7 +1933,7 @@ impl ContactSheet {
             let task_path = path.clone();
             cx.spawn(async move |this, cx| {
                 let result = cx
-                    .background_spawn(async move { import::probe(&task_path, THUMB_EDGE) })
+                    .background_spawn(async move { import::probe(&task_path) })
                     .await;
                 let _ = this.update(cx, |this, cx| {
                     if this.generation != generation {
@@ -1768,7 +1965,6 @@ impl ContactSheet {
                 if let Some(photo) = self.project.photo_mut(id) {
                     photo.captured_at = probe.captured_at;
                 }
-                self.insert_thumb(id, ThumbState::Ready(render_image(probe.preview)));
                 id
             }
             Err(error) => {
@@ -1790,12 +1986,29 @@ impl ContactSheet {
             }
         };
 
+        let photo_index = self.project.photos.len() - 1;
+        let selected = if self.import_selects {
+            Arc::make_mut(&mut self.selected).insert(id);
+            true
+        } else {
+            false
+        };
+        let selected_empty = self.selected.is_empty();
+        let filter = self.filter.clone();
+        let search = self.search.clone();
+        self.view.append_imported(
+            photo_index,
+            &self.project.photos[photo_index],
+            &filter,
+            &search,
+            selected || selected_empty,
+            selected,
+        );
+
         if let Some(state) = &mut self.import_state {
             state.done += 1;
         }
         self.importing_paths.remove(&path);
-        Arc::make_mut(&mut self.selected).insert(id);
-        self.project_changed();
         self.dirty = true;
     }
 
@@ -1820,6 +2033,10 @@ impl ContactSheet {
         self.import_queue.clear();
         self.importing_paths.clear();
         self.imports_in_flight = 0;
+        self.import_selects = false;
+        // One full reconciliation at the end catches every incremental edge
+        // case without paying an O(N) rebuild on every import tick.
+        self.project_changed();
         memory::release_free_pages();
         self.refresh_and_notify(cx);
     }
@@ -1942,13 +2159,23 @@ impl ContactSheet {
         let Some(name) = self.project.photo(id).map(|photo| photo.file_name()) else {
             return;
         };
-        self.checkpoint();
+        let before_selected = Arc::clone(&self.selected);
+        let before_dirty = self.dirty;
+        let before = self.project.photo(id).map(|photo| photo.rotation());
         let Some(photo) = self.project.photo_mut(id) else {
             return;
         };
         photo.rotate_clockwise();
-        let degrees = photo.rotation().degrees();
+        let after = photo.rotation();
+        let degrees = after.degrees();
         self.dirty = true;
+        if let Some(before) = before {
+            self.push_photo_edit(
+                vec![PhotoFieldChange::Rotation { id, before, after }],
+                before_selected,
+                before_dirty,
+            );
+        }
         self.log(format!("Rotate / {name} / {degrees}°"));
         self.refresh_and_notify(cx);
     }
@@ -1977,14 +2204,23 @@ impl ContactSheet {
     // ----- export --------------------------------------------------------
 
     pub(crate) fn export_current(&mut self, cx: &mut Context<Self>) {
-        let photos = self.export_photos();
-        if photos.is_empty() {
+        let ids = self.scope_ids();
+        if ids.is_empty() {
             self.set_status("No photos to export");
             cx.notify();
             return;
         }
+        // Detach the export from ViewState so an import can keep appending
+        // without cloning the shared scope vector for every new photo.
+        let ids = Arc::new(ids.as_ref().clone());
         let title = self.project.sheet.title_or(&self.project.name).to_string();
-        self.begin_export(title.clone(), self.project.sheet.clone(), photos, cx);
+        self.begin_export(
+            title,
+            self.project.sheet.clone(),
+            self.project.clone(),
+            ids,
+            cx,
+        );
     }
 
     pub(crate) fn export_saved(&mut self, id: SheetId, cx: &mut Context<Self>) {
@@ -1997,24 +2233,27 @@ impl ContactSheet {
         else {
             return;
         };
-        let photos: Vec<Photo> = sheet
-            .photo_ids
-            .iter()
-            .filter_map(|id| self.project.photo(*id).cloned())
-            .collect();
-        if photos.is_empty() {
+        if sheet.photo_ids.is_empty() {
             self.set_status(format!("Sheet {} has no photos", sheet.name));
             cx.notify();
             return;
         }
-        self.begin_export(sheet.name.clone(), sheet.settings, photos, cx);
+        let ids = Arc::new(sheet.photo_ids.clone());
+        self.begin_export(
+            sheet.name.clone(),
+            sheet.settings,
+            self.project.clone(),
+            ids,
+            cx,
+        );
     }
 
     fn begin_export(
         &mut self,
         title: String,
         settings: SheetSettings,
-        photos: Vec<Photo>,
+        project: Project,
+        ids: Arc<Vec<PhotoId>>,
         cx: &mut Context<Self>,
     ) {
         if self.exporting.is_some() {
@@ -2024,7 +2263,6 @@ impl ContactSheet {
         }
         let directory = self.default_directory();
         let suggested = format!("{}.pdf", slug(&title));
-        let project_name = self.project.name.clone();
         cx.spawn(async move |this, cx| {
             let Ok(receiver) =
                 cx.update(|app| app.prompt_for_new_path(&directory, Some(&suggested)))
@@ -2038,7 +2276,7 @@ impl ContactSheet {
             let _ = this.update(cx, |this, cx| {
                 this.exporting = Some(output.display().to_string());
                 this.set_status(format!("Exporting / {}", output.display()));
-                this.log(format!("Export start / {} photos", photos.len()));
+                this.log(format!("Export start / {} photos", ids.len()));
                 cx.notify();
             });
 
@@ -2046,7 +2284,13 @@ impl ContactSheet {
             let export_output = output.clone();
             let result = cx
                 .background_spawn(async move {
-                    pdf::export_pdf(&project_name, &export_settings, &photos, &export_output)
+                    pdf::export_pdf_ids(
+                        &project.name,
+                        &export_settings,
+                        &project,
+                        &ids,
+                        &export_output,
+                    )
                 })
                 .await;
 

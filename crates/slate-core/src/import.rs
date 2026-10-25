@@ -61,7 +61,6 @@ pub struct Probe {
     pub width: u32,
     pub height: u32,
     pub bytes: u64,
-    pub preview: PreviewImage,
     /// EXIF capture time, or the file modified time when EXIF is absent.
     pub captured_at: Option<String>,
 }
@@ -140,17 +139,19 @@ pub fn file_size(path: &Path) -> u64 {
     std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
 }
 
-pub fn probe(path: &Path, max_edge: u32) -> Result<Probe> {
+/// Read file and EXIF metadata without decoding the image.
+///
+/// Thumbnails are decoded lazily when a cell becomes visible. This keeps a
+/// 500k-photo import from doing 500k image decodes whose previews would be
+/// evicted by the bounded thumbnail cache.
+pub fn probe(path: &Path) -> Result<Probe> {
     let bytes = file_size(path);
-    let image = load_oriented(path, Some(max_edge))
-        .with_context(|| format!("could not decode {}", path.display()))?;
-    let (width, height) = original_dimensions(path).unwrap_or((image.width(), image.height()));
-    let preview = PreviewImage::from_dynamic_image(image);
+    let (width, height) = original_dimensions(path)
+        .with_context(|| format!("could not read dimensions for {}", path.display()))?;
     Ok(Probe {
         width,
         height,
         bytes,
-        preview,
         captured_at: capture_datetime(path),
     })
 }
@@ -572,30 +573,25 @@ mod tests {
     }
 
     #[test]
-    fn probes_png_dimensions_and_preview() {
+    fn probes_png_dimensions_without_decoding() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("photo.png");
         let image: ImageBuffer<Rgb<u8>, _> =
             ImageBuffer::from_fn(400, 200, |x, _| Rgb([(x % 255) as u8, 20, 30]));
         image.save(&path).unwrap();
 
-        let probe = probe(&path, 64).unwrap();
+        let probe = probe(&path).unwrap();
         assert_eq!((probe.width, probe.height), (400, 200));
-        assert_eq!(probe.preview.width(), 64);
-        assert_eq!(probe.preview.height(), 32);
-        assert_eq!(probe.preview.image.as_raw().len(), 64 * 32 * 4);
         assert!(probe.bytes > 0);
     }
 
     #[test]
-    fn probes_jpeg_with_reduced_decode() {
+    fn probes_jpeg_dimensions_without_decoding() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("photo.jpg");
         write_test_jpeg(&path, 400, 200);
-        let probe = probe(&path, 64).unwrap();
+        let probe = probe(&path).unwrap();
         assert_eq!((probe.width, probe.height), (400, 200));
-        assert_eq!(probe.preview.width(), 64);
-        assert_eq!(probe.preview.height(), 32);
     }
 
     #[test]

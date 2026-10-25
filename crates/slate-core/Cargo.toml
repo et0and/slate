@@ -10,10 +10,10 @@ chrono.workspace = true
 image.workspace = true
 kamadak-exif.workspace = true
 jpeg-decoder = "0.3"
-printpdf.workspace = true
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+lopdf = "0.44"
 tempfile = "3"

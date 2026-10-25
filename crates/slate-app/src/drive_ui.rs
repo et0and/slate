@@ -493,14 +493,15 @@ impl ContactSheet {
             return;
         }
 
-        let photos = self.export_photos();
-        if photos.is_empty() {
+        let ids = self.scope_ids();
+        if ids.is_empty() {
             self.set_status("No photos to export");
             cx.notify();
             return;
         }
+        let ids = Arc::new(ids.as_ref().clone());
+        let project = self.project.clone();
         let title = self.project.sheet.title_or(&self.project.name).to_string();
-        let project_name = self.project.name.clone();
         let settings = self.project.sheet.clone();
         let file_name = format!("{}.pdf", crate::app::slug(&title));
         let now = SystemTime::now()
@@ -515,7 +516,7 @@ impl ContactSheet {
         self.set_status(format!("Exporting to Google Drive / {folder_name}"));
         self.log(format!(
             "Drive export start / {} photos / {}",
-            photos.len(),
+            ids.len(),
             folder_name
         ));
         cx.notify();
@@ -524,10 +525,11 @@ impl ContactSheet {
             let result = cx
                 .background_spawn(async move {
                     let result = (|| {
-                        let summary = slate_core::pdf::export_pdf(
-                            &project_name,
+                        let summary = slate_core::pdf::export_pdf_ids(
+                            &project.name,
                             &settings,
-                            &photos,
+                            &project,
+                            &ids,
                             &temp_path,
                         )?;
                         let uploaded = drive::upload_pdf(

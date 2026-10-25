@@ -215,7 +215,9 @@ pub fn plan_rename(project: &Project, selected: &[PhotoId], options: &RenameOpti
     plan
 }
 
-pub fn apply_rename(project: &mut Project, plan: &RenamePlan) -> RenameReport {
+/// Apply the filesystem half of a rename plan. The caller owns the project
+/// update so this can run on the background executor.
+pub fn apply_rename_paths(plan: &RenamePlan) -> RenameReport {
     let mut report = RenameReport::default();
     for entry in &plan.entries {
         if entry.conflict.is_some() {
@@ -236,14 +238,21 @@ pub fn apply_rename(project: &mut Project, plan: &RenamePlan) -> RenameReport {
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                if let Some(photo) = project.photo_mut(entry.photo_id) {
-                    photo.path = entry.to.clone();
-                }
                 report
                     .renamed
                     .push((entry.photo_id, entry.to.clone(), name));
             }
             Err(error) => report.errors.push((entry.photo_id, error.to_string())),
+        }
+    }
+    report
+}
+
+pub fn apply_rename(project: &mut Project, plan: &RenamePlan) -> RenameReport {
+    let report = apply_rename_paths(plan);
+    for (photo_id, path, _) in &report.renamed {
+        if let Some(photo) = project.photo_mut(*photo_id) {
+            photo.path = path.clone();
         }
     }
     report

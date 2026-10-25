@@ -82,6 +82,55 @@ impl ViewState {
         self.untagged
     }
 
+    /// Add one freshly imported photo without rescanning the whole project.
+    ///
+    /// Imports append to the project, so visible and scope keep their order.
+    /// If the search index is not ready, fall back to a full rebuild later.
+    pub(crate) fn append_imported(
+        &mut self,
+        photo_index: usize,
+        photo: &slate_core::model::Photo,
+        filter: &Filter,
+        search: &str,
+        in_scope: bool,
+        selected: bool,
+    ) {
+        if self.project_dirty || self.filter_dirty || self.selection_dirty {
+            return;
+        }
+        let needle = search.trim().to_lowercase();
+        if !needle.is_empty() && !self.search_names_ready {
+            self.filter_dirty = true;
+            return;
+        }
+
+        if self.search_names_ready {
+            self.search_names.push(photo.file_name().to_lowercase());
+        }
+
+        if photo.tags.is_empty() {
+            self.untagged += 1;
+        } else {
+            let tags = Arc::make_mut(&mut self.tags);
+            for tag in &photo.tags {
+                *tags.entry(tag.clone()).or_insert(0) += 1;
+            }
+        }
+
+        let visible = filter.matches(photo)
+            && (needle.is_empty()
+                || self
+                    .search_names
+                    .last()
+                    .is_some_and(|name| name.contains(&needle)));
+        if visible {
+            Arc::make_mut(&mut self.visible).push(photo_index);
+        }
+        if in_scope && (selected || visible) {
+            Arc::make_mut(&mut self.scope).push(photo.id());
+        }
+    }
+
     fn rebuild_project(&mut self, project: &Project) {
         let mut tags = BTreeMap::new();
         let mut untagged = 0;
@@ -211,6 +260,26 @@ mod tests {
         let none = HashSet::new();
         view.ensure(&project, &Filter::All, "B.PNG", &none);
         assert_eq!(view.visible().as_slice(), &[1]);
+    }
+
+    #[test]
+    fn imported_photos_append_to_visible_scope_and_tags() {
+        let mut project = project();
+        let mut view = ViewState::new();
+        let none = HashSet::new();
+        view.ensure(&project, &Filter::All, "", &none);
+
+        project.add_photo("/tmp/d.jpg".into(), 100, 100, 1);
+        project.photo_mut(PhotoId(4)).unwrap().tags = vec!["new".into()];
+        let photo = &project.photos[3];
+        view.append_imported(3, photo, &Filter::All, "", true, false);
+
+        assert_eq!(view.visible().as_slice(), &[0, 1, 2, 3]);
+        assert_eq!(
+            view.scope().as_slice(),
+            &[PhotoId(1), PhotoId(2), PhotoId(3), PhotoId(4)]
+        );
+        assert_eq!(view.tags().get("new"), Some(&1));
     }
 
     #[test]

@@ -23,14 +23,20 @@ Every push to `main`:
 5. Builds the universal macOS `Slate.app`, the Linux tarball and the Windows zip
    from the tag, then uploads all three assets to the release.
 
-The first release is `v1.0.0` because semantic-release starts there when no
-previous tag exists. If you want to keep the app on `0.x`, create and push a
-baseline tag before merging the first release:
+### First release
+
+semantic-release normally starts at `v1.0.0` when no previous tag exists. Slate
+starts at `v0.0.1`, so bootstrap the first tag once:
 
 ```sh
-git tag -a v0.1.0 -m "Slate 0.1.0" <commit>
-git push origin v0.1.0
+git tag -a v0.0.1 -m "Slate 0.0.1" <merge-commit>
+git push origin v0.0.1
+gh workflow run release.yml -f tag=v0.0.1
 ```
+
+The manual run builds the artifacts from the tag and creates the GitHub Release.
+After `v0.0.1`, every push to `main` releases automatically: `feat` is minor and
+`fix`/`perf` is patch.
 
 ## Commit rules
 
@@ -198,5 +204,6 @@ password and can be revoked independently.
   token with `contents: write` in place of `secrets.GITHUB_TOKEN`.
 - **Notarization times out:** rerun the workflow with the existing tag; the app
   build is reproducible from the tag.
-- **First release is unexpected:** check `git tag --list 'v*'`; semantic-release
-  starts at `1.0.0` when no tag is reachable from `main`.
+- **First release is unexpected:** check `git tag --list 'v*'`. With no previous
+  tag, semantic-release starts at `1.0.0`, so the `v0.0.1` bootstrap tag must
+  exist before the first automatic release.

@@ -152,9 +152,10 @@ one-off styles. Load Geist in `main.rs`; never fall back to a system font.
 - `.github/workflows/release.yml` runs semantic-release on `main`, then packages
   a universal macOS `Slate.app`, a Linux tarball and a Windows zip from the
   release tag. See `docs/release.md` for the versioning and notarization rules.
-- Conventional commit subjects are release input. `feat` is minor; `fix` and
-  `perf` are patch; breaking changes are major; `chore` and docs do not release.
-  Squash titles must follow the same format.
+- Conventional commit subjects are release input. The first release is the
+  bootstrapped `v0.0.1` tag; after that `feat` is minor, `fix` and `perf` are
+  patch, breaking changes are major, and `chore`/docs do not release. Squash
+  titles must follow the same format.
 - Use only GitHub-owned actions, pinned to full commit SHAs. No third-party
   actions, no floating tags.
 - Do not add a third-party release action; semantic-release is installed through

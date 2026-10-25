@@ -9,8 +9,9 @@ Slate Desktop: a cross-platform desktop contact-sheet builder in Rust + GPUI 0.2
 - `cargo test --workspace` — core + app tests
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo fmt --all`
-- Release: push a `v*` tag; `.github/workflows/release.yml` builds and publishes
-  macOS, Linux and Windows artifacts.
+- Release: merge to `main`; semantic-release reads Conventional Commits, updates
+  the version and changelog, tags `v*`, creates the GitHub Release, and builds
+  macOS, Linux and Windows artifacts from that tag.
 - `cargo run -p slate-core --example sample_sheet` — regenerate `target/sample`
   and the design-check PDFs
 
@@ -148,12 +149,20 @@ one-off styles. Load Geist in `main.rs`; never fall back to a system font.
 
 - `.github/workflows/ci.yml` runs fmt, clippy and tests on macOS, Linux and
   Windows.
-- `.github/workflows/release.yml` packages a universal macOS `Slate.app`, a
-  Linux tarball and a Windows zip on `v*` tags.
+- `.github/workflows/release.yml` runs semantic-release on `main`, then packages
+  a universal macOS `Slate.app`, a Linux tarball and a Windows zip from the
+  release tag. See `docs/release.md` for the versioning and notarization rules.
+- Conventional commit subjects are release input. `feat` is minor; `fix` and
+  `perf` are patch; breaking changes are major; `chore` and docs do not release.
+  Squash titles must follow the same format.
 - Use only GitHub-owned actions, pinned to full commit SHAs. No third-party
   actions, no floating tags.
-- Do not add a third-party release action; the release job uses `gh` with the
-  workflow token.
+- Do not add a third-party release action; semantic-release is installed through
+  npm and the upload job uses `gh` with the workflow token.
+- macOS release builds use a Developer ID certificate, hardened runtime and
+  `notarytool` when the six secrets in `docs/release.md` are configured. Do not
+  commit certificates, passwords or notarization credentials. Without those
+  secrets the workflow produces an ad-hoc signed build and warns.
 
 ## Tests
 

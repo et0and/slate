@@ -11,6 +11,8 @@
   ·
   <a href="https://github.com/et0and/slate-desktop">Source</a>
   ·
+  <a href="https://github.com/et0and/slate-desktop/releases">Releases</a>
+  ·
   <a href="https://github.com/et0and/slate-desktop/issues">Issues</a>
   ·
   <a href="docs/README.md">Docs</a>
@@ -78,7 +80,7 @@ Link a Drive account from the Drive menu to browse folders, import images next t
 
 ## Get started
 
-Build Slate with Rust 1.99.1. It runs on macOS 11+, Windows 10/11, and Linux with X11/Wayland.
+Download the latest build from [Releases](https://github.com/et0and/slate-desktop/releases), or build Slate with Rust 1.99.1. It runs on macOS 11+, Windows 10/11, and Linux with X11/Wayland.
 
 ```sh
 cargo run --release
@@ -98,6 +100,10 @@ Verify:
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+## Releases
+
+Every merge to `main` is versioned from Conventional Commits and published as a GitHub Release with macOS, Linux and Windows builds. See [docs/release.md](docs/release.md) for the version rules and macOS notarization.
 
 ## License and credits
 

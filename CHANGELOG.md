@@ -1,3 +1,10 @@
+## [0.2.2](https://github.com/et0and/slate/compare/v0.2.1...v0.2.2) (2026-10-25)
+
+
+### Bug Fixes
+
+* gate macOS titlebar imports ([3deb825](https://github.com/et0and/slate/commit/3deb8253123c96af6abe89849038d55ab30e84d9))
+
 ## [0.2.1](https://github.com/et0and/slate/compare/v0.2.0...v0.2.1) (2026-10-25)
 
 

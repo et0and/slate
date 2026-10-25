@@ -19,7 +19,7 @@ use crate::drive::{self, DriveEntry};
 use crate::theme;
 use crate::widgets::{
     button, button_with_icon, checkbox, disabled_button, icon, icon_button, mono_text,
-    primary_button, text_button, ui_text,
+    primary_button, ui_text,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -871,24 +871,36 @@ impl ContactSheet {
         for (index, crumb) in crumbs.iter().enumerate() {
             if index > 0 {
                 breadcrumb =
-                    breadcrumb.child(mono_text(theme::TEXT_META, theme::faint()).child("/"));
+                    breadcrumb.child(mono_text(theme::TEXT_LABEL, theme::faint()).child("/"));
             }
             if index + 1 == crumbs.len() {
                 breadcrumb = breadcrumb.child(
-                    ui_text(theme::TEXT_META, theme::ink())
+                    ui_text(theme::TEXT_BODY, theme::ink())
+                        .font_weight(gpui::FontWeight::MEDIUM)
                         .truncate()
                         .child(crumb.name.clone()),
                 );
             } else {
                 let crumb_index = index;
                 breadcrumb = breadcrumb.child(
-                    text_button(
-                        ElementId::Name(SharedString::from(format!("drive-crumb-{index}"))),
-                        crumb.name.clone(),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_drive_crumb(crumb_index, cx);
-                    })),
+                    div()
+                        .id(ElementId::Name(SharedString::from(format!(
+                            "drive-crumb-{index}"
+                        ))))
+                        .h(px(26.0))
+                        .px(px(4.0))
+                        .flex()
+                        .items_center()
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme::accent_soft()))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_drive_crumb(crumb_index, cx);
+                        }))
+                        .child(
+                            ui_text(theme::TEXT_BODY, theme::muted())
+                                .truncate()
+                                .child(crumb.name.clone()),
+                        ),
                 );
             }
         }
@@ -1113,7 +1125,7 @@ impl ContactSheet {
                                     .child(mode.title()),
                             )
                             .child(
-                                mono_text(theme::TEXT_META, theme::faint())
+                                mono_text(theme::TEXT_LABEL, theme::faint())
                                     .child(folder_name.clone()),
                             ),
                     )

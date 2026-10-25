@@ -1,3 +1,10 @@
+## [0.2.1](https://github.com/et0and/slate/compare/v0.2.0...v0.2.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* restore window lifecycle and polish panels ([263642a](https://github.com/et0and/slate/commit/263642afe58239574749b53ac80cfbce4474391d))
+
 # [0.2.0](https://github.com/et0and/slate/compare/v0.1.0...v0.2.0) (2026-10-25)
 
 

@@ -26,8 +26,11 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - The main editing window is single-window. Sheet preview and About are native
   GPUI child windows; keep them as read-only views over `ContactSheet` instead
   of drawing modal overlays.
-- `panels.rs` owns the drag-resizable rail geometry. Keep the centre at
-  `CENTER_MIN` and clamp the widths on every render.
+- `panels.rs` owns the drag-resizable rail geometry and the collapsed state.
+  Keep the centre at `CENTER_MIN`, clamp the widths on every render, and use
+  `left_edge`/`right_edge` for library/marquee geometry. A collapsed pane
+  becomes a narrow rail with one expand button; resetting panel widths expands
+  both panes.
 - `menubar.rs` owns every menu. On macOS, build native menus with
   `cx.set_menus` and hide the in-window topbar; on other platforms, keep the
   in-window menus. Do not duplicate a command on the same platform. Sync the

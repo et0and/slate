@@ -8,8 +8,11 @@ use slate_core::batch;
 use slate_core::model::Filter;
 
 use crate::app::ContactSheet;
+use crate::assets;
 use crate::theme;
-use crate::widgets::{button, group_label, label, micro, mono_text, stepper, text_button, ui_text};
+use crate::widgets::{
+    button, group_label, icon_button, label, micro, mono_text, stepper, text_button, ui_text,
+};
 
 impl ContactSheet {
     pub(crate) fn render_sidebar(
@@ -281,23 +284,39 @@ impl ContactSheet {
                             .pt(px(14.0))
                             .pb(px(10.0))
                             .flex()
-                            .flex_col()
-                            .gap(px(4.0))
+                            .items_start()
+                            .justify_between()
+                            .gap(px(8.0))
                             .child(
-                                ui_text(theme::TEXT_TITLE, theme::ink())
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .truncate()
-                                    .child(self.project.name.clone()),
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(4.0))
+                                    .child(
+                                        ui_text(theme::TEXT_TITLE, theme::ink())
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .truncate()
+                                            .child(self.project.name.clone()),
+                                    )
+                                    .child(
+                                        mono_text(theme::TEXT_META, theme::faint())
+                                            .truncate()
+                                            .child(
+                                                self.project_path
+                                                    .as_ref()
+                                                    .map(|path| compact_path(path))
+                                                    .unwrap_or_else(|| "No file".to_string()),
+                                            ),
+                                    ),
                             )
                             .child(
-                                mono_text(theme::TEXT_META, theme::faint())
-                                    .truncate()
-                                    .child(
-                                        self.project_path
-                                            .as_ref()
-                                            .map(|path| compact_path(path))
-                                            .unwrap_or_else(|| "No file".to_string()),
-                                    ),
+                                icon_button("sidebar-collapse", assets::CHEVRON_LEFT).on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.toggle_left_pane(window, cx)
+                                    }),
+                                ),
                             ),
                     )
                     .child(search_block)

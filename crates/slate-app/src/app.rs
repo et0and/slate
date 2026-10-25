@@ -453,6 +453,18 @@ impl ContactSheet {
         self.marquee_move(event, window, cx);
     }
 
+    pub(crate) fn toggle_left_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.panels.toggle_left();
+        window.focus(&self.focus);
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_right_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.panels.toggle_right();
+        window.focus(&self.focus);
+        cx.notify();
+    }
+
     fn pointer_up(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.end_resize(event, window, cx);
         self.end_marquee(cx);
@@ -2272,11 +2284,25 @@ impl Render for ContactSheet {
                     .flex()
                     .flex_1()
                     .min_h(px(0.0))
-                    .child(self.render_sidebar(window, cx))
-                    .child(divider("resize-left", ResizeTarget::Left, cx))
+                    .children(if self.panels.left_collapsed() {
+                        Some(self.render_collapsed_rail(ResizeTarget::Left, cx))
+                    } else {
+                        Some(self.render_sidebar(window, cx))
+                    })
+                    .children(
+                        (!self.panels.left_collapsed())
+                            .then(|| divider("resize-left", ResizeTarget::Left, cx)),
+                    )
                     .child(self.render_library(window, cx))
-                    .child(divider("resize-right", ResizeTarget::Right, cx))
-                    .child(self.render_inspector(window, cx)),
+                    .children(
+                        (!self.panels.right_collapsed())
+                            .then(|| divider("resize-right", ResizeTarget::Right, cx)),
+                    )
+                    .children(if self.panels.right_collapsed() {
+                        Some(self.render_collapsed_rail(ResizeTarget::Right, cx))
+                    } else {
+                        Some(self.render_inspector(window, cx))
+                    }),
             )
             .child(self.render_statusbar())
             .children(self.render_marquee())

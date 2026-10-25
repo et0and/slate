@@ -10,7 +10,7 @@ use slate_core::model::PhotoId;
 
 use crate::app::{ContactSheet, Marquee};
 use crate::assets;
-use crate::panels::DIVIDER_W;
+
 use crate::theme;
 use crate::widgets::{button_with_icon, icon, mono_text, ui_text};
 
@@ -33,7 +33,7 @@ impl ContactSheet {
             self.render_no_matches(cx)
         } else {
             let viewport = f32::from(window.viewport_size().width);
-            let center = (viewport - self.panels.left() - self.panels.right() - 16.0)
+            let center = (viewport - self.panels.left_edge() - self.panels.right_edge())
                 .max(CELL_W + GRID_PAD * 2.0);
             let content = (center - GRID_PAD * 2.0).max(CELL_W);
             let columns = (((content + GAP) / (CELL_W + GAP)).floor() as usize).max(1);
@@ -352,7 +352,7 @@ impl ContactSheet {
             return;
         };
         let viewport = f32::from(window.viewport_size().width);
-        let center = (viewport - self.panels.left() - self.panels.right() - 16.0)
+        let center = (viewport - self.panels.left_edge() - self.panels.right_edge())
             .max(CELL_W + GRID_PAD * 2.0);
         let content = (center - GRID_PAD * 2.0).max(CELL_W);
         let columns = (((content + GAP) / (CELL_W + GAP)).floor() as usize).max(1);
@@ -370,7 +370,7 @@ impl ContactSheet {
         } else {
             theme::TOPBAR_H
         };
-        let origin_x = self.panels.left() + DIVIDER_W + GRID_PAD;
+        let origin_x = self.panels.left_edge() + GRID_PAD;
         let origin_y =
             content_top + GRID_PAD + f32::from(self.grid_scroll.0.borrow().base_handle.offset().y);
         let min_row = (((top - origin_y) / ROW_H).floor().max(0.0) as usize).min(rows);

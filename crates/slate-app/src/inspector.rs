@@ -9,8 +9,8 @@ use crate::app::ContactSheet;
 use crate::assets;
 use crate::theme;
 use crate::widgets::{
-    button, checkbox, group_label, icon, label, micro, mini_button, mono_text, setting_row,
-    stepper, ui_text,
+    button, checkbox, group_label, icon, icon_button, label, micro, mini_button, mono_text,
+    setting_row, stepper, ui_text,
 };
 
 const PREVIEW_WIDTH: f32 = 300.0;
@@ -250,7 +250,18 @@ impl ContactSheet {
             .flex()
             .flex_col()
             .gap(px(10.0))
-            .child(div().flex().justify_end().child(page_controls))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        icon_button("inspector-collapse", assets::CHEVRON_RIGHT).on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_right_pane(window, cx)),
+                        ),
+                    )
+                    .child(page_controls),
+            )
             .child(div().w_full().flex().justify_center().child(preview));
 
         let title_block = div()

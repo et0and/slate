@@ -9,6 +9,7 @@ anyhow.workspace = true
 chrono.workspace = true
 im.workspace = true
 image.workspace = true
+rayon.workspace = true
 kamadak-exif.workspace = true
 jpeg-decoder = "0.3"
 rusqlite = { version = "0.41", features = ["bundled"] }
@@ -18,3 +19,7 @@ serde_json.workspace = true
 [dev-dependencies]
 lopdf = "0.44"
 tempfile = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-image-io = "0.3.2"
+objc2-core-foundation = "0.3.2"

@@ -7,10 +7,23 @@
 use std::fs::File;
 use std::io::{BufWriter, Cursor, Write};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result};
 use image::codecs::jpeg::JpegEncoder;
-use image::{ColorType, DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage};
+use image::{DynamicImage, RgbImage};
+use jpeg_decoder::{Decoder as JpegDecoder, PixelFormat};
+#[cfg(target_os = "macos")]
+use objc2_core_foundation::{
+    CFBoolean, CFDictionary, CFMutableData, CFNumber, CFString, CFType, CFURL, CFURLPathStyle,
+};
+#[cfg(target_os = "macos")]
+use objc2_image_io::{
+    CGImageDestination, CGImageSource, kCGImageSourceCreateThumbnailFromImageAlways,
+    kCGImageSourceCreateThumbnailWithTransform, kCGImageSourceThumbnailMaxPixelSize,
+};
+use rayon::prelude::*;
 
 use crate::import::{load_oriented, orientation_from_bytes};
 use crate::layout::{MM_TO_PT, Placement, SheetLayout};
@@ -213,15 +226,15 @@ impl PageContent {
     }
 
     fn image(&mut self, placement: &Placement, page_h_mm: f32, image_id: u32) {
-        self.image_with_turns(placement, page_h_mm, image_id, 0);
+        self.image_with_transform(placement, page_h_mm, image_id, UnitTransform::IDENTITY);
     }
 
-    fn image_with_turns(
+    fn image_with_transform(
         &mut self,
         placement: &Placement,
         page_h_mm: f32,
         image_id: u32,
-        turns: u8,
+        transform: UnitTransform,
     ) {
         let name = format!("Im{}", self.images.len());
         let x = mm_to_pt(placement.image_x_mm);
@@ -231,13 +244,7 @@ impl PageContent {
         ));
         let width = mm_to_pt(placement.image_w_mm);
         let height = mm_to_pt(placement.image_h_mm);
-        let (a, b, c, d, e, f) = match turns % 4 {
-            0 => (width, 0.0, 0.0, height, x, y),
-            1 => (0.0, -height, width, 0.0, x, y + height),
-            2 => (-width, 0.0, 0.0, -height, x + width, y + height),
-            3 => (0.0, height, -width, 0.0, x + width, y),
-            _ => unreachable!(),
-        };
+        let (a, b, c, d, e, f) = transform.pdf_matrix(x, y, width, height);
         use std::fmt::Write as _;
         let _ = writeln!(
             self.ops,
@@ -290,10 +297,134 @@ impl PageContent {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct UnitTransform {
+    a: f32,
+    b: f32,
+    c: f32,
+    d: f32,
+    e: f32,
+    f: f32,
+}
+
+impl UnitTransform {
+    const IDENTITY: Self = Self {
+        a: 1.0,
+        b: 0.0,
+        c: 0.0,
+        d: 1.0,
+        e: 0.0,
+        f: 0.0,
+    };
+
+    fn rotated_clockwise(self) -> Self {
+        Self {
+            a: self.b,
+            b: -self.a,
+            c: self.d,
+            d: -self.c,
+            e: self.f,
+            f: 1.0 - self.e,
+        }
+    }
+
+    fn pdf_matrix(self, x: f32, y: f32, width: f32, height: f32) -> (f32, f32, f32, f32, f32, f32) {
+        (
+            width * self.a,
+            height * self.b,
+            width * self.c,
+            height * self.d,
+            x + width * self.e,
+            y + height * self.f,
+        )
+    }
+}
+
+/// Unit-square transform that matches `import::apply_orientation`.
+fn exif_transform(orientation: u8) -> Option<UnitTransform> {
+    Some(match orientation {
+        1 => UnitTransform::IDENTITY,
+        2 => UnitTransform {
+            a: -1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            e: 1.0,
+            f: 0.0,
+        },
+        3 => UnitTransform {
+            a: -1.0,
+            b: 0.0,
+            c: 0.0,
+            d: -1.0,
+            e: 1.0,
+            f: 1.0,
+        },
+        4 => UnitTransform {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: -1.0,
+            e: 0.0,
+            f: 1.0,
+        },
+        5 => UnitTransform {
+            a: 0.0,
+            b: -1.0,
+            c: -1.0,
+            d: 0.0,
+            e: 1.0,
+            f: 1.0,
+        },
+        6 => UnitTransform {
+            a: 0.0,
+            b: 1.0,
+            c: -1.0,
+            d: 0.0,
+            e: 0.0,
+            f: 1.0,
+        },
+        7 => UnitTransform {
+            a: 0.0,
+            b: 1.0,
+            c: 1.0,
+            d: 0.0,
+            e: 0.0,
+            f: 0.0,
+        },
+        8 => UnitTransform {
+            a: 0.0,
+            b: -1.0,
+            c: 1.0,
+            d: 0.0,
+            e: 1.0,
+            f: 0.0,
+        },
+        _ => return None,
+    })
+}
+
+fn displayed_transform(
+    photo: &Photo,
+    placement: &Placement,
+    orientation: u8,
+) -> Option<UnitTransform> {
+    let mut transform = exif_transform(orientation)?;
+    let turns = photo
+        .rotation()
+        .turns()
+        .wrapping_add(u8::from(placement.rotated));
+    for _ in 0..turns {
+        transform = transform.rotated_clockwise();
+    }
+    Some(transform)
+}
+
 #[derive(Debug, Clone, Copy)]
 enum JpegColor {
     Rgb,
     Gray,
+    Cmyk { inverted: bool },
 }
 
 impl JpegColor {
@@ -301,6 +432,15 @@ impl JpegColor {
         match self {
             Self::Rgb => "/DeviceRGB",
             Self::Gray => "/DeviceGray",
+            Self::Cmyk { .. } => "/DeviceCMYK",
+        }
+    }
+
+    fn decode_parameter(self) -> &'static str {
+        if let Self::Cmyk { inverted: true } = self {
+            " /Decode [1 0 1 0 1 0 1 0]"
+        } else {
+            ""
         }
     }
 }
@@ -314,50 +454,383 @@ struct JpegInfo {
 }
 
 fn jpeg_info(bytes: &[u8]) -> Option<JpegInfo> {
-    let reader = ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()?;
-    if reader.format() != Some(ImageFormat::Jpeg) {
-        return None;
-    }
-    let decoder = reader.into_decoder().ok()?;
-    let (width, height) = decoder.dimensions();
-    let color = match decoder.color_type() {
-        ColorType::Rgb8 => JpegColor::Rgb,
-        ColorType::L8 => JpegColor::Gray,
+    let mut decoder = JpegDecoder::new(Cursor::new(bytes));
+    decoder.read_info().ok()?;
+    let info = decoder.info()?;
+    let color = match info.pixel_format {
+        PixelFormat::RGB24 => JpegColor::Rgb,
+        PixelFormat::L8 => JpegColor::Gray,
+        PixelFormat::CMYK32 => match adobe_transform(bytes) {
+            Some(2) => return None,
+            Some(_) => JpegColor::Cmyk { inverted: true },
+            None => JpegColor::Cmyk { inverted: false },
+        },
         _ => return None,
     };
     Some(JpegInfo {
-        width,
-        height,
+        width: u32::from(info.width),
+        height: u32::from(info.height),
         color,
         orientation: orientation_from_bytes(bytes),
     })
 }
 
-/// Quarter turns that map raw JPEG pixels to the displayed orientation.
-/// Mirrored EXIF orientations fall back to the decoder.
-fn orientation_turns(orientation: u8) -> Option<u8> {
-    match orientation {
-        1 => Some(0),
-        3 => Some(2),
-        6 => Some(1),
-        8 => Some(3),
-        _ => None,
+/// Adobe APP14 transform byte. `0` is inverted CMYK, `2` is YCCK.
+fn adobe_transform(bytes: &[u8]) -> Option<u8> {
+    if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
+        return None;
     }
+    let mut index = 2;
+    while index + 4 <= bytes.len() {
+        if bytes[index] != 0xFF {
+            break;
+        }
+        let marker = bytes[index + 1];
+        index += 2;
+        if marker == 0xD8 || (0xD0..=0xD7).contains(&marker) {
+            continue;
+        }
+        if marker == 0xDA || marker == 0xD9 || index + 2 > bytes.len() {
+            break;
+        }
+        let length = u16::from_be_bytes([bytes[index], bytes[index + 1]]) as usize;
+        if length < 2 || index + length > bytes.len() {
+            break;
+        }
+        if marker == 0xEE && length >= 14 && &bytes[index + 2..index + 7] == b"Adobe" {
+            return Some(bytes[index + 13]);
+        }
+        index += length;
+    }
+    None
 }
 
-fn raw_jpeg(photo: &Photo, placement: &Placement) -> Option<(Vec<u8>, JpegInfo, u8)> {
+fn jpeg_dict(info: JpegInfo) -> String {
+    format!(
+        "/Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace {} /BitsPerComponent 8{} /Filter /DCTDecode",
+        info.width,
+        info.height,
+        info.color.device_space(),
+        info.color.decode_parameter()
+    )
+}
+
+struct RawImage {
+    bytes: Vec<u8>,
+    dict: String,
+    transform: UnitTransform,
+}
+
+fn raw_jpeg(photo: &Photo, placement: &Placement) -> Option<RawImage> {
     if !matches!(photo.extension().as_str(), "jpg" | "jpeg") {
         return None;
     }
     let bytes = std::fs::read(&photo.path).ok()?;
     let info = jpeg_info(&bytes)?;
-    let turns = orientation_turns(info.orientation)?
-        .wrapping_add(photo.rotation().turns())
-        .wrapping_add(u8::from(placement.rotated))
-        % 4;
-    Some((bytes, info, turns))
+    let transform = displayed_transform(photo, placement, info.orientation)?;
+    Some(RawImage {
+        bytes,
+        dict: jpeg_dict(info),
+        transform,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PngColor {
+    Gray,
+    Rgb,
+}
+
+impl PngColor {
+    fn device_space(self) -> &'static str {
+        match self {
+            Self::Gray => "/DeviceGray",
+            Self::Rgb => "/DeviceRGB",
+        }
+    }
+
+    fn components(self) -> u8 {
+        match self {
+            Self::Gray => 1,
+            Self::Rgb => 3,
+        }
+    }
+}
+
+struct PngInfo {
+    width: u32,
+    height: u32,
+    color: PngColor,
+    data: Vec<u8>,
+    orientation: u8,
+}
+
+fn png_info(bytes: &[u8]) -> Option<PngInfo> {
+    const SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if !bytes.starts_with(SIGNATURE) {
+        return None;
+    }
+    let mut index = SIGNATURE.len();
+    let mut header = None;
+    let mut data = Vec::new();
+    let mut has_trns = false;
+    let mut saw_end = false;
+
+    while index + 12 <= bytes.len() {
+        let length = u32::from_be_bytes([
+            bytes[index],
+            bytes[index + 1],
+            bytes[index + 2],
+            bytes[index + 3],
+        ]) as usize;
+        let data_start = index + 8;
+        let data_end = data_start.checked_add(length)?;
+        if data_end + 4 > bytes.len() {
+            return None;
+        }
+        match &bytes[index + 4..index + 8] {
+            b"IHDR" => {
+                if length != 13 {
+                    return None;
+                }
+                let width = u32::from_be_bytes([
+                    bytes[data_start],
+                    bytes[data_start + 1],
+                    bytes[data_start + 2],
+                    bytes[data_start + 3],
+                ]);
+                let height = u32::from_be_bytes([
+                    bytes[data_start + 4],
+                    bytes[data_start + 5],
+                    bytes[data_start + 6],
+                    bytes[data_start + 7],
+                ]);
+                header = Some((
+                    width,
+                    height,
+                    bytes[data_start + 8],
+                    bytes[data_start + 9],
+                    bytes[data_start + 12],
+                ));
+            }
+            b"tRNS" => has_trns = true,
+            b"IDAT" => data.extend_from_slice(&bytes[data_start..data_end]),
+            b"IEND" => {
+                saw_end = true;
+                break;
+            }
+            _ => {}
+        }
+        index = data_end + 4;
+    }
+
+    if !saw_end || has_trns {
+        return None;
+    }
+    let (width, height, bit_depth, color_type, interlace) = header?;
+    if bit_depth != 8 || interlace != 0 {
+        return None;
+    }
+    let color = match color_type {
+        0 => PngColor::Gray,
+        2 => PngColor::Rgb,
+        _ => return None,
+    };
+    if data.is_empty() {
+        return None;
+    }
+    Some(PngInfo {
+        width,
+        height,
+        color,
+        data,
+        orientation: orientation_from_bytes(bytes),
+    })
+}
+
+fn png_dict(info: &PngInfo) -> String {
+    format!(
+        "/Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace {} /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors {} /BitsPerComponent 8 /Columns {} >>",
+        info.width,
+        info.height,
+        info.color.device_space(),
+        info.color.components(),
+        info.width
+    )
+}
+
+fn raw_png(photo: &Photo, placement: &Placement) -> Option<RawImage> {
+    if photo.extension() != "png" {
+        return None;
+    }
+    let bytes = std::fs::read(&photo.path).ok()?;
+    let info = png_info(&bytes)?;
+    let transform = displayed_transform(photo, placement, info.orientation)?;
+    Some(RawImage {
+        dict: png_dict(&info),
+        bytes: info.data,
+        transform,
+    })
+}
+
+fn max_pixels(placement: &Placement) -> u32 {
+    (((placement.image_w_mm.max(placement.image_h_mm) * DPI) / 25.4).ceil() as u32)
+        .max(64)
+        .saturating_mul(2)
+}
+
+#[cfg(target_os = "macos")]
+fn is_native_raw(photo: &Photo) -> bool {
+    matches!(
+        photo.extension().as_str(),
+        "heic"
+            | "heif"
+            | "dng"
+            | "cr2"
+            | "cr3"
+            | "nef"
+            | "arw"
+            | "raf"
+            | "rw2"
+            | "orf"
+            | "pef"
+            | "srw"
+            | "3fr"
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn image_io_raw(photo: &Photo, placement: &Placement) -> Option<RawImage> {
+    if !is_native_raw(photo) {
+        return None;
+    }
+    let path = photo.path.to_str()?;
+    let path_string = CFString::from_str(path);
+    let url = CFURL::with_file_system_path(
+        None,
+        Some(&path_string),
+        CFURLPathStyle::CFURLPOSIXPathStyle,
+        false,
+    )?;
+    let source = unsafe { CGImageSource::with_url(&url, None) }?;
+    let max_pixels = max_pixels(placement);
+    let options = unsafe {
+        CFDictionary::<CFType, CFType>::from_slices(
+            &[
+                kCGImageSourceCreateThumbnailFromImageAlways.as_ref(),
+                kCGImageSourceThumbnailMaxPixelSize.as_ref(),
+                kCGImageSourceCreateThumbnailWithTransform.as_ref(),
+            ],
+            &[
+                CFBoolean::new(true).as_ref(),
+                CFNumber::new_isize(max_pixels as isize).as_ref(),
+                CFBoolean::new(true).as_ref(),
+            ],
+        )
+    };
+    let image = unsafe { source.thumbnail_at_index(0, Some(options.as_ref())) }?;
+    let data = CFMutableData::new(None, 0)?;
+    let jpeg_type = CFString::from_str("public.jpeg");
+    let destination = unsafe { CGImageDestination::with_data(&data, &jpeg_type, 1, None) }?;
+    unsafe { destination.add_image(&image, None) };
+    if !unsafe { destination.finalize() } {
+        return None;
+    }
+    let bytes = data.to_vec();
+    let info = jpeg_info(&bytes)?;
+    let transform = displayed_transform(photo, placement, info.orientation)?;
+    Some(RawImage {
+        bytes,
+        dict: jpeg_dict(info),
+        transform,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn image_io_raw(_photo: &Photo, _placement: &Placement) -> Option<RawImage> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+static SIPS_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_os = "macos")]
+fn sips_raw(photo: &Photo, placement: &Placement) -> Option<RawImage> {
+    if !is_native_raw(photo) {
+        return None;
+    }
+    let output = std::env::temp_dir().join(format!(
+        "slate-pdf-sips-{}-{}.jpg",
+        std::process::id(),
+        SIPS_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let status = std::process::Command::new("sips")
+        .args([
+            "-s",
+            "format",
+            "jpeg",
+            "-Z",
+            &max_pixels(placement).to_string(),
+        ])
+        .arg(photo.path.as_ref())
+        .arg("--out")
+        .arg(&output)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .ok()?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&output);
+        return None;
+    }
+    let bytes = std::fs::read(&output).ok();
+    let _ = std::fs::remove_file(&output);
+    let bytes = bytes?;
+    let info = jpeg_info(&bytes)?;
+    let transform = displayed_transform(photo, placement, info.orientation)?;
+    Some(RawImage {
+        bytes,
+        dict: jpeg_dict(info),
+        transform,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn sips_raw(_photo: &Photo, _placement: &Placement) -> Option<RawImage> {
+    None
+}
+
+enum PreparedImage {
+    Raw(RawImage),
+    Encoded {
+        bytes: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
+    Missing(String),
+}
+
+fn prepare_photo(photo: &Photo, placement: &Placement) -> PreparedImage {
+    if let Some(image) = raw_jpeg(photo, placement) {
+        return PreparedImage::Raw(image);
+    }
+    if let Some(image) = raw_png(photo, placement) {
+        return PreparedImage::Raw(image);
+    }
+    if let Some(image) = image_io_raw(photo, placement) {
+        return PreparedImage::Raw(image);
+    }
+    if let Some(image) = sips_raw(photo, placement) {
+        return PreparedImage::Raw(image);
+    }
+    match render_photo(photo, placement) {
+        Ok((bytes, width, height)) => PreparedImage::Encoded {
+            bytes,
+            width,
+            height,
+        },
+        Err(error) => PreparedImage::Missing(error.to_string()),
+    }
 }
 
 fn flatten_on_white(image: DynamicImage) -> RgbImage {
@@ -570,55 +1043,66 @@ fn write_page(
             "No photos selected",
         );
     }
-    for placement in &page.placements {
-        let Some(photo) = page_photos.get(placement.photo_index) else {
-            continue;
-        };
-        if let Some((bytes, info, turns)) = raw_jpeg(photo, placement) {
-            let image_id = writer.alloc();
-            writer.stream(
-                image_id,
-                &format!(
-                    "/Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace {} /BitsPerComponent 8 /Filter /DCTDecode",
-                    info.width,
-                    info.height,
-                    info.color.device_space()
-                ),
-                &bytes,
-            )?;
-            content.image_with_turns(placement, layout.page_h_mm, image_id, turns);
-        } else {
-            match render_photo(photo, placement) {
-                Ok((bytes, width, height)) => {
-                    let image_id = writer.alloc();
-                    writer.stream(
-                        image_id,
-                        &format!(
-                            "/Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode"
-                        ),
-                        &bytes,
-                    )?;
-                    content.image(placement, layout.page_h_mm, image_id);
-                }
-                Err(error) => {
-                    content.rectangle(
-                        layout.page_h_mm,
-                        placement.image_x_mm,
-                        placement.image_y_mm,
-                        placement.image_w_mm,
-                        placement.image_h_mm,
-                    );
-                    content.text(
-                        layout.page_h_mm,
-                        placement.image_x_mm + 4.0,
-                        placement.image_y_mm + placement.image_h_mm / 2.0,
-                        6.0,
-                        "F3",
-                        TEXT_GREY,
-                        "Missing",
-                    );
-                    missing.push(format!("{}: {error}", photo.file_name()));
-                }
+    let prepared: Vec<PreparedImage> = page
+        .placements
+        .par_iter()
+        .map(|placement| {
+            let Some(photo) = page_photos.get(placement.photo_index) else {
+                return PreparedImage::Missing("photo not found".to_string());
+            };
+            prepare_photo(photo, placement)
+        })
+        .collect();
+
+    for (placement, prepared) in page.placements.iter().zip(prepared) {
+        match prepared {
+            PreparedImage::Raw(image) => {
+                let image_id = writer.alloc();
+                writer.stream(image_id, &image.dict, &image.bytes)?;
+                content.image_with_transform(
+                    placement,
+                    layout.page_h_mm,
+                    image_id,
+                    image.transform,
+                );
+            }
+            PreparedImage::Encoded {
+                bytes,
+                width,
+                height,
+            } => {
+                let image_id = writer.alloc();
+                writer.stream(
+                    image_id,
+                    &format!(
+                        "/Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode"
+                    ),
+                    &bytes,
+                )?;
+                content.image(placement, layout.page_h_mm, image_id);
+            }
+            PreparedImage::Missing(error) => {
+                content.rectangle(
+                    layout.page_h_mm,
+                    placement.image_x_mm,
+                    placement.image_y_mm,
+                    placement.image_w_mm,
+                    placement.image_h_mm,
+                );
+                content.text(
+                    layout.page_h_mm,
+                    placement.image_x_mm + 4.0,
+                    placement.image_y_mm + placement.image_h_mm / 2.0,
+                    6.0,
+                    "F3",
+                    TEXT_GREY,
+                    "Missing",
+                );
+                let name = page_photos
+                    .get(placement.photo_index)
+                    .map(|photo| photo.file_name())
+                    .unwrap_or_else(|| "unknown photo".to_string());
+                missing.push(format!("{name}: {error}"));
             }
         }
         if let Some(caption) = &placement.caption {
@@ -891,6 +1375,31 @@ mod tests {
     }
 
     #[test]
+    fn png_photos_use_the_original_flate_stream() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = image_path(directory.path(), "a.png", 300, 200);
+        let mut project = Project::new("PNG");
+        let id = project.add_photo(path, 300, 200, 1);
+        let output = directory.path().join("png.pdf");
+        let summary =
+            export_pdf_ids("PNG", &SheetSettings::default(), &project, &[id], &output).unwrap();
+        assert_eq!(summary.photos, 1);
+        let bytes = std::fs::read(&output).unwrap();
+        assert!(
+            bytes
+                .windows(b"/Filter /FlateDecode".len())
+                .any(|window| window == b"/Filter /FlateDecode")
+        );
+        assert!(
+            bytes
+                .windows(b"/Predictor 15".len())
+                .any(|window| window == b"/Predictor 15")
+        );
+        let document = lopdf::Document::load_mem(&bytes).unwrap();
+        assert_eq!(document.get_pages().len(), 1);
+    }
+
+    #[test]
     fn exports_ids_without_cloning_photos() {
         let directory = tempfile::tempdir().unwrap();
         let path = image_path(directory.path(), "a.jpg", 200, 100);
@@ -950,13 +1459,33 @@ mod tests {
     }
 
     #[test]
-    fn exif_orientation_turns_are_mapped() {
-        assert_eq!(orientation_turns(1), Some(0));
-        assert_eq!(orientation_turns(3), Some(2));
-        assert_eq!(orientation_turns(6), Some(1));
-        assert_eq!(orientation_turns(8), Some(3));
-        assert_eq!(orientation_turns(2), None);
-        assert_eq!(orientation_turns(7), None);
+    fn exif_orientations_map_to_signed_transforms() {
+        assert_eq!(exif_transform(1), Some(UnitTransform::IDENTITY));
+        assert_eq!(exif_transform(2).unwrap().a, -1.0);
+        assert_eq!(exif_transform(3).unwrap().d, -1.0);
+        assert_eq!(exif_transform(4).unwrap().d, -1.0);
+        assert_eq!(exif_transform(5).unwrap().b, -1.0);
+        assert_eq!(exif_transform(6).unwrap().c, -1.0);
+        assert_eq!(exif_transform(7).unwrap().c, 1.0);
+        assert_eq!(exif_transform(8).unwrap().b, -1.0);
+        assert_eq!(exif_transform(9), None);
+        let turned = exif_transform(1).unwrap().rotated_clockwise();
+        assert_eq!(turned.a, 0.0);
+        assert_eq!(turned.b, -1.0);
+        assert_eq!(turned.c, 1.0);
+        assert_eq!(turned.f, 1.0);
+    }
+
+    #[test]
+    fn adobe_app14_transform_is_detected() {
+        let mut bytes = vec![0xFF, 0xD8, 0xFF, 0xEE, 0x00, 0x0E];
+        bytes.extend_from_slice(b"Adobe");
+        bytes.extend_from_slice(&[0, 100, 0, 0, 0, 0, 0]);
+        assert_eq!(adobe_transform(&bytes), Some(0));
+        bytes[17] = 2;
+        assert_eq!(adobe_transform(&bytes), Some(2));
+        let plain = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0, 0];
+        assert_eq!(adobe_transform(&plain), None);
     }
 
     #[test]

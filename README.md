@@ -53,7 +53,7 @@ Slate supports popular colour themes, with support for custom themes coming soon
 
 GPUI draws the interface on the GPU (Metal on macOS). Only visible thumbnails are uploaded as textures; image decoding, Drive transfers, PDF export and EXIF reads run on bounded background workers.
 
-Large imports read file and EXIF metadata first. Thumbnails decode only when a cell becomes visible. PDF pages stream to disk one at a time, and ordinary JPEGs are embedded as their original DCT stream with PDF-matrix rotation instead of being decoded and re-encoded. Photo edits use field-level undo deltas instead of copying the whole library. The photo store is chunked copy-on-write: a 500k-project mutation touches one chunk, snapshots share the rest, and selection is a compact bitmap. A 500k synthetic library is about 71 MB before thumbnails and view caches; `Photo` is 80 bytes.
+Large imports read file and EXIF metadata first. Thumbnails decode only when a cell becomes visible. PDF pages stream to disk one at a time. JPEGs, CMYK JPEGs and ordinary RGB/gray PNGs are embedded from their original compressed streams; HEIC/RAW use in-process ImageIO on macOS. Mirrored EXIF, user rotation and layout rotation are expressed as PDF matrices. Remaining alpha/palette/16-bit PNGs and other formats decode in parallel. Photo edits use field-level undo deltas instead of copying the whole library. The photo store is chunked copy-on-write: a 500k-project mutation touches one chunk, snapshots share the rest, and selection is a compact bitmap. A 500k synthetic library is about 71 MB before thumbnails and view caches; `Photo` is 80 bytes.
 
 Reproduce the core numbers with:
 

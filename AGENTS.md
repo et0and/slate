@@ -87,15 +87,22 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - PDF export writes one page at a time. Do not create a `SheetPlan` or hold all
   page pixels for a 500k-photo export; the output is already tens of thousands
   of pages.
-- JPEG export embeds the original DCT stream and applies EXIF/user/placement
-  rotation through the PDF image matrix. Only PNG, CMYK, mirrored EXIF and
-  unsupported JPEGs fall back to decode/re-encode. Do not reintroduce a full
-  decode/resize/encode pass for ordinary JPEGs.
+- JPEG export embeds the original DCT stream. All EXIF orientations, including
+  mirrors, are represented by the PDF image matrix; CMYK uses `/DeviceCMYK`
+  and the Adobe decode inversion. Do not reintroduce decode/resize/encode for
+  JPEGs.
+- Non-interlaced 8-bit RGB/gray PNGs embed their IDAT stream directly with
+  `/FlateDecode` and predictor 15. Alpha, palette, 16-bit and interlaced PNGs
+  use the fallback path.
+- HEIC/RAW use in-process ImageIO thumbnails on macOS; `sips` remains a
+  fallback only. Page images are prepared in parallel with Rayon, but written
+  sequentially in placement order.
 - Use the PDF xref stream (`/W [1 8 2]`) with 64-bit offsets. A classic xref
   table is capped at ten decimal offset digits and cannot describe a 500k
   export.
-- JPEG thumbnails and PDF images go through `jpeg-decoder`'s reduced IDCT. Do
-  not decode a full-resolution JPEG just to make a preview. Call
+- JPEG thumbnails and fallback PDF images go through `jpeg-decoder`'s reduced
+  IDCT. The direct DCT export path bypasses decode entirely. Do not decode a
+  full-resolution JPEG just to make a preview. Call
   `memory::release_free_pages` after a project open or import drains.
 - `Project.photos` is a chunked copy-on-write `PhotoSet` with a persistent
   position index and O(1) `photo(id)`. Mutating one photo clones at most one

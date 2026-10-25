@@ -1,3 +1,10 @@
+## [0.0.7](https://github.com/et0and/slate/compare/v0.0.6...v0.0.7) (2026-10-25)
+
+
+### Bug Fixes
+
+* **pdf:** share the max pixel helper across platforms ([2cebf07](https://github.com/et0and/slate/commit/2cebf072eae17ece1a4368b199a6aa6b639a53d6))
+
 ## [0.0.6](https://github.com/et0and/slate/compare/v0.0.5...v0.0.6) (2026-10-25)
 
 

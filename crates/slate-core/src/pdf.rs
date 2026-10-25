@@ -744,7 +744,7 @@ fn image_io_raw(photo: &Photo, placement: &Placement) -> Option<RawImage> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn image_io_raw(_photo: &Photo, _placement: &Placement) -> Option<RawImage> {
+const fn image_io_raw(_photo: &Photo, _placement: &Placement) -> Option<RawImage> {
     None
 }
 
@@ -793,7 +793,7 @@ fn sips_raw(photo: &Photo, placement: &Placement) -> Option<RawImage> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn sips_raw(_photo: &Photo, _placement: &Placement) -> Option<RawImage> {
+const fn sips_raw(_photo: &Photo, _placement: &Placement) -> Option<RawImage> {
     None
 }
 

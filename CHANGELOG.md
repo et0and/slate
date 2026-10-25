@@ -1,3 +1,10 @@
+## [0.2.4](https://github.com/et0and/slate/compare/v0.2.3...v0.2.4) (2026-10-25)
+
+
+### Bug Fixes
+
+* make non-mac PDF stubs const ([08cde22](https://github.com/et0and/slate/commit/08cde22df1d928f72ec6054e7d72e490d9bb9b9a))
+
 ## [0.2.3](https://github.com/et0and/slate/compare/v0.2.2...v0.2.3) (2026-10-25)
 
 

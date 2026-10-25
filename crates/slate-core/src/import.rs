@@ -274,7 +274,7 @@ fn composite_on_white(mut rgba: RgbaImage) -> RgbaImage {
     rgba
 }
 
-fn capture_datetime(path: &Path) -> Option<String> {
+pub fn capture_datetime(path: &Path) -> Option<String> {
     read_exif_datetime(path).or_else(|| {
         let modified = std::fs::metadata(path).ok()?.modified().ok()?;
         let local: DateTime<Local> = modified.into();

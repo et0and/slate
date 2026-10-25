@@ -1241,6 +1241,50 @@ impl ContactSheet {
         cx.notify();
     }
 
+    fn backfill_capture_dates(&mut self, cx: &mut Context<Self>) {
+        let missing: Vec<(PhotoId, PathBuf)> = self
+            .project
+            .photos
+            .iter()
+            .filter(|photo| photo.captured_at.is_none())
+            .map(|photo| (photo.id(), photo.path.clone()))
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            let dates = cx
+                .background_spawn(async move {
+                    missing
+                        .into_iter()
+                        .filter_map(|(id, path)| {
+                            import::capture_datetime(&path).map(|date| (id, date))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                let mut changed = false;
+                for (id, date) in dates {
+                    if let Some(photo) = this.project.photo_mut(id)
+                        && photo.captured_at.is_none()
+                    {
+                        photo.captured_at = Some(date);
+                        changed = true;
+                    }
+                }
+                if changed {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn open_project_prompt(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let Ok(receiver) = cx.update(|app| {
@@ -1291,6 +1335,7 @@ impl ContactSheet {
                 });
                 self.project = project;
                 self.sync_paper_fields(cx);
+                self.backfill_capture_dates(cx);
                 self.project_path = Some(path.clone());
                 self.dirty = false;
                 self.history.clear();

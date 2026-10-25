@@ -1,3 +1,10 @@
+## [0.0.4](https://github.com/et0and/slate/compare/v0.0.3...v0.0.4) (2026-10-25)
+
+
+### Performance Improvements
+
+* persist photo storage and compact selection ([5dd71c8](https://github.com/et0and/slate/commit/5dd71c8bbee86cc631d8b923b81e6c6314bc7421))
+
 ## [0.0.3](https://github.com/et0and/slate/compare/v0.0.2...v0.0.3) (2026-10-25)
 
 

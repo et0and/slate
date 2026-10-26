@@ -2,8 +2,10 @@
 //! `inspector` and `overlay`; this module owns the data and the async bridges to
 //! native dialogs and the background executor.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,11 +14,12 @@ use tracing::Instrument as _;
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, CursorStyle, ExternalPaths, FocusHandle,
     Focusable, MouseButton, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, Point, Render,
-    RenderImage, ScrollHandle, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
-    WindowHandle, WindowOptions, actions, div, prelude::*, px, size,
+    RenderImage, ScrollHandle, Size, TitlebarOptions, UniformListScrollHandle, Window,
+    WindowBounds, WindowHandle, WindowOptions, actions, div, prelude::*, px, size,
 };
 use image::{Frame, RgbaImage};
 use slate_core::PreviewImage;
+use slate_core::adjust::Slider;
 use slate_core::batch::{self, RenameOptions, RenamePlan};
 use slate_core::convert::{self, ConvertOptions, OutputFormat};
 use slate_core::import::{self, Probe};
@@ -27,6 +30,7 @@ use slate_core::pdf::{self, ExportSummary};
 use slate_core::store::{LocalStore, RecentCollection};
 
 use crate::about_window::AboutWindow;
+use crate::adjust_ui::{AdjustDrag, InspectorRender};
 use crate::drive::{self, DriveEntry};
 use crate::drive_ui::{DriveDownload, DriveMode, DriveNotice, DrivePicker};
 use crate::history::{History, PhotoEdit, PhotoFieldChange, Snapshot, Step};
@@ -67,12 +71,14 @@ actions!(
         About,
         ImportDrive,
         ExportDrive,
-        LinkDrive,
         UnlinkDrive,
         HideSlate,
         HideOthers,
         OpenWebsite,
         ReportIssue,
+        FocusSearch,
+        ToggleLeftPane,
+        ToggleRightPane,
     ]
 );
 
@@ -89,6 +95,8 @@ pub struct SetTheme {
 }
 
 const THUMB_CACHE: usize = 32;
+const RECENT_LIMIT: usize = 5;
+const LIBRARY_ROOTS: &str = "library_roots";
 const THUMB_EDGE: u32 = 224;
 const THUMB_QUEUE_LIMIT: usize = 512;
 const PHOTO_PREVIEW_EDGE: u32 = 3200;
@@ -128,22 +136,34 @@ pub enum InspectorMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SidebarSection {
+pub enum PanelSection {
     Folders,
     Rating,
     Label,
-    Sort,
     Tags,
+    Sort,
+    Filters,
+    Tone,
+    Colour,
+    Effects,
+    CaptureDate,
+    Exif,
 }
 
-impl SidebarSection {
+impl PanelSection {
     pub(crate) const fn key(self) -> &'static str {
         match self {
             Self::Folders => "folders",
             Self::Rating => "rating",
             Self::Label => "label",
-            Self::Sort => "sort",
             Self::Tags => "tags",
+            Self::Sort => "sort",
+            Self::Filters => "filters",
+            Self::Tone => "tone",
+            Self::Colour => "colour",
+            Self::Effects => "effects",
+            Self::CaptureDate => "capture-date",
+            Self::Exif => "exif",
         }
     }
 }
@@ -195,6 +215,12 @@ pub struct ContactSheet {
     pub(crate) inspector_image: Option<(PhotoId, Arc<RenderImage>)>,
     pub(crate) inspector_image_error: Option<(PhotoId, String)>,
     pub(crate) inspector_load_id: u64,
+    /// The inspected photo decoded once, unadjusted and unrotated, so slider
+    /// drags re-render from memory instead of decoding the file again.
+    pub(crate) inspector_base: Option<(PhotoId, Arc<PreviewImage>)>,
+    pub(crate) inspector_render: InspectorRender,
+    pub(crate) adjust_drag: Option<AdjustDrag>,
+    pub(crate) slider_tracks: HashMap<Slider, Rc<Cell<Bounds<Pixels>>>>,
     pub(crate) about_window: Option<WindowHandle<AboutWindow>>,
     pub(crate) rename_window: Option<WindowHandle<RenameWindow>>,
     pub(crate) inspector_mode: InspectorMode,
@@ -220,7 +246,7 @@ pub struct ContactSheet {
     pub(crate) focused_once: bool,
     pub(crate) theme: theme::Theme,
     pub(crate) appearance_initialized: bool,
-    pub(crate) sidebar_collapsed: HashSet<SidebarSection>,
+    pub(crate) collapsed_sections: HashSet<PanelSection>,
     pub(crate) panels: PanelLayout,
     pub(crate) menu_open: Option<crate::menubar::MenuId>,
     pub(crate) drive_account: Option<drive::DriveAccount>,
@@ -233,11 +259,17 @@ pub struct ContactSheet {
     pub(crate) drive_thumb_load_id: u64,
     pub(crate) rotated_drive_thumbs: HashMap<(String, i16), Arc<RenderImage>>,
     pub(crate) drive_linking: bool,
+    /// The Drive browser to open once a link started from an import or
+    /// export command completes.
+    pub(crate) drive_after_link: Option<DriveMode>,
     pub(crate) drive_download: Option<DriveDownload>,
     pub(crate) history: History,
     pub(crate) store: LocalStore,
     pub(crate) recent_collections: Vec<RecentCollection>,
-    pub(crate) library_root: Option<PathBuf>,
+    /// Every folder set the user added to the tree, persisted across launches.
+    pub(crate) library_roots: Vec<PathBuf>,
+    /// Where the Folders "+" menu is open, if it is.
+    pub(crate) folder_menu: Option<Point<Pixels>>,
     pub(crate) selected_folder: Option<PathBuf>,
     pub(crate) expanded_folders: HashSet<PathBuf>,
 
@@ -280,8 +312,21 @@ impl ContactSheet {
             })
         });
 
-        let rename_photo_field = cx.new(|cx| TextField::new(cx, "File name"));
-        let photo_date_field = cx.new(|cx| TextField::new(cx, "YYYY-MM-DD HH:MM:SS"));
+        let rename_photo_field = cx.new(|cx| {
+            let weak = weak.clone();
+            TextField::new(cx, "File name").on_submit(move |value, app| {
+                let value = value.to_string();
+                let _ = weak.update(app, |this, cx| this.apply_photo_rename(&value, cx));
+            })
+        });
+
+        let photo_date_field = cx.new(|cx| {
+            let weak = weak.clone();
+            TextField::new(cx, "YYYY-MM-DD HH:MM:SS").on_submit(move |value, app| {
+                let value = value.to_string();
+                let _ = weak.update(app, |this, cx| this.save_photo_date(&value, cx));
+            })
+        });
 
         let prefix_field = cx.new(|cx| {
             let weak = weak.clone();
@@ -312,7 +357,7 @@ impl ContactSheet {
             let weak = weak.clone();
             TextField::new(cx, "Tag, e.g. street").on_submit(move |value, app| {
                 let value = value.to_string();
-                let _ = weak.update(app, |this, cx| this.apply_tag_value(&value, cx, true));
+                let _ = weak.update(app, |this, cx| this.apply_tag(&value, cx));
             })
         });
 
@@ -333,7 +378,16 @@ impl ContactSheet {
         let mut log = VecDeque::new();
         log.push_back("Session ready".to_string());
         let store = LocalStore::default_location();
-        let recent_collections = store.recent_collections(5).unwrap_or_default();
+        let recent_collections = store.recent_collections(RECENT_LIMIT).unwrap_or_default();
+        let library_roots: Vec<PathBuf> = store
+            .setting(LIBRARY_ROOTS)
+            .ok()
+            .flatten()
+            .and_then(|json| serde_json::from_str::<Vec<PathBuf>>(&json).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|root| root.is_dir())
+            .collect();
         let theme = store
             .setting("theme")
             .ok()
@@ -377,6 +431,10 @@ impl ContactSheet {
             inspector_image: None,
             inspector_image_error: None,
             inspector_load_id: 0,
+            inspector_base: None,
+            inspector_render: InspectorRender::Idle,
+            adjust_drag: None,
+            slider_tracks: HashMap::new(),
             about_window: None,
             rename_window: None,
             inspector_mode: InspectorMode::Photo,
@@ -401,7 +459,7 @@ impl ContactSheet {
             focused_once: false,
             theme,
             appearance_initialized: false,
-            sidebar_collapsed: HashSet::new(),
+            collapsed_sections: HashSet::new(),
             panels: PanelLayout::default(),
             menu_open: None,
             drive_account: drive::load_account(),
@@ -414,11 +472,13 @@ impl ContactSheet {
             drive_thumb_load_id: 0,
             rotated_drive_thumbs: HashMap::new(),
             drive_linking: false,
+            drive_after_link: None,
             drive_download: None,
             history: History::default(),
             store,
             recent_collections,
-            library_root: None,
+            library_roots,
+            folder_menu: None,
             selected_folder: None,
             expanded_folders: HashSet::new(),
             search_field,
@@ -565,6 +625,7 @@ impl ContactSheet {
     ) {
         self.resize_move(event, window, cx);
         self.marquee_move(event, window, cx);
+        self.drag_slider(event.position.x, cx);
     }
 
     pub(crate) fn toggle_left_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -582,6 +643,7 @@ impl ContactSheet {
     fn pointer_up(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.end_resize(event, window, cx);
         self.end_marquee(cx);
+        self.end_slider_drag(cx);
     }
 
     pub(crate) fn set_theme(&mut self, theme: theme::Theme, cx: &mut Context<Self>) {
@@ -595,7 +657,14 @@ impl ContactSheet {
             self.log(format!("Settings / {error}"));
         }
         self.sync_native_menus(cx);
-        let fields = [
+        for field in self.text_fields() {
+            field.update(cx, |_, cx| cx.notify());
+        }
+        cx.notify();
+    }
+
+    fn text_fields(&self) -> [gpui::Entity<TextField>; 9] {
+        [
             self.search_field.clone(),
             self.title_field.clone(),
             self.rename_photo_field.clone(),
@@ -605,125 +674,88 @@ impl ContactSheet {
             self.prefix_field.clone(),
             self.suffix_field.clone(),
             self.tag_field.clone(),
-        ];
-        for field in fields {
-            field.update(cx, |_, cx| cx.notify());
-        }
-        cx.notify();
+        ]
     }
 
-    pub(crate) fn open_preview_window(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(handle) = self.preview_window.as_ref()
-            && handle
-                .update(cx, |_, window, _| window.activate_window())
-                .is_ok()
-        {
+    pub(crate) fn open_preview_window(&mut self, cx: &mut Context<Self>) {
+        if activate_window(self.preview_window.as_ref(), cx) {
             return;
         }
         let page = self.current_page();
         let parent = cx.entity();
-        let bounds = Bounds::centered(None, size(px(980.0), px(780.0)), cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(520.0), px(420.0))),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Sheet preview".into()),
-                appears_transparent: false,
-                ..Default::default()
-            }),
-            focus: true,
-            ..Default::default()
-        };
+        let options = child_window_options(
+            "Sheet preview",
+            size(px(980.0), px(780.0)),
+            size(px(520.0), px(420.0)),
+            cx,
+        );
         // Open after the current update: the preview reads ContactSheet while
         // it renders, so the parent must not still be borrowed by this action.
         cx.spawn(async move |this, cx| {
-            let handle = cx.update(|app| {
+            let Ok(Ok(handle)) = cx.update(|app| {
                 app.open_window(options, |_, cx| {
                     cx.new(|cx| PreviewWindow::new(parent, page, cx))
                 })
-            });
-            let Ok(handle) = handle else {
+            }) else {
                 return;
             };
-            if let Ok(handle) = handle {
-                let _ = this.update(cx, |this, cx| {
-                    this.preview_window = Some(handle);
-                    cx.notify();
-                });
-            }
+            let _ = this.update(cx, |this, cx| {
+                this.preview_window = Some(handle);
+                cx.notify();
+            });
         })
         .detach();
     }
 
     pub(crate) fn open_about_window(&mut self, cx: &mut Context<Self>) {
-        if let Some(handle) = self.about_window.as_ref()
-            && handle
-                .update(cx, |_, window, _| window.activate_window())
-                .is_ok()
-        {
+        if activate_window(self.about_window.as_ref(), cx) {
             return;
         }
-        let bounds = Bounds::centered(None, size(px(480.0), px(430.0)), cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(420.0), px(360.0))),
-            titlebar: Some(TitlebarOptions {
-                title: Some("About Slate".into()),
-                appears_transparent: false,
-                ..Default::default()
-            }),
-            focus: true,
-            ..Default::default()
-        };
-        let handle = cx.open_window(options, |_, cx| cx.new(AboutWindow::new));
-        if let Ok(handle) = handle {
+        let options = child_window_options(
+            "About Slate",
+            size(px(480.0), px(340.0)),
+            size(px(420.0), px(300.0)),
+            cx,
+        );
+        if let Ok(handle) = cx.open_window(options, |_, cx| cx.new(AboutWindow::new)) {
             self.about_window = Some(handle);
         }
     }
 
     pub(crate) fn open_rename_window(&mut self, cx: &mut Context<Self>) {
-        if let Some(handle) = self.rename_window.as_ref()
-            && handle
-                .update(cx, |_, window, _| window.activate_window())
-                .is_ok()
-        {
+        if activate_window(self.rename_window.as_ref(), cx) {
             return;
         }
         self.rename_window = None;
         self.rename_pending = None;
         let parent = cx.entity();
-        let bounds = Bounds::centered(None, size(px(820.0), px(640.0)), cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(700.0), px(520.0))),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Rename".into()),
-                appears_transparent: false,
-                ..Default::default()
-            }),
-            focus: true,
-            ..Default::default()
-        };
+        let options = child_window_options(
+            "Rename",
+            size(px(820.0), px(640.0)),
+            size(px(700.0), px(520.0)),
+            cx,
+        );
         cx.spawn(async move |this, cx| {
-            let handle = cx.update(|app| {
+            let Ok(Ok(handle)) = cx.update(|app| {
                 app.open_window(options, |_, cx| cx.new(|cx| RenameWindow::new(parent, cx)))
-            });
-            let Ok(handle) = handle else {
+            }) else {
                 return;
             };
-            if let Ok(handle) = handle {
-                let _ = this.update(cx, |this, cx| {
-                    this.rename_window = Some(handle);
-                    cx.notify();
-                });
-            }
+            let _ = this.update(cx, |this, cx| {
+                this.rename_window = Some(handle);
+                cx.notify();
+            });
         })
         .detach();
     }
 
+    /// Deferred because Cancel and Escape run inside the rename window's own
+    /// event dispatch, where GPUI rejects a nested update of that window.
     pub(crate) fn close_rename_window(&mut self, cx: &mut Context<Self>) {
         if let Some(handle) = self.rename_window.take() {
-            let _ = handle.update(cx, |_, window, _| window.remove_window());
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+            });
         }
     }
 
@@ -805,7 +837,7 @@ impl ContactSheet {
         self.history.checkpoint(self.snapshot());
     }
 
-    fn push_photo_edit(
+    pub(crate) fn push_photo_edit(
         &mut self,
         fields: Vec<PhotoFieldChange>,
         before_selected: Arc<Selection>,
@@ -835,7 +867,10 @@ impl ContactSheet {
         };
         match self.store.remember_collection(&folder, &self.project) {
             Ok(()) => {
-                self.recent_collections = self.store.recent_collections(5).unwrap_or_default();
+                self.recent_collections = self
+                    .store
+                    .recent_collections(RECENT_LIMIT)
+                    .unwrap_or_default();
             }
             Err(error) => self.log(format!("Catalog / {error}")),
         }
@@ -847,16 +882,8 @@ impl ContactSheet {
             .photos
             .shares_data_with(&snapshot.project.photos);
         self.generation = self.generation.wrapping_add(1);
-        self.import_queue.clear();
-        self.importing_paths.clear();
-        self.imports_in_flight = 0;
-        self.import_state = None;
-        self.thumbs.clear();
-        self.thumbs_queued.clear();
-        self.thumb_order.clear();
-        self.thumb_queue.clear();
-        self.thumbs_in_flight = 0;
-        self.rotated_thumbs.clear();
+        self.clear_imports();
+        self.clear_thumbs();
         self.clear_inspector_image();
         self.grid_scroll = UniformListScrollHandle::default();
         self.project = snapshot.project;
@@ -882,19 +909,43 @@ impl ContactSheet {
     }
 
     fn editing_text(&self, window: &Window, cx: &App) -> bool {
-        [
-            &self.search_field,
-            &self.title_field,
-            &self.rename_photo_field,
-            &self.photo_date_field,
-            &self.custom_width_field,
-            &self.custom_height_field,
-            &self.prefix_field,
-            &self.suffix_field,
-            &self.tag_field,
-        ]
-        .iter()
-        .any(|field| field.read(cx).focus_handle(cx).is_focused(window))
+        self.text_fields()
+            .iter()
+            .any(|field| field.read(cx).focus_handle(cx).is_focused(window))
+    }
+
+    pub(crate) fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.panels.left_collapsed() {
+            self.panels.toggle_left();
+        }
+        self.sidebar_scroll.set_offset(Point::default());
+        self.search_field.update(cx, TextField::select_all_text);
+        window.focus(&self.search_field.read(cx).focus_handle(cx));
+        cx.notify();
+    }
+
+    /// Escape inside the search field clears the query first, then hands
+    /// focus back to the library so the next Escape closes nothing by surprise.
+    fn dismiss_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self
+            .search_field
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window)
+        {
+            return;
+        }
+        if self.search.is_empty() {
+            window.focus(&self.focus);
+        } else {
+            self.search.clear();
+            self.search_field
+                .update(cx, |field, cx| field.set_value("", cx));
+            self.preview_page = 0;
+            self.filter_changed();
+            self.refresh_preview();
+        }
+        cx.notify();
     }
 
     fn apply_history_step(&mut self, step: Step, forward: bool, cx: &mut Context<Self>) {
@@ -909,6 +960,7 @@ impl ContactSheet {
             .fields()
             .iter()
             .any(|field| matches!(field, PhotoFieldChange::Rotation { .. }));
+        let mut adjusted = Vec::new();
         for field in edit.fields() {
             match field {
                 PhotoFieldChange::Tags { id, before, after } => {
@@ -944,8 +996,15 @@ impl ContactSheet {
                         photo.set_label(if forward { *after } else { *before });
                     }
                 }
+                PhotoFieldChange::Adjustments { id, before, after } => {
+                    self.project
+                        .adjustments
+                        .set(*id, if forward { *after } else { *before });
+                    adjusted.push(*id);
+                }
             }
         }
+        self.adjustments_changed(&adjusted, cx);
         self.selected = edit.selected(forward);
         self.dirty = edit.dirty(forward);
         self.rotated_thumbs.clear();
@@ -1072,18 +1131,47 @@ impl ContactSheet {
         self.refresh_and_notify(cx);
     }
 
-    // ----- tags ----------------------------------------------------------
+    // ----- tags, rating and labels ---------------------------------------
 
-    pub(crate) fn apply_tag(&mut self, cx: &mut Context<Self>, clear_field: bool) {
-        let tag = self.tag_field.read(cx).value().to_string();
-        self.apply_tag_value(&tag, cx, clear_field);
+    /// Apply one batch edit to `ids` and record only the photos it changed as
+    /// field deltas, so undo never needs a whole-collection snapshot.
+    fn edit_scope<T: PartialEq>(
+        &mut self,
+        ids: &[PhotoId],
+        read: impl Fn(&slate_core::Photo) -> T,
+        apply: impl FnOnce(&mut Project) -> usize,
+        change: impl Fn(PhotoId, T, T) -> PhotoFieldChange,
+    ) -> usize {
+        let before_selected = Arc::clone(&self.selected);
+        let before_dirty = self.dirty;
+        let before: Vec<(PhotoId, T)> = ids
+            .iter()
+            .filter_map(|id| self.project.photo(*id).map(|photo| (*id, read(photo))))
+            .collect();
+        let changed = apply(&mut self.project);
+        self.project_changed();
+        if changed > 0 {
+            self.dirty = true;
+            let fields = before
+                .into_iter()
+                .filter_map(|(id, before)| {
+                    let after = read(self.project.photo(id)?);
+                    (before != after).then(|| change(id, before, after))
+                })
+                .collect();
+            self.push_photo_edit(fields, before_selected, before_dirty);
+        }
+        changed
     }
 
-    #[expect(
-        clippy::needless_collect,
-        reason = "snapshot before mutating the project"
-    )]
-    pub(crate) fn apply_tag_value(&mut self, tag: &str, cx: &mut Context<Self>, clear_field: bool) {
+    /// Clearing the tag field is deferred: this also runs from the field's own
+    /// submit callback, while GPUI still holds that field.
+    fn clear_tag_field(&self, cx: &mut Context<Self>) {
+        let field = self.tag_field.clone();
+        cx.defer(move |cx| field.update(cx, |field, cx| field.set_value("", cx)));
+    }
+
+    pub(crate) fn apply_tag(&mut self, tag: &str, cx: &mut Context<Self>) {
         let ids = self.scope_ids();
         let tag = tag.trim().to_string();
         if tag.is_empty() {
@@ -1096,120 +1184,51 @@ impl ContactSheet {
             cx.notify();
             return;
         }
-        let before_selected = Arc::clone(&self.selected);
-        let before_dirty = self.dirty;
-        let before_tags: Vec<(PhotoId, Vec<String>)> = ids
-            .iter()
-            .filter_map(|id| {
-                self.project
-                    .photo(*id)
-                    .map(|photo| (*id, photo.tags.to_vec()))
-            })
-            .collect();
-        let changed = batch::add_tag(&mut self.project, &ids, &tag);
-        self.project_changed();
-        if changed > 0 {
-            self.dirty = true;
-            let fields: Vec<PhotoFieldChange> = before_tags
-                .into_iter()
-                .filter_map(|(id, before)| {
-                    let after = self.project.photo(id)?.tags.to_vec();
-                    (before != after).then_some(PhotoFieldChange::Tags { id, before, after })
-                })
-                .collect();
-            self.push_photo_edit(fields, before_selected, before_dirty);
-        }
-        if clear_field {
-            self.tag_field
-                .update(cx, |field, cx| field.set_value("", cx));
-        }
+        let changed = self.edit_scope(
+            &ids,
+            |photo| photo.tags.to_vec(),
+            |project| batch::add_tag(project, &ids, &tag),
+            |id, before, after| PhotoFieldChange::Tags { id, before, after },
+        );
+        self.clear_tag_field(cx);
         self.set_status(format!("Tagged {changed} / {tag} / {} in scope", ids.len()));
         self.log(format!("Tag +{tag} / {changed} photo(s)"));
         cx.notify();
     }
 
-    #[expect(
-        clippy::needless_collect,
-        reason = "snapshot before mutating the project"
-    )]
-    pub(crate) fn remove_tag(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn remove_tag(&mut self, tag: &str, cx: &mut Context<Self>) {
         let ids = self.scope_ids();
-        let tag = self.tag_field.read(cx).value().trim().to_string();
+        let tag = tag.trim().to_string();
         if tag.is_empty() {
             self.set_status("Type the tag to remove");
             cx.notify();
             return;
         }
-        let before_selected = Arc::clone(&self.selected);
-        let before_dirty = self.dirty;
-        let before_tags: Vec<(PhotoId, Vec<String>)> = ids
-            .iter()
-            .filter_map(|id| {
-                self.project
-                    .photo(*id)
-                    .map(|photo| (*id, photo.tags.to_vec()))
-            })
-            .collect();
-        let changed = batch::remove_tag(&mut self.project, &ids, &tag);
-        self.project_changed();
-        if changed > 0 {
-            self.dirty = true;
-            let fields: Vec<PhotoFieldChange> = before_tags
-                .into_iter()
-                .filter_map(|(id, before)| {
-                    let after = self.project.photo(id)?.tags.to_vec();
-                    (before != after).then_some(PhotoFieldChange::Tags { id, before, after })
-                })
-                .collect();
-            self.push_photo_edit(fields, before_selected, before_dirty);
-        }
-        self.tag_field
-            .update(cx, |field, cx| field.set_value("", cx));
+        let changed = self.edit_scope(
+            &ids,
+            |photo| photo.tags.to_vec(),
+            |project| batch::remove_tag(project, &ids, &tag),
+            |id, before, after| PhotoFieldChange::Tags { id, before, after },
+        );
+        self.clear_tag_field(cx);
         self.set_status(format!("Removed tag {tag} from {changed} photo(s)"));
         self.log(format!("Tag -{tag} / {changed} photo(s)"));
         cx.notify();
     }
 
-    #[expect(
-        clippy::needless_collect,
-        reason = "snapshot before mutating the project"
-    )]
     pub(crate) fn clear_tags(&mut self, cx: &mut Context<Self>) {
         let ids = self.scope_ids();
-        let before_selected = Arc::clone(&self.selected);
-        let before_dirty = self.dirty;
-        let before_tags: Vec<(PhotoId, Vec<String>)> = ids
-            .iter()
-            .filter_map(|id| {
-                self.project
-                    .photo(*id)
-                    .map(|photo| (*id, photo.tags.to_vec()))
-            })
-            .collect();
-        let changed = batch::clear_tags(&mut self.project, &ids);
-        self.project_changed();
-        if changed > 0 {
-            self.dirty = true;
-            let fields: Vec<PhotoFieldChange> = before_tags
-                .into_iter()
-                .filter_map(|(id, before)| {
-                    let after = self.project.photo(id)?.tags.to_vec();
-                    (before != after).then_some(PhotoFieldChange::Tags { id, before, after })
-                })
-                .collect();
-            self.push_photo_edit(fields, before_selected, before_dirty);
-        }
+        let changed = self.edit_scope(
+            &ids,
+            |photo| photo.tags.to_vec(),
+            |project| batch::clear_tags(project, &ids),
+            |id, before, after| PhotoFieldChange::Tags { id, before, after },
+        );
         self.set_status(format!("Cleared tags on {changed} photo(s)"));
         self.log(format!("Tags cleared / {changed} photo(s)"));
         self.refresh_and_notify(cx);
     }
 
-    // ----- rating, labels and sorting ------------------------------------
-
-    #[expect(
-        clippy::needless_collect,
-        reason = "snapshot before mutating the project"
-    )]
     pub(crate) fn apply_rating(&mut self, rating: StarRating, cx: &mut Context<Self>) {
         let ids = self.scope_ids();
         if ids.is_empty() {
@@ -1217,24 +1236,13 @@ impl ContactSheet {
             cx.notify();
             return;
         }
-        let before_selected = Arc::clone(&self.selected);
-        let before_dirty = self.dirty;
-        let before: Vec<(PhotoId, StarRating)> = ids
-            .iter()
-            .filter_map(|id| self.project.photo(*id).map(|photo| (*id, photo.rating())))
-            .collect();
-        let changed = batch::set_rating(&mut self.project, &ids, rating);
-        self.project_changed();
+        let changed = self.edit_scope(
+            &ids,
+            slate_core::Photo::rating,
+            |project| batch::set_rating(project, &ids, rating),
+            |id, before, after| PhotoFieldChange::Rating { id, before, after },
+        );
         if changed > 0 {
-            self.dirty = true;
-            let fields: Vec<PhotoFieldChange> = before
-                .into_iter()
-                .filter_map(|(id, before)| {
-                    let after = self.project.photo(id)?.rating();
-                    (before != after).then_some(PhotoFieldChange::Rating { id, before, after })
-                })
-                .collect();
-            self.push_photo_edit(fields, before_selected, before_dirty);
             self.log(format!("Rating {} / {changed} photo(s)", rating.get()));
         }
         self.set_status(if rating.is_rated() {
@@ -1245,10 +1253,6 @@ impl ContactSheet {
         self.refresh_and_notify(cx);
     }
 
-    #[expect(
-        clippy::needless_collect,
-        reason = "snapshot before mutating the project"
-    )]
     pub(crate) fn apply_label(&mut self, label: ColorLabel, cx: &mut Context<Self>) {
         let ids = self.scope_ids();
         if ids.is_empty() {
@@ -1256,27 +1260,23 @@ impl ContactSheet {
             cx.notify();
             return;
         }
-        let before_selected = Arc::clone(&self.selected);
-        let before_dirty = self.dirty;
-        let before: Vec<(PhotoId, ColorLabel)> = ids
-            .iter()
-            .filter_map(|id| self.project.photo(*id).map(|photo| (*id, photo.label())))
-            .collect();
-        let changed = batch::set_label(&mut self.project, &ids, label);
-        self.project_changed();
+        let changed = self.edit_scope(
+            &ids,
+            slate_core::Photo::label,
+            |project| batch::set_label(project, &ids, label),
+            |id, before, after| PhotoFieldChange::Label { id, before, after },
+        );
         if changed > 0 {
-            self.dirty = true;
-            let fields: Vec<PhotoFieldChange> = before
-                .into_iter()
-                .filter_map(|(id, before)| {
-                    let after = self.project.photo(id)?.label();
-                    (before != after).then_some(PhotoFieldChange::Label { id, before, after })
-                })
-                .collect();
-            self.push_photo_edit(fields, before_selected, before_dirty);
             self.log(format!("Label {} / {changed} photo(s)", label.label()));
         }
         self.set_status(format!("Label {} / {changed} photo(s)", label.label()));
+        self.refresh_and_notify(cx);
+    }
+
+    pub(crate) fn set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
+        self.filter = filter;
+        self.preview_page = 0;
+        self.filter_changed();
         self.refresh_and_notify(cx);
     }
 
@@ -1344,7 +1344,7 @@ impl ContactSheet {
         let project = self.project.clone();
         let format = self.convert_format;
         self.convert_dialog_open = false;
-        self.set_status("Choose an output folder…");
+        self.set_status("Choose an output folder");
         cx.notify();
         cx.spawn(async move |this, cx| {
             let Ok(receiver) = cx.update(|app| {
@@ -1445,23 +1445,13 @@ impl ContactSheet {
         cx.notify();
     }
 
-    pub(crate) fn open_photo_preview(
-        &mut self,
-        photo_id: PhotoId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn open_photo_preview(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
         if self.project.photo(photo_id).is_none() {
             return;
         }
         self.inspect_photo(photo_id, cx);
         self.load_photo_preview(photo_id, cx);
-        if let Some(handle) = self.photo_preview_window.as_ref()
-            && handle
-                .update(cx, |_, window, _| window.activate_window())
-                .is_ok()
-        {
-            let _ = window;
+        if activate_window(self.photo_preview_window.as_ref(), cx) {
             return;
         }
         self.photo_preview_window = None;
@@ -1478,20 +1468,17 @@ impl ContactSheet {
             ..Default::default()
         };
         cx.spawn(async move |this, cx| {
-            let handle = cx.update(|app| {
+            let Ok(Ok(handle)) = cx.update(|app| {
                 app.open_window(options, |_, cx| {
                     cx.new(|cx| PhotoPreviewWindow::new(parent, cx))
                 })
-            });
-            let Ok(handle) = handle else {
+            }) else {
                 return;
             };
-            if let Ok(handle) = handle {
-                let _ = this.update(cx, |this, cx| {
-                    this.photo_preview_window = Some(handle);
-                    cx.notify();
-                });
-            }
+            let _ = this.update(cx, |this, cx| {
+                this.photo_preview_window = Some(handle);
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -1502,6 +1489,7 @@ impl ContactSheet {
         };
         let path = photo.path.to_path_buf();
         let turns = photo.rotation();
+        let adjustments = self.project.adjustments.for_photo(photo_id);
         self.photo_preview_target = Some(photo_id);
         self.photo_preview_image = None;
         self.photo_preview_error = None;
@@ -1511,7 +1499,12 @@ impl ContactSheet {
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { import::preview(&path, PHOTO_PREVIEW_EDGE) })
+                .background_spawn(async move {
+                    import::preview(&path, PHOTO_PREVIEW_EDGE).map(|mut preview| {
+                        preview.adjust(&adjustments);
+                        preview
+                    })
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.generation != generation
@@ -1593,23 +1586,28 @@ impl ContactSheet {
     pub(crate) fn clear_inspector_image(&mut self) {
         self.inspector_image = None;
         self.inspector_image_error = None;
+        self.inspector_base = None;
         self.inspector_load_id = self.inspector_load_id.wrapping_add(1);
     }
 
-    fn load_inspector_image(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
+    pub(crate) fn load_inspector_image(&mut self, photo_id: PhotoId, cx: &mut Context<Self>) {
         if matches!(self.inspector_image, Some((id, _)) if id == photo_id) {
+            return;
+        }
+        if matches!(&self.inspector_base, Some((id, _)) if *id == photo_id) {
+            self.render_inspector_image(cx);
             return;
         }
         let Some(photo) = self.project.photo(photo_id) else {
             return;
         };
         let path = photo.path.to_path_buf();
-        let turns = photo.rotation();
         let generation = self.generation;
         self.inspector_load_id = self.inspector_load_id.wrapping_add(1);
         let load_id = self.inspector_load_id;
         self.inspector_image = None;
         self.inspector_image_error = None;
+        self.inspector_base = None;
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move { import::preview(&path, INSPECTOR_EDGE) })
@@ -1623,20 +1621,14 @@ impl ContactSheet {
                 }
                 match result {
                     Ok(preview) => {
-                        let image = render_image(preview);
-                        let image = if turns == QuarterTurns::NONE {
-                            image
-                        } else {
-                            rotate_render_image(&image, turns).unwrap_or(image)
-                        };
-                        this.inspector_image = Some((photo_id, image));
-                        this.inspector_image_error = None;
+                        this.inspector_base = Some((photo_id, Arc::new(preview)));
+                        this.render_inspector_image(cx);
                     }
                     Err(error) => {
                         this.inspector_image_error = Some((photo_id, error.to_string()));
+                        cx.notify();
                     }
                 }
-                cx.notify();
             });
         })
         .detach();
@@ -1677,14 +1669,14 @@ impl ContactSheet {
         }
     }
 
-    pub(crate) fn save_photo_date(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn save_photo_date(&mut self, value: &str, cx: &mut Context<Self>) {
         let Some(photo_id) = self.inspected_photo else {
             return;
         };
-        let value = self.photo_date_field.read(cx).value().trim().to_string();
+        let value = value.trim();
         let normalized = if value.is_empty() {
             None
-        } else if let Some(value) = import::normalize_capture_datetime(&value) {
+        } else if let Some(value) = import::normalize_capture_datetime(value) {
             Some(value)
         } else {
             self.photo_date_error = Some("Use YYYY-MM-DD HH:MM:SS, or leave blank.".to_string());
@@ -1837,18 +1829,17 @@ impl ContactSheet {
         }
     }
 
-    pub(crate) fn apply_photo_rename(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn apply_photo_rename(&mut self, value: &str, cx: &mut Context<Self>) {
         let Some(id) = self.rename_photo_target else {
             return;
         };
-        let value = self.rename_photo_field.read(cx).value().trim().to_string();
         let Some(photo) = self.project.photo(id) else {
             self.cancel_photo_rename(cx);
             return;
         };
         let from = photo.path.to_path_buf();
         let extension = photo.extension();
-        let mut name = batch::sanitize_fragment(&value);
+        let mut name = batch::sanitize_fragment(value.trim());
         if name.is_empty() {
             self.rename_photo_error = Some("Enter a file name.".to_string());
             cx.notify();
@@ -2208,44 +2199,61 @@ impl ContactSheet {
     }
 
     pub(crate) fn new_project(&mut self, cx: &mut Context<Self>) {
-        if self.exporting.is_some() {
-            self.set_status("Finish the export first");
-            cx.notify();
+        if !self.can_switch_collection(cx) {
             return;
         }
-
-        self.generation = self.generation.wrapping_add(1);
-        self.project = Project::new("Untitled");
+        self.replace_collection(Project::new("Untitled"), cx);
         self.project_path = None;
         self.selected_folder = None;
         self.dirty = false;
-        self.selected = Arc::new(Selection::new());
-        self.filter = Filter::All;
-        self.search.clear();
+        self.drive_download = None;
+        self.rename_options = RenameOptions::default();
+        for field in [&self.tag_field, &self.prefix_field, &self.suffix_field] {
+            field.update(cx, |field, cx| field.set_value("", cx));
+        }
+        self.set_status("New collection / open a folder or add photos");
+        self.log("New collection");
+        cx.notify();
+    }
+
+    fn clear_thumbs(&mut self) {
         self.thumbs.clear();
         self.thumbs_queued.clear();
         self.thumb_order.clear();
         self.thumb_queue.clear();
         self.thumbs_in_flight = 0;
         self.rotated_thumbs.clear();
-        self.clear_inspector_image();
-        self.grid_scroll = UniformListScrollHandle::default();
+    }
+
+    fn clear_imports(&mut self) {
         self.import_queue.clear();
         self.importing_paths.clear();
         self.imports_in_flight = 0;
         self.import_selects = false;
         self.import_state = None;
+    }
+
+    /// Swap in another collection and drop every piece of per-collection UI
+    /// state. Bumping `generation` makes in-flight tasks discard their results.
+    fn replace_collection(&mut self, collection: Project, cx: &mut Context<Self>) {
+        self.generation = self.generation.wrapping_add(1);
+        self.clear_imports();
+        self.clear_thumbs();
+        self.clear_inspector_image();
         self.drive_picker = None;
         self.drive_notice = None;
-        self.drive_download = None;
-        self.rename_pending = None;
-        self.rename_applying = false;
-        self.rename_photo_target = None;
-        self.rename_photo_error = None;
-        self.photo_context = None;
-        self.photo_meta.clear();
-        self.photo_date_error = None;
-        self.rename_options = RenameOptions::default();
+        self.grid_scroll = UniformListScrollHandle::default();
+        self.selected = Arc::new(Selection::new());
+        self.filter = Filter::All;
+        self.search.clear();
+        self.search_field
+            .update(cx, |field, cx| field.set_value("", cx));
+        self.title_field.update(cx, |field, cx| {
+            field.set_value(collection.sheet.title.clone(), cx);
+        });
+        self.project = collection;
+        self.sync_paper_fields(cx);
+        self.history.clear();
         self.preview_page = 0;
         self.inspector_mode = InspectorMode::Photo;
         self.inspected_photo = None;
@@ -2254,28 +2262,18 @@ impl ContactSheet {
         self.close_photo_preview_window(cx);
         self.marquee = None;
         self.paper_menu_open = false;
-        self.history.clear();
-
-        self.search_field
-            .update(cx, |field, cx| field.set_value("", cx));
-        self.title_field
-            .update(cx, |field, cx| field.set_value("", cx));
-        self.tag_field
-            .update(cx, |field, cx| field.set_value("", cx));
-        self.prefix_field
-            .update(cx, |field, cx| field.set_value("", cx));
-        self.suffix_field
-            .update(cx, |field, cx| field.set_value("", cx));
-        self.sync_paper_fields(cx);
-
+        self.rename_pending = None;
+        self.rename_applying = false;
+        self.rename_photo_target = None;
+        self.rename_photo_error = None;
+        self.photo_context = None;
+        self.photo_meta.clear();
+        self.photo_date_error = None;
         self.project_changed();
         self.selection_changed();
         self.filter_changed();
         self.refresh_preview();
-        self.set_status("New collection / open a folder or add photos");
-        self.log("New collection");
         memory::release_free_pages();
-        cx.notify();
     }
 
     fn backfill_capture_dates(&mut self, cx: &mut Context<Self>) {
@@ -2342,15 +2340,21 @@ impl ContactSheet {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
-            let _ = this.update(cx, |this, cx| {
-                let root = Self::collection_root(&path);
-                this.library_root = Some(root.clone());
-                this.expanded_folders.insert(root);
-                this.expanded_folders.insert(path.clone());
-                this.open_folder(&path, cx);
-            });
+            let _ = this.update(cx, |this, cx| this.open_project(&path, cx));
         })
         .detach();
+    }
+
+    /// Every collection switch waits for a running export and saves unsaved
+    /// edits first; a collection that has never been saved blocks the switch.
+    pub(crate) fn can_switch_collection(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.exporting.is_some() {
+            self.set_status("Finish the export first");
+        } else if self.persist_current_collection() {
+            return true;
+        }
+        cx.notify();
+        false
     }
 
     fn persist_current_collection(&mut self) -> bool {
@@ -2358,7 +2362,7 @@ impl ContactSheet {
             return true;
         }
         let Some(path) = self.project_path.clone() else {
-            self.set_status("Save the current collection before switching folders");
+            self.set_status("Save this collection first / it has never been saved");
             return false;
         };
         match self.project.save(&path) {
@@ -2377,26 +2381,74 @@ impl ContactSheet {
         }
     }
 
+    /// Make `folder` visible in the tree. A folder inside an existing root, or
+    /// inside the Google Drive mirror, needs no new root; otherwise its parent
+    /// set joins the tree and absorbs any roots it contains.
+    fn show_in_tree(&mut self, folder: &Path) {
+        let mount = drive::mount_directory();
+        let base = if folder.starts_with(&mount) {
+            mount
+        } else if let Some(root) = self
+            .library_roots
+            .iter()
+            .find(|root| folder.starts_with(root))
+        {
+            root.clone()
+        } else {
+            let root = Self::collection_root(folder);
+            self.library_roots
+                .retain(|existing| !existing.starts_with(&root));
+            self.library_roots.push(root.clone());
+            self.save_library_roots();
+            root
+        };
+        for ancestor in folder
+            .ancestors()
+            .take_while(|ancestor| ancestor.starts_with(&base))
+        {
+            self.expanded_folders.insert(ancestor.to_path_buf());
+        }
+    }
+
+    /// Removes the folder from the tree only; nothing on disk changes.
+    pub(crate) fn remove_library_root(&mut self, root: &Path, cx: &mut Context<Self>) {
+        self.library_roots.retain(|existing| existing != root);
+        self.save_library_roots();
+        cx.notify();
+    }
+
+    fn save_library_roots(&mut self) {
+        let saved = serde_json::to_string(&self.library_roots)
+            .map_err(anyhow::Error::from)
+            .and_then(|json| self.store.set_setting(LIBRARY_ROOTS, &json));
+        if let Err(error) = saved {
+            self.log(format!("Settings / {error}"));
+        }
+    }
+
+    pub(crate) fn open_folder_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.folder_menu = Some(position);
+        cx.notify();
+    }
+
+    /// Opening a folder or a legacy collection file adds its set to the tree.
     pub(crate) fn open_project(&mut self, path: &Path, cx: &mut Context<Self>) {
-        if !self.persist_current_collection() {
+        if !self.can_switch_collection(cx) {
             return;
         }
+        let folder = if path.is_dir() {
+            path.to_path_buf()
+        } else {
+            path.parent()
+                .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+        };
+        self.show_in_tree(&folder);
         if path.is_dir() {
-            let root = Self::collection_root(path);
-            self.library_root = Some(root.clone());
-            self.expanded_folders.insert(root);
-            self.expanded_folders.insert(path.to_path_buf());
             self.open_folder(path, cx);
             return;
         }
         match Project::load(path) {
             Ok(project) => {
-                let folder = path
-                    .parent()
-                    .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-                let root = Self::collection_root(&folder);
-                self.library_root = Some(root.clone());
-                self.expanded_folders.insert(root);
                 self.expanded_folders.insert(folder.clone());
                 self.apply_loaded_collection(project, path.to_path_buf(), folder, false, cx);
                 self.sync_folder_photos(cx);
@@ -2410,19 +2462,10 @@ impl ContactSheet {
     }
 
     pub(crate) fn open_folder(&mut self, folder: &Path, cx: &mut Context<Self>) {
-        if !self.persist_current_collection() {
+        if !self.can_switch_collection(cx) {
             return;
         }
-        if self.exporting.is_some() {
-            self.set_status("Finish the export first");
-            cx.notify();
-            return;
-        }
-        if self.library_root.is_none() {
-            let root = Self::collection_root(folder);
-            self.library_root = Some(root.clone());
-            self.expanded_folders.insert(root);
-        }
+        self.show_in_tree(folder);
         let collection_path = folder.join("collection.slate");
         let (collection, dirty) = if collection_path.exists() {
             match Project::load(&collection_path) {
@@ -2446,18 +2489,6 @@ impl ContactSheet {
         self.sync_folder_photos(cx);
     }
 
-    pub(crate) fn open_recent(&mut self, path: &Path, cx: &mut Context<Self>) {
-        if path.is_dir() {
-            let root = Self::collection_root(path);
-            self.library_root = Some(root.clone());
-            self.expanded_folders.insert(root);
-            self.expanded_folders.insert(path.to_path_buf());
-            self.open_folder(path, cx);
-        } else {
-            self.open_project(path, cx);
-        }
-    }
-
     fn apply_loaded_collection(
         &mut self,
         collection: Project,
@@ -2466,61 +2497,15 @@ impl ContactSheet {
         dirty: bool,
         cx: &mut Context<Self>,
     ) {
-        self.generation += 1;
-        self.import_queue.clear();
-        self.importing_paths.clear();
-        self.imports_in_flight = 0;
-        self.import_selects = false;
-        self.import_state = None;
-        self.drive_picker = None;
-        self.drive_notice = None;
-        self.thumbs.clear();
-        self.thumbs_queued.clear();
-        self.thumb_order.clear();
-        self.rotated_thumbs.clear();
-        self.thumb_queue.clear();
-        self.thumbs_in_flight = 0;
-        self.clear_inspector_image();
-        self.grid_scroll = UniformListScrollHandle::default();
-        self.selected = Arc::new(Selection::new());
-        self.filter = Filter::All;
-        self.search.clear();
-        self.search_field
-            .update(cx, |field, cx| field.set_value("", cx));
-        self.title_field.update(cx, |field, cx| {
-            field.set_value(collection.sheet.title.clone(), cx);
-        });
-        self.project = collection;
-        self.sync_paper_fields(cx);
+        self.replace_collection(collection, cx);
         self.backfill_capture_dates(cx);
         self.project_path = Some(collection_path);
         self.selected_folder = Some(folder);
         self.dirty = dirty;
-        self.history.clear();
-        self.preview_page = 0;
-        self.inspector_mode = InspectorMode::Photo;
-        self.inspected_photo = None;
-        self.convert_dialog_open = false;
-        self.convert_format = OutputFormat::Jpeg;
-        self.close_photo_preview_window(cx);
-        self.marquee = None;
-        self.paper_menu_open = false;
-        self.rename_pending = None;
-        self.rename_applying = false;
-        self.rename_photo_target = None;
-        self.rename_photo_error = None;
-        self.photo_context = None;
-        self.photo_meta.clear();
-        self.photo_date_error = None;
-        self.project_changed();
-        self.selection_changed();
-        self.filter_changed();
         self.remember_current_collection();
         self.sync_native_menus(cx);
         self.log("Collection loaded");
         self.set_status(format!("Opened {} photos", self.project.photos.len()));
-        self.refresh_preview();
-        memory::release_free_pages();
         cx.notify();
     }
 
@@ -2848,6 +2833,9 @@ impl ContactSheet {
         }
         self.thumb_order.retain(|existing| *existing != id);
         self.thumb_order.push_back(id);
+        // A replaced thumbnail (after an adjustment) invalidates its rotations.
+        self.rotated_thumbs
+            .retain(|(photo_id, _), _| *photo_id != id);
         self.thumbs.insert(id, state);
     }
 
@@ -2886,16 +2874,22 @@ impl ContactSheet {
         self.pump_thumbs(cx);
     }
 
-    fn pump_thumbs(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn pump_thumbs(&mut self, cx: &mut Context<Self>) {
         while self.thumbs_in_flight < 3 {
             let Some((id, path)) = self.thumb_queue.pop_front() else {
                 break;
             };
             self.thumbs_in_flight += 1;
             let generation = self.generation;
+            let adjustments = self.project.adjustments.for_photo(id);
             cx.spawn(async move |this, cx| {
                 let result = cx
-                    .background_spawn(async move { import::preview(&path, THUMB_EDGE) })
+                    .background_spawn(async move {
+                        import::preview(&path, THUMB_EDGE).map(|mut preview| {
+                            preview.adjust(&adjustments);
+                            preview
+                        })
+                    })
                     .await;
                 let _ = this.update(cx, |this, cx| {
                     if this.generation != generation {
@@ -2903,6 +2897,11 @@ impl ContactSheet {
                     }
                     this.thumbs_in_flight = this.thumbs_in_flight.saturating_sub(1);
                     this.thumbs_queued.remove(&id);
+                    // The photo was adjusted again while this decoded.
+                    if this.project.adjustments.for_photo(id) != adjustments {
+                        this.refresh_thumb(id, cx);
+                        return;
+                    }
                     match result {
                         Ok(preview) => {
                             this.insert_thumb(id, ThumbState::Ready(render_image(preview)));
@@ -3137,6 +3136,30 @@ impl ContactSheet {
     }
 }
 
+impl ContactSheet {
+    /// Escape closes the topmost transient surface, one per press.
+    fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.rename_photo_target.is_some() {
+            self.cancel_photo_rename(cx);
+        } else if self.photo_context.take().is_some() || self.folder_menu.take().is_some() {
+            cx.notify();
+        } else if self.convert_dialog_open {
+            self.close_convert_dialog(cx);
+        } else if self.drive_notice.take().is_some() {
+            cx.notify();
+        } else if self.drive_picker.is_some() {
+            self.close_drive_picker(cx);
+        } else if self.menu_open.is_some() {
+            self.close_menu(cx);
+        } else if self.paper_menu_open {
+            self.paper_menu_open = false;
+            cx.notify();
+        } else {
+            self.dismiss_search(window, cx);
+        }
+    }
+}
+
 impl Focusable for ContactSheet {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -3177,9 +3200,9 @@ impl Render for ContactSheet {
                 this.close_menu(cx);
                 this.new_project(cx);
             }))
-            .on_action(cx.listener(|this, _: &OpenPreview, window, cx| {
+            .on_action(cx.listener(|this, _: &OpenPreview, _, cx| {
                 this.close_menu(cx);
-                this.open_preview_window(window, cx);
+                this.open_preview_window(cx);
             }))
             .on_action(cx.listener(|this, _: &OpenProject, _, cx| {
                 this.close_menu(cx);
@@ -3255,28 +3278,29 @@ impl Render for ContactSheet {
                 this.open_about_window(cx);
             }))
             .on_action(cx.listener(|this, _: &ImportDrive, _, cx| {
-                if this.drive_account.is_some() {
-                    this.open_drive_picker(DriveMode::Import, cx);
-                } else {
-                    this.link_google_drive(cx);
-                }
+                this.open_drive(DriveMode::Import, cx);
             }))
             .on_action(cx.listener(|this, _: &ExportDrive, _, cx| {
-                if this.drive_account.is_some() {
-                    this.open_drive_picker(DriveMode::Export, cx);
-                } else {
-                    this.link_google_drive(cx);
-                }
+                this.open_drive(DriveMode::Export, cx);
             }))
-            .on_action(cx.listener(|this, _: &LinkDrive, _, cx| {
-                this.link_google_drive(cx);
+            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+                this.close_menu(cx);
+                this.focus_search(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleLeftPane, window, cx| {
+                this.close_menu(cx);
+                this.toggle_left_pane(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleRightPane, window, cx| {
+                this.close_menu(cx);
+                this.toggle_right_pane(window, cx);
             }))
             .on_action(cx.listener(|this, _: &UnlinkDrive, _, cx| {
                 this.unlink_google_drive(cx);
             }))
             .on_action(cx.listener(|this, action: &OpenRecent, _, cx| {
                 this.close_menu(cx);
-                this.open_recent(&action.path, cx);
+                this.open_project(&action.path, cx);
             }))
             .on_action(cx.listener(|this, action: &SetTheme, _, cx| {
                 this.set_theme(action.theme, cx);
@@ -3297,33 +3321,7 @@ impl Render for ContactSheet {
                 this.close_menu(cx);
                 cx.open_url("https://github.com/et0and/slate-desktop/issues");
             }))
-            .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
-                if this.rename_photo_target.is_some() {
-                    this.cancel_photo_rename(cx);
-                    return;
-                }
-                if this.photo_context.is_some() {
-                    this.photo_context = None;
-                    cx.notify();
-                    return;
-                }
-                if this.convert_dialog_open {
-                    this.close_convert_dialog(cx);
-                    return;
-                }
-                if this.paper_menu_open {
-                    this.paper_menu_open = false;
-                } else if this.drive_notice.is_some() {
-                    this.drive_notice = None;
-                } else if this.drive_picker.is_some() {
-                    this.drive_picker = None;
-                } else if this.menu_open.is_some() {
-                    this.menu_open = None;
-                } else if this.rename_pending.is_some() {
-                    this.cancel_rename(cx);
-                }
-                cx.notify();
-            }))
+            .on_action(cx.listener(|this, _: &Dismiss, window, cx| this.dismiss(window, cx)))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 this.begin_import(paths.paths().to_vec(), cx);
             }))
@@ -3361,6 +3359,36 @@ impl Render for ContactSheet {
     }
 }
 
+/// Bring an already-open child window forward. Returns false when there is
+/// none or the user closed it, so the caller opens a fresh one.
+fn activate_window<V: 'static>(handle: Option<&WindowHandle<V>>, cx: &mut App) -> bool {
+    handle.is_some_and(|handle| {
+        handle
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+    })
+}
+
+/// Native child windows keep a standard, visible title.
+fn child_window_options(
+    title: &'static str,
+    initial: Size<Pixels>,
+    minimum: Size<Pixels>,
+    cx: &App,
+) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, initial, cx))),
+        window_min_size: Some(minimum),
+        titlebar: Some(TitlebarOptions {
+            title: Some(title.into()),
+            appears_transparent: false,
+            ..Default::default()
+        }),
+        focus: true,
+        ..Default::default()
+    }
+}
+
 fn divider(id: &'static str, target: ResizeTarget, cx: &mut Context<ContactSheet>) -> AnyElement {
     div()
         .id(id)
@@ -3385,7 +3413,7 @@ fn divider(id: &'static str, target: ResizeTarget, cx: &mut Context<ContactSheet
         .into_any_element()
 }
 
-fn rotate_render_image(image: &RenderImage, turns: QuarterTurns) -> Option<Arc<RenderImage>> {
+pub fn rotate_render_image(image: &RenderImage, turns: QuarterTurns) -> Option<Arc<RenderImage>> {
     let size = image.size(0);
     let bytes = image.as_bytes(0)?;
     let mut buffer =
@@ -3532,16 +3560,16 @@ mod tests {
             assert_eq!(view.sort_direction, SortDirection::Ascending);
         });
 
-        ui_click(&view, cx, "sidebar-section-rating");
+        ui_click(&view, cx, "section-rating");
         view.update(cx, |view, _| {
             assert!(
-                view.sidebar_collapsed.contains(&SidebarSection::Rating),
+                view.collapsed_sections.contains(&PanelSection::Rating),
                 "rating section did not collapse"
             );
         });
-        ui_click(&view, cx, "sidebar-section-rating");
+        ui_click(&view, cx, "section-rating");
         view.update(cx, |view, _| {
-            assert!(!view.sidebar_collapsed.contains(&SidebarSection::Rating));
+            assert!(!view.collapsed_sections.contains(&PanelSection::Rating));
         });
 
         ui_click(&view, cx, "cell-1");
@@ -3717,6 +3745,177 @@ mod tests {
 
         cx.dispatch_action(ConvertSelected);
         view.update(cx, |view, _| assert!(view.convert_dialog_open));
+    }
+
+    fn ready_view(
+        cx: &mut gpui::TestAppContext,
+    ) -> (gpui::Entity<ContactSheet>, &mut gpui::VisualTestContext) {
+        cx.update(|cx| assets::install_fonts(cx));
+        let (view, cx) = cx.add_window_view(|_, cx| ContactSheet::new(cx));
+        view.update(cx, |view, cx| {
+            view.project = ui_project();
+            view.selected = Arc::new(std::iter::once(PhotoId(1)).collect());
+            view.selection_changed();
+            view.project_changed();
+            view.filter_changed();
+            cx.notify();
+        });
+        cx.run_until_parked();
+        (view, cx)
+    }
+
+    #[gpui::test]
+    fn context_menu_rows_run_their_command(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = ready_view(cx);
+        view.update(cx, |view, cx| {
+            view.open_photo_context(PhotoId(2), Point::new(px(400.0), px(300.0)), cx);
+        });
+        ui_click(&view, cx, "photo-context-info");
+        view.update(cx, |view, _| {
+            assert!(view.photo_context.is_none());
+            assert_eq!(view.inspected_photo, Some(PhotoId(2)));
+        });
+    }
+
+    #[gpui::test]
+    fn clicking_a_photo_inspects_and_its_checkbox_selects(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = ready_view(cx);
+        view.update(cx, |view, _| {
+            view.selected = Arc::new(Selection::new());
+            view.selection_changed();
+        });
+        ui_click(&view, cx, "cell-2");
+        view.update(cx, |view, _| {
+            assert_eq!(view.inspected_photo, Some(PhotoId(2)));
+            assert!(!view.selected.contains(PhotoId(2)));
+        });
+        ui_click(&view, cx, "select-2");
+        view.update(cx, |view, _| assert!(view.selected.contains(PhotoId(2))));
+        ui_click(&view, cx, "select-2");
+        view.update(cx, |view, _| assert!(!view.selected.contains(PhotoId(2))));
+    }
+
+    #[gpui::test]
+    fn adjustment_sliders_edit_undo_and_copy(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = ready_view(cx);
+        view.update(cx, |view, cx| view.inspect_photo(PhotoId(1), cx));
+        cx.run_until_parked();
+        draw_root(&view, cx);
+        let track = cx
+            .debug_bounds("slider-exposure")
+            .expect("the exposure slider renders in the photo inspector");
+        let three_quarters = Point::new(track.left() + track.size.width * 0.75, track.center().y);
+        cx.simulate_click(three_quarters, gpui::Modifiers::none());
+        cx.run_until_parked();
+        view.update(cx, |view, _| {
+            let exposure = view.project.adjustments.for_photo(PhotoId(1)).exposure;
+            assert!((exposure - 1.5).abs() < 0.06, "exposure was {exposure}");
+            assert!(view.dirty);
+        });
+
+        view.update(cx, |view, cx| {
+            view.selected = Arc::new([PhotoId(1), PhotoId(2)].into_iter().collect());
+            view.selection_changed();
+            view.copy_adjustments_to_selection(cx);
+        });
+        view.update(cx, |view, _| {
+            assert_eq!(
+                view.project.adjustments.for_photo(PhotoId(2)),
+                view.project.adjustments.for_photo(PhotoId(1))
+            );
+        });
+
+        view.update(cx, super::ContactSheet::undo);
+        view.update(cx, |view, _| {
+            assert!(view.project.adjustments.for_photo(PhotoId(2)).is_neutral());
+            assert!(!view.project.adjustments.for_photo(PhotoId(1)).is_neutral());
+        });
+        view.update(cx, super::ContactSheet::undo);
+        view.update(cx, |view, _| {
+            assert!(view.project.adjustments.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn folders_plus_opens_the_source_menu(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = ready_view(cx);
+        ui_click(&view, cx, "folders-add");
+        view.update(cx, |view, _| {
+            assert!(view.folder_menu.is_some());
+            assert!(
+                !view.collapsed_sections.contains(&PanelSection::Folders),
+                "the + button must not collapse its section"
+            );
+        });
+        draw_root(&view, cx);
+        assert!(cx.debug_bounds("folder-menu-drive").is_some());
+        cx.dispatch_action(Dismiss);
+        view.update(cx, |view, _| assert!(view.folder_menu.is_none()));
+    }
+
+    #[gpui::test]
+    fn enter_in_the_tag_field_tags_the_scope(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = ready_view(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.tag_field
+                .update(cx, |field, cx| field.set_value("street", cx));
+            window.focus(&view.tag_field.read(cx).focus_handle(cx));
+        });
+        cx.dispatch_action(crate::text_field::Submit);
+        cx.run_until_parked();
+        view.update(cx, |view, cx| {
+            assert_eq!(
+                view.project.photo(PhotoId(1)).unwrap().tags.to_vec(),
+                vec!["street".to_string()]
+            );
+            assert!(view.project.photo(PhotoId(2)).unwrap().tags.is_empty());
+            assert_eq!(view.tag_field.read(cx).value(), "");
+        });
+    }
+
+    #[gpui::test]
+    fn search_shortcut_focuses_and_escape_clears(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = ready_view(cx);
+        cx.dispatch_action(FocusSearch);
+        view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.search_field
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window)
+            );
+            view.search = "b".to_string();
+            view.search_field
+                .update(cx, |field, cx| field.set_value("b", cx));
+            view.filter_changed();
+        });
+        cx.dispatch_action(Dismiss);
+        view.update_in(cx, |view, window, cx| {
+            assert_eq!(view.search, "");
+            assert!(
+                view.search_field
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window)
+            );
+        });
+        cx.dispatch_action(Dismiss);
+        view.update_in(cx, |view, window, _| assert!(view.focus.is_focused(window)));
+    }
+
+    #[gpui::test]
+    fn rename_window_cancel_closes_the_window(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = ready_view(cx);
+        cx.dispatch_action(RenamePhotos);
+        cx.run_until_parked();
+        let handle = view.update(cx, |view, _| view.rename_window).unwrap();
+        let windows = cx.windows().len();
+        // Cancel runs inside the rename window's own dispatch, as a click does.
+        handle
+            .update(cx, |_, _, cx| view.update(cx, ContactSheet::cancel_rename))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), windows - 1);
     }
 
     #[test]

@@ -4,6 +4,7 @@
 //! are written to disk one at a time; the document is never held in memory as a
 //! whole, which is required for a 500k-photo sheet.
 
+use crate::adjust::{AdjustmentMap, Adjustments};
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufWriter, Cursor, Write};
@@ -807,20 +808,25 @@ enum PreparedImage {
     Missing(String),
 }
 
-fn prepare_photo(photo: &Photo, placement: &Placement) -> PreparedImage {
-    if let Some(image) = raw_jpeg(photo, placement) {
-        return PreparedImage::Raw(image);
+/// Unadjusted photos embed their original compressed stream where they can.
+/// An adjusted photo has to be decoded, adjusted and re-encoded: its pixels
+/// differ from the file's by definition.
+fn prepare_photo(photo: &Photo, placement: &Placement, adjustments: &Adjustments) -> PreparedImage {
+    if adjustments.is_neutral() {
+        if let Some(image) = raw_jpeg(photo, placement) {
+            return PreparedImage::Raw(image);
+        }
+        if let Some(image) = raw_png(photo, placement) {
+            return PreparedImage::Raw(image);
+        }
+        if let Some(image) = image_io_raw(photo, placement) {
+            return PreparedImage::Raw(image);
+        }
+        if let Some(image) = sips_raw(photo, placement) {
+            return PreparedImage::Raw(image);
+        }
     }
-    if let Some(image) = raw_png(photo, placement) {
-        return PreparedImage::Raw(image);
-    }
-    if let Some(image) = image_io_raw(photo, placement) {
-        return PreparedImage::Raw(image);
-    }
-    if let Some(image) = sips_raw(photo, placement) {
-        return PreparedImage::Raw(image);
-    }
-    match render_photo(photo, placement) {
+    match render_photo(photo, placement, adjustments) {
         Ok((bytes, width, height)) => PreparedImage::Encoded {
             bytes,
             width,
@@ -850,7 +856,11 @@ fn flatten_on_white(image: &DynamicImage) -> RgbImage {
     rgb
 }
 
-fn render_photo(photo: &Photo, placement: &Placement) -> Result<(Vec<u8>, u32, u32)> {
+fn render_photo(
+    photo: &Photo,
+    placement: &Placement,
+    adjustments: &Adjustments,
+) -> Result<(Vec<u8>, u32, u32)> {
     let mut image = load_oriented(&photo.path, Some(max_pixels(placement)))?;
     for _ in 0..photo.rotation().turns() {
         image = image.rotate90();
@@ -861,7 +871,8 @@ fn render_photo(photo: &Photo, placement: &Placement) -> Result<(Vec<u8>, u32, u
 
     let target_w = ((placement.image_w_mm * DPI) / 25.4).ceil() as u32;
     let target_h = ((placement.image_h_mm * DPI) / 25.4).ceil() as u32;
-    let image = flatten_on_white(&image.thumbnail(target_w.max(1), target_h.max(1)));
+    let mut image = flatten_on_white(&image.thumbnail(target_w.max(1), target_h.max(1)));
+    adjustments.apply_rgb(&mut image);
     let (width, height) = (image.width(), image.height());
     let mut bytes = Vec::new();
     let mut encoder = JpegEncoder::new_with_quality(&mut bytes, JPEG_QUALITY);
@@ -1009,6 +1020,7 @@ fn write_page(
     layout: &SheetLayout,
     page: &crate::layout::PagePlan,
     page_photos: &[&Photo],
+    adjustments: &AdjustmentMap,
     project_name: &str,
     page_count: usize,
     photo_count: usize,
@@ -1046,7 +1058,7 @@ fn write_page(
             let Some(photo) = page_photos.get(placement.photo_index) else {
                 return PreparedImage::Missing("photo not found".to_string());
             };
-            prepare_photo(photo, placement)
+            prepare_photo(photo, placement, &adjustments.for_photo(photo.id()))
         })
         .collect();
 
@@ -1178,6 +1190,7 @@ pub fn export_pdf(
             &layout,
             &page,
             &page_photos,
+            &AdjustmentMap::default(),
             project_name,
             page_count,
             photos.len(),
@@ -1260,6 +1273,7 @@ pub fn export_pdf_ids(
             &layout,
             &page,
             &page_photos,
+            &project.adjustments,
             project_name,
             page_count,
             ids.len(),

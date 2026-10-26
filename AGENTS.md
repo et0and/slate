@@ -31,7 +31,7 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   GPUI child windows. The photo preview is a native full-screen window. Both
   previews stay read-only views over `ContactSheet`. The photo preview opens from
   the grid eye button. The sheet builder is a right-rail mode opened by
-  `File > Create contact sheet…`; the right rail defaults to the selected photo
+  `File > Create contact sheet`; the right rail defaults to the selected photo
   inspector.
 - `panels.rs` owns the drag-resizable rail geometry and the collapsed state.
   Keep the centre at `CENTER_MIN`, clamp the widths on every render, and use
@@ -55,9 +55,16 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   list bounded. `store::data_directory()` is the one application-data path.
 - `drive.rs` owns Google OAuth, the refresh token, Drive listing and streaming
   transfers. `drive_ui.rs` owns the Drive browser, thumbnails, selected stack,
-  setup notice and the import/export workflows. Keep every Drive command in the
-  Drive menu. Drive list responses must explicitly request `size` and
-  `thumbnailLink`; thumbnails are bounded and cached.
+  setup notice and the import/export workflows. There is no Drive menu: Drive
+  import, PDF export and unlink live in the File menu, and the Folders "+" menu
+  offers Google Drive beside local folders. All of them go through
+  `open_drive`, which links first and then continues. Imports
+  mirror Drive's folder names under `drive::mount_directory()` and open the
+  mirrored folder as an ordinary folder collection; the Folders section shows
+  that mirror as the Google Drive tree. Downloads stream to `.part` files, reuse
+  an existing same-size copy and never overwrite a different file. Drive
+  list responses must explicitly request `size` and `thumbnailLink`;
+  thumbnails are bounded and cached.
 
 ## Rules
 
@@ -80,11 +87,14 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - Keep background concurrency bounded: 3 import/thumbnail jobs.
 - The library uses `uniform_list`; never build all photo cells. Schedule thumbs
   only for the rendered range and keep the cache at `THUMB_CACHE`. A left press
-  toggles the cell, starts a marquee and fills the photo inspector; dragging
-  selects or deselects every cell in the rectangle. The eye button opens the
-  native full-screen preview without changing selection. Right press opens the
-  per-photo menu: rename, show in inspector, reveal, copy path and remove. Do not
-  add a second click toggle.
+  on a photo fills the photo inspector and anchors a marquee; it never changes
+  selection. The top-right checkbox is the only click toggle; do not add
+  another. Dragging selects every cell in the rectangle, or deselects when the
+  drag starts on a selected photo. The inspected photo has an ink frame;
+  selected photos have a fill and a ticked checkbox. Double-click or the eye
+  button opens the native full-screen preview without changing selection. Right
+  press opens the per-photo menu: rename, show in inspector, reveal, copy path
+  and remove.
 - Empty selection means "all visible"; never materialise a 500k-photo selection
   just to open a collection. Selection is `Selection`, a roaring bitmap. Do not
   replace it with `HashSet<PhotoId>`; select-all must stay compact.
@@ -92,12 +102,16 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   inside the collection folder as relative paths so moving a folder keeps it
   portable. Opening a folder loads `collection.slate` or starts a new collection
   and imports immediate image files. The left folder tree mirrors the filesystem;
-  do not add a virtual hierarchy to the catalog.
+  do not add a virtual hierarchy to the catalog. The tree holds several roots
+  (`library_roots`, persisted in the settings store): opening a folder outside
+  every root adds its parent set, and a root's hover ✕ only removes it from the
+  tree.
 - Import probes metadata only. Generate a thumbnail when a cell becomes visible;
   do not decode one preview per imported file just to evict it from the cache.
   Append imported photos to `ViewState` incrementally; full view reconciles
   happen once at import completion, not every 100 ms.
-- Photo edits use `history` field deltas (tags, rotation, capture date). Do not
+- Photo edits use `history` field deltas (tags, rotation, capture date, rating,
+  label, adjustments). Do not
   add a full-collection snapshot for a single-photo edit. Whole-collection snapshots
   are for sheet/saved-sheet, import and removal boundaries, and are cheap
   because they share photo chunks and the selection bitmap.
@@ -113,7 +127,17 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - JPEG export embeds the original DCT stream. All EXIF orientations, including
   mirrors, are represented by the PDF image matrix; CMYK uses `/DeviceCMYK`
   and the Adobe decode inversion. Do not reintroduce decode/resize/encode for
-  JPEGs.
+  unadjusted JPEGs; only a photo with non-neutral adjustments is decoded,
+  adjusted and re-encoded.
+- Adjustments (`slate_core::adjust`) are non-destructive: one sparse
+  `AdjustmentMap` on the collection, behind an `Arc` so snapshots share it,
+  never a field on `Photo` (it must stay 80 bytes). Neutral adjustments are not
+  stored. Thumbnails, the inspector, the full-screen preview, PDF export and
+  conversion all apply them; originals are never written. `Slider` owns each
+  control's range, step, neutral value and label, so the UI, the normaliser and
+  the pipeline cannot disagree. The inspector edits the inspected photo: a drag
+  updates live from the cached decode (`inspector_base`, one render in flight)
+  and records one undo step on release.
 - Non-interlaced 8-bit RGB/gray PNGs embed their IDAT stream directly with
   `/FlateDecode` and predictor 15. Alpha, palette, 16-bit and interlaced PNGs
   use the fallback path.
@@ -141,7 +165,15 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   reintroduce `% 4`, zero-width or zero-height checks.
 - Text field callbacks must not read or update the same field from inside its
   own event handler (GPUI entity re-borrow panic). Pass values through the
-  callback instead.
+  callback instead, and `cx.defer` any update to that field, such as clearing it
+  after submit.
+- In-window dialogs use `widgets::modal`, and menus occlude their dismiss layer.
+  Without `occlude()` a press inside the panel also reaches the backdrop and
+  closes it before the control handles its click.
+- A child window cannot update itself from inside its own event dispatch.
+  Defer `remove_window` when the request starts in that window.
+- Escape closes the topmost transient surface, one per press. In the search
+  field it clears the query, then returns focus to the library.
 - The photo inspector reads EXIF on demand in a background task and caches the
   result; never decode an image just for metadata. Editing the capture date
   updates `Photo.captured_at` in `collection.slate` only. Do not claim to write
@@ -212,18 +244,35 @@ broad allowances; use `#[expect]` with a reason for a single justified case.
 
 ## Style
 
-High contrast, terminal-inspired: bundled Geist for names and actions, bundled
-Geist Mono for data and shortcut hints, 1 px rules, square controls, SVG icons,
+High contrast, terminal-inspired: the platform UI font (`.SystemUIFont`: San
+Francisco, Segoe UI, the desktop sans) for names and actions, bundled Geist
+Mono for data and shortcut hints, 1 px rules, square controls, SVG icons,
 no rounded corners and no decorative gradients. Light and Dark are monochrome.
 Palette themes use their accent only for selected badges, checkboxes, focused
 fields and primary controls; do not add other colour uses. Theme choices live
-under View only and iterate `Theme::ALL`. Use the `TEXT_*` tokens; body copy is
-13 pt, labels 11 pt and metadata 10 pt. Use shadows to lift menus, photo frames,
-paper preview and modals; do not add glass or blur.
+under View only and iterate `Theme::ALL`. Use the five `TEXT_*` tokens and never
+offset one by a fraction: display 20 pt for the one heading of a dialog, window
+or empty state (`widgets::heading`), title 15 pt for toolbar headings, body
+13 pt, labels 11 pt and metadata 10 pt. Shortcut hints use `widgets::shortcut_hint`
+at body size so the modifier glyphs stay legible. Weight encodes the role, never the
+state: headings semibold, controls medium, content and menu rows regular.
+Selection, focus and disabled states change colour or fill, not weight. Use
+shadows to lift menus, photo frames, paper preview and modals; do not add glass
+or blur.
+
+Do not add instructional or hint copy: no "Click…", "Select…", "Try…",
+"Add a folder with +" or "Save a layout to reuse it". An empty area stays empty
+or lists real commands; a control's label says what it does. Keep only facts the
+user cannot see otherwise, such as "This cannot be undone".
+
+Do not end menu items or button labels with an ellipsis. Ellipses belong only
+to progress text such as "Scanning…".
 
 Sentence case everywhere. Do not add uppercase copy, `to_uppercase()` calls or
 CSS `text-transform: uppercase`. Acronyms such as PDF, RGB and DPI are fine.
-Dense, not sparse. Do not add a wordmark, logo or tagline.
+Dense, not sparse. Do not add a tagline. The only wordmark is the pixel SLATE
+logo painted at the foot of the empty library (`library::LOGO`), in the theme's
+surface colour and sized to the pane width.
 
 Do not repeat a label or action on screen. Each panel has a distinct job:
 collection, folders, review and filters on the left, the library in the centre, the photo
@@ -243,15 +292,20 @@ at an 8 px inset so their labels sit on the same 16 px text gutter as the
 panels; hover fills the full topbar height. Do not switch menus on hover.
 
 Use `theme.rs` tokens, `widgets.rs` controls and `assets.rs` icons instead of
-one-off styles. Load Geist in `main.rs`; never fall back to a system font.
+one-off styles. Load Geist Mono through `assets::install_fonts`; do not bundle a
+second interface font over the platform one.
 
 ## Automation
 
 - `.github/workflows/ci.yml` runs fmt, clippy and tests on macOS, Linux and
   Windows, plus a release-mode 500k synthetic stress gate on Linux.
-- `.github/workflows/release.yml` runs semantic-release on `main`, then packages
-  a universal macOS `Slate.app`, a Linux tarball and a Windows zip from the
-  release tag. See `docs/release.md` for the versioning and notarization rules.
+- `.github/workflows/release.yml` runs semantic-release on `main`, then builds
+  from the release tag and uploads three direct downloads, never archives:
+  `Slate-macos-universal.dmg` (universal `Slate.app`), `Slate-windows-x86_64.exe`
+  and `Slate-linux-x86_64.AppImage`. The AppImage is the pinned, checksum-verified
+  AppImage runtime followed by a squashfs of the AppDir; bump the runtime URL and
+  SHA-256 together. See `docs/release.md` for the versioning and notarization
+  rules.
 - Conventional commit subjects are release input. The first release is the
   bootstrapped `v0.0.1` tag; after that `feat` is minor, `fix` and `perf` are
   patch, breaking changes are major, and `chore`/docs do not release. Squash

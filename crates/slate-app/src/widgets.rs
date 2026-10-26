@@ -1,8 +1,8 @@
 //! Shared controls and typed text styles.
 
 use gpui::{
-    AnyElement, Div, ElementId, FontWeight, SharedString, Stateful, Styled, div, prelude::*, px,
-    svg,
+    AnyElement, App, Div, ElementId, FontWeight, MouseButton, MouseDownEvent, SharedString,
+    Stateful, Styled, Window, div, prelude::*, px, rgba, svg,
 };
 
 use crate::{assets, theme};
@@ -45,16 +45,106 @@ pub fn group_label(text: &str) -> Div {
         .child(text.to_string())
 }
 
+/// The single heading of a dialog, native child window or empty state.
+pub fn heading(text: impl Into<SharedString>) -> Div {
+    ui_text(theme::TEXT_DISPLAY, theme::ink())
+        .font_weight(FontWeight::SEMIBOLD)
+        .line_height(px(26.0))
+        .child(text.into())
+}
+
+pub fn dialog_panel(width: f32) -> Div {
+    div()
+        .w(px(width))
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .bg(theme::surface())
+        .border_1()
+        .border_color(theme::rule())
+        .shadow_2xl()
+}
+
+pub fn dialog_header(
+    title: impl Into<SharedString>,
+    subtitle: Option<String>,
+    close: Stateful<Div>,
+) -> Div {
+    div()
+        .px(px(20.0))
+        .py(px(16.0))
+        .flex()
+        .items_start()
+        .justify_between()
+        .gap(px(12.0))
+        .border_b_1()
+        .border_color(theme::rule())
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .min_w(px(0.0))
+                .gap(px(4.0))
+                .child(heading(title))
+                .children(subtitle.map(|subtitle| {
+                    mono_text(theme::TEXT_META, theme::faint())
+                        .truncate()
+                        .child(subtitle)
+                })),
+        )
+        .child(close)
+}
+
+pub fn dialog_footer() -> Div {
+    div()
+        .px(px(20.0))
+        .py(px(14.0))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(8.0))
+        .border_t_1()
+        .border_color(theme::rule())
+}
+
+/// Dim the window behind an in-window dialog. The panel occludes the
+/// backdrop: without that, every press inside the panel also reaches
+/// `on_dismiss` and closes the dialog before its control can handle the click.
+pub fn modal(
+    panel: Div,
+    on_dismiss: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+) -> AnyElement {
+    div()
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .absolute()
+                .top(px(0.0))
+                .left(px(0.0))
+                .size_full()
+                .bg(rgba(0x00000088))
+                .on_mouse_down(MouseButton::Left, on_dismiss),
+        )
+        .child(panel.occlude())
+        .into_any_element()
+}
+
 pub fn setting_row(text: &str, control: impl IntoElement) -> AnyElement {
     div()
         .flex()
         .items_center()
         .justify_between()
         .min_h(px(theme::ROW_H + 2.0))
-        .px(px(20.0))
+        .px(px(16.0))
         .border_b_1()
         .border_color(theme::rule())
-        .child(ui_text(theme::TEXT_BODY - 0.5, theme::muted()).child(text.to_string()))
+        .child(ui_text(theme::TEXT_BODY, theme::muted()).child(text.to_string()))
         .child(control)
         .into_any_element()
 }
@@ -88,11 +178,7 @@ fn button_frame(id: impl Into<ElementId>, kind: ButtonKind) -> Stateful<Div> {
         })
         .cursor_pointer()
         .font_family(theme::FONT_UI)
-        .font_weight(if primary {
-            FontWeight::SEMIBOLD
-        } else {
-            FontWeight::MEDIUM
-        })
+        .font_weight(FontWeight::MEDIUM)
         .text_size(px(theme::TEXT_BODY))
         .text_color(if primary {
             theme::accent_text()
@@ -228,6 +314,12 @@ pub fn stepper(
         .into_any_element()
 }
 
+/// Shortcut hints sit beside body-size labels, so they use body size too:
+/// at metadata size the modifier glyphs are unreadable.
+pub fn shortcut_hint(shortcut: String) -> Div {
+    mono_text(theme::TEXT_BODY, theme::faint()).child(shortcut)
+}
+
 pub fn shortcut_label(key: &str) -> String {
     #[cfg(target_os = "macos")]
     {
@@ -247,5 +339,28 @@ pub fn shift_shortcut_label(key: &str) -> String {
     #[cfg(not(target_os = "macos"))]
     {
         format!("Ctrl+Shift+{key}")
+    }
+}
+
+pub fn alt_shortcut_label(key: &str) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        format!("⌥⌘{key}")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        format!("Ctrl+Alt+{key}")
+    }
+}
+
+/// File sizes everywhere in the interface: binary units, a dash when the size
+/// is unknown.
+pub fn format_bytes(bytes: u64) -> String {
+    if bytes == 0 {
+        "—".to_string()
+    } else if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{} KB", (bytes / 1024).max(1))
     }
 }

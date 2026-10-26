@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Slate
+Comment=Review, rate and rename photographs, then print contact sheets
+Exec=slate-desktop %F
+Icon=slate
+Terminal=false
+Categories=Graphics;Photography;

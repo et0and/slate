@@ -1,5 +1,6 @@
 //! Batch conversion for the formats the bundled `image` codecs support.
 
+use crate::adjust::Adjustments;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
@@ -122,7 +123,12 @@ pub fn convert_photos(
             report.skipped += 1;
             continue;
         }
-        match convert_one(&photo.path, &target, options) {
+        match convert_one(
+            &photo.path,
+            &target,
+            options,
+            &project.adjustments.for_photo(*id),
+        ) {
             Ok(()) => {
                 report.converted += 1;
                 report.outputs.push(target);
@@ -135,9 +141,19 @@ pub fn convert_photos(
     report
 }
 
-fn convert_one(source: &Path, target: &Path, options: ConvertOptions) -> anyhow::Result<()> {
+fn convert_one(
+    source: &Path,
+    target: &Path,
+    options: ConvertOptions,
+    adjustments: &Adjustments,
+) -> anyhow::Result<()> {
     let ConvertOptions { format, quality } = options;
-    let image = import::load_oriented(source, None)?;
+    let mut image = import::load_oriented(source, None)?;
+    if !adjustments.is_neutral() {
+        let mut pixels = image.to_rgba8();
+        adjustments.apply_rgba(&mut pixels);
+        image = DynamicImage::ImageRgba8(pixels);
+    }
     match format {
         OutputFormat::Jpeg => {
             let image = flatten_on_white(&image);

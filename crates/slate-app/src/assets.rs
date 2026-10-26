@@ -40,6 +40,7 @@ icons! {
     EXTERNAL_LINK => "icons/external-link.svg",
     IMAGE => "icons/image.svg",
     IMAGE_OFF => "icons/image-off.svg",
+    SEARCH => "icons/search.svg",
     SEARCH_X => "icons/search-x.svg",
     ALERT => "icons/alert.svg",
     ARROW_RIGHT => "icons/arrow-right.svg",
@@ -50,6 +51,7 @@ icons! {
     UNDO => "icons/undo.svg",
     REDO => "icons/redo.svg",
     CLOCK => "icons/clock.svg",
+    CLOUD => "icons/cloud.svg",
     INFO => "icons/info.svg",
     PENCIL => "icons/pencil.svg",
     LAYOUT => "icons/layout.svg",
@@ -69,13 +71,10 @@ impl AssetSource for Assets {
     }
 }
 
-/// Load the bundled Geist faces before the first window opens.
+/// Load the bundled Geist Mono faces before the first window opens. The
+/// interface font is the platform's own and needs no loading.
 pub fn install_fonts(cx: &App) {
     let fonts: Vec<Cow<'static, [u8]>> = vec![
-        Cow::Borrowed(include_bytes!("../../../assets/fonts/Geist-Regular.ttf").as_slice()),
-        Cow::Borrowed(include_bytes!("../../../assets/fonts/Geist-Medium.ttf").as_slice()),
-        Cow::Borrowed(include_bytes!("../../../assets/fonts/Geist-SemiBold.ttf").as_slice()),
-        Cow::Borrowed(include_bytes!("../../../assets/fonts/Geist-Bold.ttf").as_slice()),
         Cow::Borrowed(include_bytes!("../../../assets/fonts/GeistMono-Regular.ttf").as_slice()),
         Cow::Borrowed(include_bytes!("../../../assets/fonts/GeistMono-Medium.ttf").as_slice()),
         Cow::Borrowed(include_bytes!("../../../assets/fonts/GeistMono-SemiBold.ttf").as_slice()),
@@ -83,5 +82,5 @@ pub fn install_fonts(cx: &App) {
     ];
     cx.text_system()
         .add_fonts(fonts)
-        .expect("bundled Geist fonts load");
+        .expect("bundled Geist Mono fonts load");
 }

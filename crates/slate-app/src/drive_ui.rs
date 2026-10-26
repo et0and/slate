@@ -1,24 +1,25 @@
 //! Drive browser, import progress and export destination UI.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::sync::Arc;
 
 use gpui::{
     AnyElement, Context, ElementId, RenderImage, SharedString, Window, div, img, prelude::*, px,
-    rgba, uniform_list,
+    uniform_list,
 };
 use image::{Frame, RgbaImage};
 use slate_core::import;
 
 use crate::app::{ContactSheet, render_image};
 use crate::assets;
-use crate::drive::{self, DriveEntry};
+use crate::drive::{self, DriveEntry, MirrorFile};
 use crate::theme;
 use crate::widgets::{
-    button, button_with_icon, checkbox, disabled_button, icon, icon_button, mono_text,
+    button, button_with_icon, checkbox, dialog_footer, dialog_header, dialog_panel,
+    disabled_button, format_bytes, group_label, icon, icon_button, modal, mono_text,
     primary_button, ui_text,
 };
 
@@ -88,6 +89,33 @@ pub struct DriveDownload {
 impl ContactSheet {
     // ----- account -------------------------------------------------------
 
+    /// Open the Drive browser, linking the account first when needed. The
+    /// browser opens by itself once the link completes.
+    pub(crate) fn open_drive(&mut self, mode: DriveMode, cx: &mut Context<Self>) {
+        if self.drive_account.is_some() {
+            self.open_drive_picker(mode, cx);
+        } else {
+            self.drive_after_link = Some(mode);
+            self.link_google_drive(cx);
+        }
+    }
+
+    /// Show a configuration failure in the Drive notice instead of failing
+    /// silently.
+    fn drive_config(&mut self, cx: &mut Context<Self>) -> Option<drive::OAuthConfig> {
+        match drive::oauth_config() {
+            Ok(config) => Some(config),
+            Err(error) => {
+                self.drive_notice = Some(DriveNotice {
+                    title: "Google Drive".to_string(),
+                    lines: vec![format!("{error:#}")],
+                });
+                cx.notify();
+                None
+            }
+        }
+    }
+
     pub(crate) fn link_google_drive(&mut self, cx: &mut Context<Self>) {
         if self.drive_linking {
             return;
@@ -95,6 +123,7 @@ impl ContactSheet {
         let config = match drive::oauth_config() {
             Ok(config) => config,
             Err(error) => {
+                self.drive_after_link = None;
                 self.drive_notice = Some(DriveNotice {
                     title: "Google Drive setup".to_string(),
                     lines: std::iter::once(format!("{error:#}"))
@@ -125,8 +154,12 @@ impl ContactSheet {
                         this.sync_native_menus(cx);
                         this.log("Google Drive linked");
                         this.set_status("Google Drive linked");
+                        if let Some(mode) = this.drive_after_link.take() {
+                            this.open_drive_picker(mode, cx);
+                        }
                     }
                     Err(error) => {
+                        this.drive_after_link = None;
                         this.log(format!("Google Drive link failed: {error:#}"));
                         this.set_status("Google Drive link failed");
                         this.drive_notice = Some(DriveNotice {
@@ -198,7 +231,7 @@ impl ContactSheet {
         }
     }
 
-    fn reload_drive_folder(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn reload_drive_folder(&mut self, cx: &mut Context<Self>) {
         let Some(account) = self.drive_account.clone() else {
             return;
         };
@@ -286,10 +319,6 @@ impl ContactSheet {
         self.reload_drive_folder(cx);
     }
 
-    pub(crate) fn retry_drive_folder(&mut self, cx: &mut Context<Self>) {
-        self.reload_drive_folder(cx);
-    }
-
     pub(crate) fn toggle_drive_selection(&mut self, id: String, cx: &mut Context<Self>) {
         let Some(picker) = &mut self.drive_picker else {
             return;
@@ -307,18 +336,34 @@ impl ContactSheet {
 
     // ----- import --------------------------------------------------------
 
+    /// The local mirror of the folder the picker is showing.
+    fn picker_mirror(picker: &DrivePicker) -> PathBuf {
+        drive::mirror_folder(picker.crumbs.iter().map(|crumb| crumb.name.as_str()))
+    }
+
     pub(crate) fn import_drive_selected(&mut self, cx: &mut Context<Self>) {
         let Some(picker) = &self.drive_picker else {
             return;
         };
-        let entries: Vec<DriveEntry> = picker.selected.values().cloned().collect();
-        let folder_name = picker.folder_name.clone();
-        if entries.is_empty() {
+        let files: Vec<MirrorFile> = picker
+            .selected
+            .values()
+            .cloned()
+            .map(|entry| MirrorFile {
+                entry,
+                folder: PathBuf::new(),
+            })
+            .collect();
+        let target = Self::picker_mirror(picker);
+        if files.is_empty() {
             self.set_status("Select at least one Google Drive image");
             cx.notify();
             return;
         }
-        self.begin_drive_import(entries, folder_name, cx);
+        if !self.can_switch_collection(cx) {
+            return;
+        }
+        self.begin_drive_import(files, target, cx);
     }
 
     pub(crate) fn import_drive_folder(&mut self, cx: &mut Context<Self>) {
@@ -327,20 +372,16 @@ impl ContactSheet {
         };
         let folder_id = picker.folder_id.clone();
         let folder_name = picker.folder_name.clone();
+        let target = Self::picker_mirror(picker);
         let Some(account) = self.drive_account.clone() else {
             return;
         };
-        let config = match drive::oauth_config() {
-            Ok(config) => config,
-            Err(error) => {
-                self.drive_notice = Some(DriveNotice {
-                    title: "Google Drive".to_string(),
-                    lines: vec![format!("{error:#}")],
-                });
-                cx.notify();
-                return;
-            }
+        let Some(config) = self.drive_config(cx) else {
+            return;
         };
+        if !self.can_switch_collection(cx) {
+            return;
+        }
 
         let generation = self.generation;
         self.drive_picker = None;
@@ -359,12 +400,12 @@ impl ContactSheet {
                     return;
                 }
                 match result {
-                    Ok(entries) if entries.is_empty() => {
+                    Ok(files) if files.is_empty() => {
                         this.set_status("No images found in that Google Drive folder");
                         this.log("Drive scan / 0 images");
                         cx.notify();
                     }
-                    Ok(entries) => this.begin_drive_import(entries, folder_name, cx),
+                    Ok(files) => this.begin_drive_import(files, target, cx),
                     Err(error) => {
                         this.set_status(format!("Drive scan failed / {error:#}"));
                         this.log(format!("Drive scan failed: {error:#}"));
@@ -380,61 +421,38 @@ impl ContactSheet {
         .detach();
     }
 
+    /// Download into the local mirror of the Drive folder, then open that
+    /// folder as the collection so it appears in the tree like a local one.
     fn begin_drive_import(
         &mut self,
-        entries: Vec<DriveEntry>,
-        folder_name: String,
+        files: Vec<MirrorFile>,
+        target: PathBuf,
         cx: &mut Context<Self>,
     ) {
         let Some(account) = self.drive_account.clone() else {
             return;
         };
-        let config = match drive::oauth_config() {
-            Ok(config) => config,
-            Err(error) => {
-                self.drive_notice = Some(DriveNotice {
-                    title: "Google Drive".to_string(),
-                    lines: vec![format!("{error:#}")],
-                });
-                cx.notify();
-                return;
-            }
+        let Some(config) = self.drive_config(cx) else {
+            return;
         };
 
-        let base = self
-            .project_path
-            .as_ref()
-            .and_then(|path| path.parent())
-            .map_or_else(slate_core::store::data_directory, PathBuf::from);
-        let directory = base
-            .join("Drive imports")
-            .join(crate::app::slug(&folder_name));
-        let total = entries.len();
+        let total = files.len();
         let generation = self.generation;
-        if crate::app::is_untitled(&self.project.name) && !folder_name.is_empty() {
-            self.project.name = folder_name;
-            self.dirty = true;
-        }
+        let directory = target.clone();
         self.drive_picker = None;
         self.drive_download = Some(DriveDownload { total });
-        self.set_status(format!(
-            "Downloading {total} from Google Drive / {}",
-            directory.display()
-        ));
+        self.set_status(format!("Downloading {total} from Google Drive"));
         self.log(format!("Drive download / {total} files"));
         cx.notify();
 
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    drive::download_images(&config, &account, entries, &directory)
+                    drive::download_images(&config, &account, files, &directory)
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.drive_download = None;
-                if this.generation != generation {
-                    return;
-                }
                 match result {
                     Ok(summary) => {
                         for error in summary.errors.iter().take(8) {
@@ -447,11 +465,20 @@ impl ContactSheet {
                             return;
                         }
                         this.log(format!(
-                            "Drive download / {} files / {} errors",
+                            "Drive download / {} files / {} already local / {errors} errors",
                             summary.paths.len(),
-                            errors
+                            summary.present,
                         ));
-                        this.begin_import_files(summary.paths, cx);
+                        // The files are safely on disk either way; only switch
+                        // collections if the user has not moved on meanwhile.
+                        if this.generation == generation {
+                            this.open_drive_mirror(&target, &summary.paths, cx);
+                        } else {
+                            this.set_status(
+                                "Google Drive download finished / open it from Folders",
+                            );
+                            cx.notify();
+                        }
                     }
                     Err(error) => {
                         this.set_status(format!("Drive download failed / {error:#}"));
@@ -462,6 +489,23 @@ impl ContactSheet {
             });
         })
         .detach();
+    }
+
+    fn open_drive_mirror(&mut self, target: &Path, downloaded: &[PathBuf], cx: &mut Context<Self>) {
+        self.open_folder(target, cx);
+        if self.selected_folder.as_deref() != Some(target) {
+            return;
+        }
+        // Opening the folder imports images it recognises by extension. A Drive
+        // image with an unknown MIME type may have none, so import it directly.
+        let unrecognised: Vec<PathBuf> = downloaded
+            .iter()
+            .filter(|path| path.parent() == Some(target) && !import::is_supported(path))
+            .cloned()
+            .collect();
+        if !unrecognised.is_empty() {
+            self.begin_import_files(unrecognised, cx);
+        }
     }
 
     // ----- export --------------------------------------------------------
@@ -475,16 +519,8 @@ impl ContactSheet {
         let Some(account) = self.drive_account.clone() else {
             return;
         };
-        let config = match drive::oauth_config() {
-            Ok(config) => config,
-            Err(error) => {
-                self.drive_notice = Some(DriveNotice {
-                    title: "Google Drive".to_string(),
-                    lines: vec![format!("{error:#}")],
-                });
-                cx.notify();
-                return;
-            }
+        let Some(config) = self.drive_config(cx) else {
+            return;
         };
         if self.exporting.is_some() {
             self.set_status("Export already in progress");
@@ -735,11 +771,7 @@ impl ContactSheet {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(
-                        ui_text(theme::TEXT_LABEL, theme::muted())
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child("Selected"),
-                    )
+                    .child(group_label("Selected"))
                     .child(mono_text(theme::TEXT_META, theme::faint()).child(format!("{count}"))),
             )
             .child(
@@ -750,19 +782,13 @@ impl ContactSheet {
                     .justify_center()
                     .child(stack),
             )
-            .child(
+            .children((extra > 0).then(|| {
                 div().px(px(16.0)).pb(px(14.0)).child(
-                    mono_text(theme::TEXT_MICRO, theme::faint())
+                    mono_text(theme::TEXT_META, theme::faint())
                         .line_height(px(14.0))
-                        .child(if extra > 0 {
-                            format!("+{extra} more selected")
-                        } else if count == 0 {
-                            "Select a photo to preview it here.".to_string()
-                        } else {
-                            "Click a thumbnail to add or remove it.".to_string()
-                        }),
-                ),
-            )
+                        .child(format!("+{extra} more")),
+                )
+            }))
             .into_any_element()
     }
 
@@ -774,32 +800,13 @@ impl ContactSheet {
             this.drive_notice = None;
             cx.notify();
         });
-        let panel = div()
-            .w(px(620.0))
+        let panel = dialog_panel(620.0)
             .max_h(px(640.0))
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .bg(theme::surface())
-            .border_1()
-            .border_color(theme::rule())
-            .shadow_2xl()
-            .child(
-                div()
-                    .px(px(20.0))
-                    .py(px(16.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .border_b_1()
-                    .border_color(theme::rule())
-                    .child(
-                        ui_text(theme::TEXT_BODY, theme::ink())
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(notice.title),
-                    )
-                    .child(icon_button("drive-notice-close-icon", assets::X).on_click(close)),
-            )
+            .child(dialog_header(
+                notice.title,
+                None,
+                icon_button("drive-notice-close-icon", assets::X).on_click(close),
+            ))
             .child(
                 div()
                     .id("drive-notice-body")
@@ -812,21 +819,14 @@ impl ContactSheet {
                     .flex_col()
                     .gap(px(8.0))
                     .children(notice.lines.into_iter().map(|line| {
-                        ui_text(theme::TEXT_META + 0.5, theme::muted())
+                        ui_text(theme::TEXT_BODY, theme::muted())
                             .line_height(px(20.0))
                             .child(line)
                             .into_any_element()
                     })),
             )
             .child(
-                div()
-                    .px(px(20.0))
-                    .py(px(14.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .border_t_1()
-                    .border_color(theme::rule())
+                dialog_footer()
                     .child(
                         button_with_icon(
                             "drive-open-console",
@@ -845,7 +845,13 @@ impl ContactSheet {
                         },
                     ))),
             );
-        Some(modal(panel))
+        Some(modal(
+            panel,
+            cx.listener(|this, _, _, cx| {
+                this.drive_notice = None;
+                cx.notify();
+            }),
+        ))
     }
 
     pub(crate) fn render_drive_picker(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -880,7 +886,6 @@ impl ContactSheet {
             if index + 1 == crumbs.len() {
                 breadcrumb = breadcrumb.child(
                     ui_text(theme::TEXT_BODY, theme::ink())
-                        .font_weight(gpui::FontWeight::MEDIUM)
                         .truncate()
                         .child(crumb.name.clone()),
                 );
@@ -931,7 +936,7 @@ impl ContactSheet {
                 )
                 .child(
                     button("drive-retry", "Retry")
-                        .on_click(cx.listener(|this, _, _, cx| this.retry_drive_folder(cx))),
+                        .on_click(cx.listener(|this, _, _, cx| this.reload_drive_folder(cx))),
                 )
                 .into_any_element()
         } else if entries.is_empty() {
@@ -958,7 +963,7 @@ impl ContactSheet {
                                 let details = if is_folder {
                                     "Folder".to_string()
                                 } else {
-                                    format_size(entry.size)
+                                    format_bytes(entry.size)
                                 };
                                 div()
                                     .id(ElementId::Name(SharedString::from(format!(
@@ -1098,43 +1103,14 @@ impl ContactSheet {
                 )
         };
 
-        let panel = div()
-            .w(px(760.0))
+        let panel = dialog_panel(760.0)
             .max_h(px(650.0))
-            .flex()
-            .flex_col()
-            .overflow_hidden()
-            .bg(theme::surface())
-            .border_1()
-            .border_color(theme::rule())
-            .shadow_2xl()
-            .child(
-                div()
-                    .px(px(20.0))
-                    .py(px(16.0))
-                    .flex()
-                    .items_start()
-                    .justify_between()
-                    .border_b_1()
-                    .border_color(theme::rule())
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(4.0))
-                            .child(
-                                ui_text(18.0, theme::ink())
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .line_height(px(23.0))
-                                    .child(mode.title()),
-                            )
-                            .child(mono_text(theme::TEXT_LABEL, theme::faint()).child(folder_name)),
-                    )
-                    .child(
-                        icon_button("drive-picker-close", assets::X)
-                            .on_click(cx.listener(|this, _, _, cx| this.close_drive_picker(cx))),
-                    ),
-            )
+            .child(dialog_header(
+                mode.title(),
+                Some(folder_name),
+                icon_button("drive-picker-close", assets::X)
+                    .on_click(cx.listener(|this, _, _, cx| this.close_drive_picker(cx))),
+            ))
             .child(
                 div()
                     .px(px(16.0))
@@ -1154,14 +1130,7 @@ impl ContactSheet {
                     .children(selected_stack),
             )
             .child(
-                div()
-                    .px(px(20.0))
-                    .py(px(14.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .border_t_1()
-                    .border_color(theme::rule())
+                dialog_footer()
                     .child(mono_text(theme::TEXT_META, theme::muted()).child(
                         if mode == DriveMode::Import {
                             format!("{selected_count} selected")
@@ -1175,29 +1144,11 @@ impl ContactSheet {
                         export_actions().into_any_element()
                     }),
             );
-        Some(modal(panel))
+        Some(modal(
+            panel,
+            cx.listener(|this, _, _, cx| this.close_drive_picker(cx)),
+        ))
     }
-}
-
-fn modal(panel: impl IntoElement) -> AnyElement {
-    div()
-        .absolute()
-        .top(px(0.0))
-        .left(px(0.0))
-        .size_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            div()
-                .absolute()
-                .top(px(0.0))
-                .left(px(0.0))
-                .size_full()
-                .bg(rgba(0x00000088)),
-        )
-        .child(panel)
-        .into_any_element()
 }
 
 fn centered_message(message: impl Into<SharedString>) -> AnyElement {
@@ -1238,14 +1189,4 @@ fn rotate_render_image_degrees(image: &RenderImage, degrees: f32) -> Option<Arc<
         }
     }
     Some(Arc::new(RenderImage::new(vec![Frame::new(output)])))
-}
-
-fn format_size(bytes: u64) -> String {
-    if bytes >= 1_000_000 {
-        format!("{:.1} MB", bytes as f64 / 1_000_000.0)
-    } else if bytes >= 1_000 {
-        format!("{:.0} KB", bytes as f64 / 1_000.0)
-    } else {
-        format!("{bytes} B")
-    }
 }

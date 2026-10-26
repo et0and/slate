@@ -119,10 +119,35 @@ impl DriveAccount {
     }
 }
 
+/// A Drive image and the folder it mirrors into, relative to the mirrored
+/// Drive folder that was imported.
+#[derive(Debug, Clone)]
+pub struct MirrorFile {
+    pub entry: DriveEntry,
+    pub folder: PathBuf,
+}
+
 #[derive(Debug, Default)]
 pub struct DownloadSummary {
+    /// Every local copy, whether it was downloaded now or already present.
     pub paths: Vec<PathBuf>,
+    /// How many of `paths` were already on disk from an earlier import.
+    pub present: usize,
     pub errors: Vec<String>,
+}
+
+/// Drive imports mirror Drive's folder hierarchy here, so an imported Drive
+/// folder is an ordinary folder collection with its own `collection.slate`.
+pub fn mount_directory() -> PathBuf {
+    data_directory().join("Google Drive")
+}
+
+/// The local mirror of a Drive folder, from its path of folder names
+/// starting at "My Drive".
+pub fn mirror_folder<'a>(names: impl IntoIterator<Item = &'a str>) -> PathBuf {
+    names.into_iter().fold(mount_directory(), |path, name| {
+        path.join(safe_file_name(name))
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -693,17 +718,17 @@ pub fn collect_folder_images(
     config: &OAuthConfig,
     account: &DriveAccount,
     folder_id: &str,
-) -> Result<Vec<DriveEntry>> {
+) -> Result<Vec<MirrorFile>> {
     let config = config.clone();
     let account = account.clone();
     let folder_id = folder_id.to_string();
     run(async move {
         let (_, access_token) = authorized_client(&config, &account).await?;
         let http = http_client();
-        let mut pending = vec![(folder_id, 0_usize)];
+        let mut pending = vec![(folder_id, PathBuf::new())];
         let mut images = Vec::new();
-        while let Some((folder_id, depth)) = pending.pop() {
-            if depth > 16 {
+        while let Some((folder_id, folder)) = pending.pop() {
+            if folder.components().count() > 16 {
                 continue;
             }
             let entries = list_with_token(&http, &access_token, &folder_id)
@@ -711,13 +736,17 @@ pub fn collect_folder_images(
                 .with_context(|| format!("list Drive folder {folder_id}"))?;
             for entry in entries {
                 if entry.is_folder {
-                    pending.push((entry.id, depth + 1));
+                    let child = folder.join(safe_file_name(&entry.name));
+                    pending.push((entry.id, child));
                 } else {
-                    images.push(entry);
+                    images.push(MirrorFile {
+                        entry,
+                        folder: folder.clone(),
+                    });
                 }
             }
         }
-        images.sort_by_cached_key(|entry| entry.name.to_lowercase());
+        images.sort_by_cached_key(|file| (file.folder.clone(), file.entry.name.to_lowercase()));
         Ok(images)
     })
 }
@@ -756,10 +785,14 @@ pub fn fetch_thumbnail(
     })
 }
 
+/// Download `files` into the mirror rooted at `directory`. A file already
+/// mirrored by an earlier import is reused, so importing a folder again only
+/// fetches what changed; a different file with the same name gets a numbered
+/// name instead of overwriting.
 pub fn download_images(
     config: &OAuthConfig,
     account: &DriveAccount,
-    entries: Vec<DriveEntry>,
+    files: Vec<MirrorFile>,
     directory: &Path,
 ) -> Result<DownloadSummary> {
     let config = config.clone();
@@ -769,20 +802,49 @@ pub fn download_images(
         let (_, access_token) = authorized_client(&config, &account).await?;
         let http = http_client();
         let mut summary = DownloadSummary::default();
-        for entry in entries {
-            let folder = directory.join(safe_component(&entry.id));
+        for MirrorFile { entry, folder } in files {
+            let folder = directory.join(folder);
             if let Err(error) = tokio::fs::create_dir_all(&folder).await {
                 summary.errors.push(format!("{}: {error}", entry.name));
                 continue;
             }
-            let path = folder.join(local_file_name(&entry));
-            match download_one(&http, &access_token, &entry.id, &path).await {
-                Ok(()) => summary.paths.push(path),
-                Err(error) => summary.errors.push(format!("{}: {error}", entry.name)),
+            match local_copy(&folder, &entry) {
+                LocalCopy::Present(path) => {
+                    summary.present += 1;
+                    summary.paths.push(path);
+                }
+                LocalCopy::Missing(path) => {
+                    match download_one(&http, &access_token, &entry.id, &path).await {
+                        Ok(()) => summary.paths.push(path),
+                        Err(error) => summary.errors.push(format!("{}: {error}", entry.name)),
+                    }
+                }
             }
         }
         Ok(summary)
     })
+}
+
+enum LocalCopy {
+    Present(PathBuf),
+    Missing(PathBuf),
+}
+
+/// Find this Drive file's place in a mirror folder: the first name that is
+/// either free or already holds a file of the same size.
+fn local_copy(folder: &Path, entry: &DriveEntry) -> LocalCopy {
+    let requested = local_file_name(entry);
+    for index in 1..10_000 {
+        let path = folder.join(numbered_name(&requested, index));
+        match std::fs::metadata(&path) {
+            Err(_) => return LocalCopy::Missing(path),
+            Ok(metadata) if entry.size > 0 && metadata.len() == entry.size => {
+                return LocalCopy::Present(path);
+            }
+            Ok(_) => {}
+        }
+    }
+    LocalCopy::Missing(folder.join(format!("{}-{requested}", safe_component(&entry.id))))
 }
 
 async fn download_one(
@@ -802,18 +864,32 @@ async fn download_one(
         bail!("Drive returned HTTP {}", response.status());
     }
 
-    let mut file = tokio::fs::File::create(path)
-        .await
-        .context("create the local Drive download")?;
-    while let Some(chunk) = response.chunk().await.context("read the Drive download")? {
-        file.write_all(&chunk)
+    // Stream into a sibling `.part` file so an interrupted download never
+    // looks like a finished photo in the mirror.
+    let mut partial = path.as_os_str().to_owned();
+    partial.push(".part");
+    let partial = PathBuf::from(partial);
+    let result = async {
+        let mut file = tokio::fs::File::create(&partial)
             .await
-            .context("write the local Drive download")?;
+            .context("create the local Drive download")?;
+        while let Some(chunk) = response.chunk().await.context("read the Drive download")? {
+            file.write_all(&chunk)
+                .await
+                .context("write the local Drive download")?;
+        }
+        file.flush()
+            .await
+            .context("flush the local Drive download")?;
+        tokio::fs::rename(&partial, path)
+            .await
+            .context("finish the local Drive download")
     }
-    file.flush()
-        .await
-        .context("flush the local Drive download")?;
-    Ok(())
+    .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&partial).await;
+    }
+    result
 }
 
 pub fn upload_pdf(
@@ -966,31 +1042,28 @@ fn local_file_name(entry: &DriveEntry) -> String {
 }
 
 fn unique_name(existing: &[String], requested: &str) -> String {
-    if !existing
-        .iter()
-        .any(|name| name.eq_ignore_ascii_case(requested))
-    {
+    (1..10_000)
+        .map(|index| numbered_name(requested, index))
+        .find(|candidate| {
+            !existing
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(candidate))
+        })
+        .unwrap_or_else(|| requested.to_string())
+}
+
+/// `index` 1 is the name itself; later indices number the stem:
+/// `walk.jpg`, `walk-2.jpg`, `walk-3.jpg`.
+fn numbered_name(requested: &str, index: usize) -> String {
+    if index == 1 {
         return requested.to_string();
     }
-    let (stem, extension) = match requested.rsplit_once('.') {
+    match requested.rsplit_once('.') {
         Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() => {
-            (stem, Some(extension))
+            format!("{stem}-{index}.{extension}")
         }
-        _ => (requested, None),
-    };
-    for index in 2..10_000 {
-        let candidate = extension.map_or_else(
-            || format!("{stem}-{index}"),
-            |extension| format!("{stem}-{index}.{extension}"),
-        );
-        if !existing
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(&candidate))
-        {
-            return candidate;
-        }
+        _ => format!("{requested}-{index}"),
     }
-    requested.to_string()
 }
 
 fn safe_file_name(value: &str) -> String {
@@ -1116,6 +1189,41 @@ mod tests {
             "contact-sheet-2.pdf"
         );
         assert_eq!(unique_name(&existing, "another.pdf"), "another.pdf");
+    }
+
+    #[test]
+    fn mirrors_reuse_matching_copies_and_never_overwrite() {
+        let folder = std::env::temp_dir().join(format!("slate-mirror-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("walk.jpg"), b"four").unwrap();
+        let entry = |size| DriveEntry {
+            id: "id".to_string(),
+            name: "walk.jpg".to_string(),
+            mime_type: "image/jpeg".to_string(),
+            size,
+            is_folder: false,
+            thumbnail_link: String::new(),
+        };
+        assert!(matches!(
+            local_copy(&folder, &entry(4)),
+            LocalCopy::Present(path) if path == folder.join("walk.jpg")
+        ));
+        assert!(matches!(
+            local_copy(&folder, &entry(9)),
+            LocalCopy::Missing(path) if path == folder.join("walk-2.jpg")
+        ));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn mirror_folders_follow_drive_names_safely() {
+        assert_eq!(
+            mirror_folder(["My Drive", "Shoots/2026", ".."]),
+            mount_directory()
+                .join("My Drive")
+                .join("2026")
+                .join("image")
+        );
     }
 
     #[test]

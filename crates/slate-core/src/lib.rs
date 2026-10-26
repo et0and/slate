@@ -4,6 +4,7 @@
 //! Keeping this separate from the GPUI binary means sheets can be exported and
 //! tested without a display server.
 
+pub mod adjust;
 pub mod batch;
 pub mod convert;
 pub mod import;

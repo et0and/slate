@@ -5,12 +5,14 @@ use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, img, prelu
 use slate_core::layout;
 use slate_core::model::{Paper, StarRating};
 
-use crate::app::{ContactSheet, InspectorMode, PhotoMetaState};
+use crate::app::{ContactSheet, InspectorMode, PanelSection, PhotoMetaState};
 use crate::assets;
+use crate::sidebar::panel_section;
 use crate::theme;
 use crate::widgets::{
-    button, button_with_icon, checkbox, group_label, icon, icon_button, label, micro, mini_button,
-    mono_text, primary_button, setting_row, stepper, ui_text,
+    button, button_with_icon, checkbox, disabled_button, format_bytes, group_label, icon,
+    icon_button, label, micro, mini_button, mono_text, primary_button, setting_row, stepper,
+    ui_text,
 };
 
 const PREVIEW_WIDTH: f32 = 300.0;
@@ -201,9 +203,7 @@ impl ContactSheet {
                 .id("preview-open")
                 .cursor_pointer()
                 .hover(|style| style.border_color(theme::accent()))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.open_preview_window(window, cx);
-                }))
+                .on_click(cx.listener(|this, _, _, cx| this.open_preview_window(cx)))
                 .into_any_element()
         } else {
             preview.into_any_element()
@@ -271,7 +271,7 @@ impl ContactSheet {
         let rating = photo.rating();
         let label = photo.label();
 
-        let image_width = (self.panels.right() - 42.0).max(1.0);
+        let image_width = (self.panels.right() - 34.0).max(1.0);
         let thumbnail: AnyElement = image.map_or_else(
             || {
                 div()
@@ -288,6 +288,14 @@ impl ContactSheet {
             },
         );
 
+        let date_open = !self.collapsed_sections.contains(&PanelSection::CaptureDate);
+        let exif_open = !self.collapsed_sections.contains(&PanelSection::Exif);
+        let date_meta = photo.captured_at.as_deref().unwrap_or("—").to_string();
+        let exif_meta = match &metadata {
+            Some(meta) if !meta.rows.is_empty() => format!("{} fields", meta.rows.len()),
+            _ => String::new(),
+        };
+        let adjust_block = self.render_adjustments(photo_id, cx);
         let mut exif_rows: Vec<AnyElement> = Vec::new();
         match metadata {
             Some(meta) if meta.rows.is_empty() => exif_rows.push(
@@ -352,7 +360,7 @@ impl ContactSheet {
             .child(
                 div()
                     .flex_shrink_0()
-                    .px(px(20.0))
+                    .px(px(16.0))
                     .pt(px(10.0))
                     .pb(px(10.0))
                     .flex()
@@ -377,7 +385,7 @@ impl ContactSheet {
                     .overflow_y_scroll()
                     .child(
                         div()
-                            .mx(px(20.0))
+                            .mx(px(16.0))
                             .h(px(196.0))
                             .flex()
                             .items_center()
@@ -391,7 +399,7 @@ impl ContactSheet {
                     )
                     .child(
                         div()
-                            .px(px(20.0))
+                            .px(px(16.0))
                             .py(px(12.0))
                             .flex()
                             .flex_col()
@@ -409,7 +417,7 @@ impl ContactSheet {
                         div()
                             .border_t_1()
                             .border_color(theme::rule())
-                            .px(px(20.0))
+                            .px(px(16.0))
                             .py(px(10.0))
                             .flex()
                             .items_center()
@@ -434,18 +442,14 @@ impl ContactSheet {
                                     ),
                             ),
                     )
-                    .child(
+                    .child(adjust_block)
+                    .child(panel_section(
+                        PanelSection::CaptureDate,
+                        "Capture date",
+                        date_meta,
+                        date_open,
                         div()
-                            .border_t_1()
-                            .border_color(theme::rule())
-                            .px(px(20.0))
-                            .pt(px(10.0))
-                            .pb(px(4.0))
-                            .child(group_label("Capture date")),
-                    )
-                    .child(
-                        div()
-                            .px(px(20.0))
+                            .px(px(16.0))
                             .pb(px(12.0))
                             .flex()
                             .flex_col()
@@ -470,40 +474,46 @@ impl ContactSheet {
                                     .child(
                                         primary_button("photo-inspector-save-date", "Save date")
                                             .on_click(cx.listener(|this, _, _, cx| {
-                                                this.save_photo_date(cx);
+                                                let value = this
+                                                    .photo_date_field
+                                                    .read(cx)
+                                                    .value()
+                                                    .to_string();
+                                                this.save_photo_date(&value, cx);
                                             })),
                                     ),
                             )
                             .child(
-                                ui_text(theme::TEXT_MICRO, theme::faint())
+                                ui_text(theme::TEXT_META, theme::faint())
                                     .line_height(px(14.0))
                                     .child(
                                         "Stored in collection.slate. Original EXIF is not changed.",
                                     ),
-                            ),
-                    )
-                    .child(
+                            )
+                            .into_any_element(),
+                        None,
+                        cx,
+                    ))
+                    .child(panel_section(
+                        PanelSection::Exif,
+                        "EXIF",
+                        exif_meta,
+                        exif_open,
                         div()
-                            .border_t_1()
-                            .border_color(theme::rule())
-                            .px(px(20.0))
-                            .pt(px(10.0))
-                            .pb(px(4.0))
-                            .child(group_label("EXIF")),
-                    )
-                    .child(
-                        div()
-                            .px(px(20.0))
+                            .px(px(16.0))
                             .pb(px(12.0))
                             .flex()
                             .flex_col()
-                            .children(exif_rows),
-                    )
+                            .children(exif_rows)
+                            .into_any_element(),
+                        None,
+                        cx,
+                    ))
                     .child(
                         div()
                             .border_t_1()
                             .border_color(theme::rule())
-                            .px(px(20.0))
+                            .px(px(16.0))
                             .py(px(12.0))
                             .flex()
                             .gap(px(6.0))
@@ -570,7 +580,7 @@ impl ContactSheet {
             .child(
                 div()
                     .flex_shrink_0()
-                    .px(px(20.0))
+                    .px(px(16.0))
                     .pt(px(10.0))
                     .pb(px(10.0))
                     .flex()
@@ -586,7 +596,7 @@ impl ContactSheet {
                     .overflow_y_scroll()
                     .child(
                         div()
-                            .mx(px(20.0))
+                            .mx(px(16.0))
                             .h(px(196.0))
                             .bg(theme::photo_bg())
                             .border_1()
@@ -596,7 +606,7 @@ impl ContactSheet {
                     )
                     .child(
                         div()
-                            .px(px(20.0))
+                            .px(px(16.0))
                             .py(px(12.0))
                             .flex()
                             .flex_col()
@@ -612,7 +622,7 @@ impl ContactSheet {
                         div()
                             .border_t_1()
                             .border_color(theme::rule())
-                            .px(px(20.0))
+                            .px(px(16.0))
                             .py(px(10.0))
                             .flex()
                             .items_center()
@@ -638,18 +648,10 @@ impl ContactSheet {
                                     ),
                             ),
                     )
+                    .child(section_heading("Capture date"))
                     .child(
                         div()
-                            .border_t_1()
-                            .border_color(theme::rule())
-                            .px(px(20.0))
-                            .pt(px(10.0))
-                            .pb(px(4.0))
-                            .child(group_label("Capture date")),
-                    )
-                    .child(
-                        div()
-                            .px(px(20.0))
+                            .px(px(16.0))
                             .pb(px(12.0))
                             .flex()
                             .flex_col()
@@ -661,28 +663,14 @@ impl ContactSheet {
                                     .flex()
                                     .justify_between()
                                     .gap(px(8.0))
-                                    .child(
-                                        button("photo-inspector-file-date", "Use file date")
-                                            .flex_1(),
-                                    )
-                                    .child(
-                                        primary_button("photo-inspector-save-date", "Save date")
-                                            .flex_1(),
-                                    ),
+                                    .child(disabled_button("Use file date").flex_1())
+                                    .child(disabled_button("Save date").flex_1()),
                             ),
                     )
+                    .child(section_heading("EXIF"))
                     .child(
                         div()
-                            .border_t_1()
-                            .border_color(theme::rule())
-                            .px(px(20.0))
-                            .pt(px(10.0))
-                            .pb(px(4.0))
-                            .child(group_label("EXIF")),
-                    )
-                    .child(
-                        div()
-                            .px(px(20.0))
+                            .px(px(16.0))
                             .pb(px(12.0))
                             .opacity(0.55)
                             .child(ui_text(theme::TEXT_META, theme::faint()).child("—")),
@@ -691,27 +679,13 @@ impl ContactSheet {
                         div()
                             .border_t_1()
                             .border_color(theme::rule())
-                            .px(px(20.0))
+                            .px(px(16.0))
                             .py(px(12.0))
                             .flex()
                             .gap(px(6.0))
                             .opacity(0.55)
-                            .child(
-                                button_with_icon(
-                                    "photo-inspector-rotate",
-                                    assets::ROTATE,
-                                    "Rotate",
-                                )
-                                .flex_1(),
-                            )
-                            .child(
-                                button_with_icon(
-                                    "photo-inspector-reveal",
-                                    assets::FOLDER,
-                                    "Reveal",
-                                )
-                                .flex_1(),
-                            ),
+                            .child(disabled_button("Rotate").flex_1())
+                            .child(disabled_button("Reveal").flex_1()),
                     ),
             )
             .into_any_element()
@@ -756,7 +730,7 @@ impl ContactSheet {
             );
 
         let preview_block = div()
-            .px(px(20.0))
+            .px(px(16.0))
             .pt(px(14.0))
             .pb(px(14.0))
             .flex()
@@ -772,7 +746,7 @@ impl ContactSheet {
             .child(div().w_full().flex().justify_center().child(preview));
 
         let title_block = div()
-            .px(px(20.0))
+            .px(px(16.0))
             .pb(px(10.0))
             .flex()
             .flex_col()
@@ -835,7 +809,7 @@ impl ContactSheet {
             .on_click(cx.listener(|this, _, _, cx| this.toggle_paper_menu(cx)))
             .child(icon(assets::CHEVRON_DOWN, 11.0, theme::muted()));
         let paper_options: AnyElement = div()
-            .mx(px(20.0))
+            .mx(px(16.0))
             .mb(px(6.0))
             .border_1()
             .border_color(theme::rule())
@@ -876,7 +850,7 @@ impl ContactSheet {
         let paper_menu = self.paper_menu_open.then_some(paper_options);
         let custom_paper = (paper == Paper::Custom).then(|| {
             div()
-                .px(px(20.0))
+                .px(px(16.0))
                 .pb(px(10.0))
                 .flex()
                 .flex_col()
@@ -907,7 +881,7 @@ impl ContactSheet {
                         ),
                 )
                 .child(
-                    mono_text(theme::TEXT_MICRO, theme::faint()).child("Millimetres; 50–2000 mm."),
+                    mono_text(theme::TEXT_META, theme::faint()).child("Millimetres; 50–2000 mm."),
                 )
                 .into_any_element()
         });
@@ -916,7 +890,7 @@ impl ContactSheet {
             .flex()
             .flex_col()
             .pb(px(12.0))
-            .child(group_label("Layout").px(px(20.0)).pt(px(12.0)).pb(px(4.0)))
+            .child(group_label("Layout").px(px(16.0)).pt(px(12.0)).pb(px(4.0)))
             .child(setting_row("Paper", paper_control))
             .children(paper_menu)
             .children(custom_paper)
@@ -931,7 +905,7 @@ impl ContactSheet {
             .child(setting_row("Grid", grid_control))
             .child(setting_row("Margin", margin_control))
             .child(setting_row("Gutter", gutter_control))
-            .child(group_label("Marks").px(px(20.0)).pt(px(12.0)).pb(px(4.0)))
+            .child(group_label("Marks").px(px(16.0)).pt(px(12.0)).pb(px(4.0)))
             .child(setting_row(
                 "Captions",
                 checkbox("captions-toggle", self.project.sheet.captions)
@@ -979,18 +953,17 @@ impl ContactSheet {
                     .flex()
                     .flex_col()
                     .gap(px(5.0))
-                    .px(px(20.0))
+                    .px(px(16.0))
                     .py(px(10.0))
                     .border_b_1()
                     .border_color(theme::rule())
                     .child(
                         ui_text(theme::TEXT_BODY, theme::ink())
-                            .font_weight(gpui::FontWeight::MEDIUM)
                             .truncate()
                             .child(name),
                     )
                     .child(
-                        mono_text(theme::TEXT_MICRO, theme::faint())
+                        mono_text(theme::TEXT_META, theme::faint())
                             .line_height(px(14.0))
                             .child(meta),
                     )
@@ -1046,7 +1019,7 @@ impl ContactSheet {
             .flex_col()
             .child(
                 div()
-                    .px(px(20.0))
+                    .px(px(16.0))
                     .pt(px(14.0))
                     .pb(px(8.0))
                     .flex()
@@ -1057,18 +1030,7 @@ impl ContactSheet {
                     .child(group_label("Saved sheets"))
                     .child(micro(format!("{saved_count}"))),
             )
-            .children(saved_rows)
-            .children(if saved_count == 0 {
-                Some(
-                    ui_text(theme::TEXT_META, theme::faint())
-                        .px(px(20.0))
-                        .pb(px(14.0))
-                        .line_height(px(14.0))
-                        .child("No saved sheets. Save a layout to reuse it."),
-                )
-            } else {
-                None
-            });
+            .children(saved_rows);
 
         div()
             .debug_selector(|| "sheet-inspector".into())
@@ -1086,7 +1048,7 @@ impl ContactSheet {
                     .overflow_y_scroll()
                     .child(
                         div()
-                            .px(px(20.0))
+                            .px(px(16.0))
                             .pt(px(13.0))
                             .pb(px(4.0))
                             .flex()
@@ -1121,6 +1083,16 @@ impl ContactSheet {
     }
 }
 
+fn section_heading(title: &str) -> gpui::Div {
+    div()
+        .border_t_1()
+        .border_color(theme::rule())
+        .px(px(16.0))
+        .pt(px(10.0))
+        .pb(px(4.0))
+        .child(group_label(title))
+}
+
 fn fit_image(image: &std::sync::Arc<gpui::RenderImage>, max_w: f32, max_h: f32) -> (f32, f32) {
     let size = image.size(0);
     let width = size.width.0.max(1) as f32;
@@ -1148,14 +1120,4 @@ fn photo_info_row(label: &str, value: &str) -> AnyElement {
                 .child(value.to_string()),
         )
         .into_any_element()
-}
-
-fn format_bytes(bytes: u64) -> String {
-    if bytes == 0 {
-        "Unknown size".to_string()
-    } else if bytes >= 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{} KB", (bytes / 1024).max(1))
-    }
 }

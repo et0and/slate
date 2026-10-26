@@ -1,22 +1,31 @@
-//! Left rail: import, search, tags, rename and activity.
+//! Left rail: folders, search, review controls, sort and filters.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    AnyElement, Context, ElementId, MouseButton, SharedString, Window, div, linear_color_stop,
-    linear_gradient, prelude::*, px, rgba,
+    AnyElement, Bounds, ClickEvent, Context, ElementId, MouseButton, SharedString, Window, canvas,
+    div, fill, point, prelude::*, px, rgba, size,
 };
 
 use slate_core::model::{ColorLabel, Filter, StarRating};
 
-use crate::app::{ContactSheet, SidebarSection};
+use crate::app::{ContactSheet, PanelSection};
 use crate::assets;
+use crate::drive;
 use crate::theme;
-use crate::view::SortKey;
+use crate::view::{SortDirection, SortKey};
 use crate::widgets::{
-    button, group_label, icon, icon_button, micro, mono_text, text_button, ui_text,
+    button, group_label, icon, icon_button, micro, mono_text, shortcut_hint, shortcut_label,
+    text_button, ui_text,
 };
+
+/// One row of the Filters list.
+struct FilterRow {
+    filter: Filter,
+    name: String,
+    count: usize,
+}
 
 impl ContactSheet {
     pub(crate) fn render_sidebar(
@@ -26,70 +35,89 @@ impl ContactSheet {
     ) -> AnyElement {
         let photo_count = self.project.photos.len();
         let tag_counts = self.tag_counts();
-        let tag_count_total = tag_counts.len();
-        let untagged = self.untagged_count();
-        let rated = self.rated_count();
-        let unrated = self.unrated_count();
         let label_counts = self.label_counts();
         let scope_rating = self.scope_rating();
         let scope_label = self.scope_label();
         let scope_count = self.scope_ids().len();
+        let collapsed = self.collapsed_sections.clone();
+        let open = |section| !collapsed.contains(&section);
 
-        let folders_open = !self.sidebar_collapsed.contains(&SidebarSection::Folders);
-        let rating_open = !self.sidebar_collapsed.contains(&SidebarSection::Rating);
-        let label_open = !self.sidebar_collapsed.contains(&SidebarSection::Label);
-        let sort_open = !self.sidebar_collapsed.contains(&SidebarSection::Sort);
-        let tags_open = !self.sidebar_collapsed.contains(&SidebarSection::Tags);
-
-        let folders_block = sidebar_section(
-            SidebarSection::Folders,
+        let add_folder = div()
+            .id("folders-add")
+            .size(px(20.0))
+            .my(px(-3.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .hover(|style| style.bg(theme::accent_soft()))
+            .debug_selector(|| "folders-add".into())
+            .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.open_folder_menu(event.position(), cx);
+            }))
+            .child(icon(assets::PLUS, 12.0, theme::muted()))
+            .into_any_element();
+        let folders_block = panel_section(
+            PanelSection::Folders,
             "Folders",
             String::new(),
-            folders_open,
+            open(PanelSection::Folders),
             self.render_folder_tree(cx),
+            Some(add_folder),
             cx,
         );
 
         let search_block = div()
+            .relative()
             .px(px(16.0))
             .py(px(12.0))
-            .child(self.search_field.clone());
+            .child(self.search_field.clone())
+            .children(self.search.is_empty().then(|| {
+                div()
+                    .absolute()
+                    .top(px(12.0))
+                    .right(px(26.0))
+                    .h(px(theme::FIELD))
+                    .flex()
+                    .items_center()
+                    .child(shortcut_hint(shortcut_label("K")))
+            }));
 
-        let rating_block = sidebar_section(
-            SidebarSection::Rating,
+        let rating_block = panel_section(
+            PanelSection::Rating,
             "Rating",
             format!("{scope_count} in scope"),
-            rating_open,
+            open(PanelSection::Rating),
             div()
                 .px(px(16.0))
                 .pb(px(14.0))
                 .flex()
-                .flex_col()
-                .gap(px(8.0))
+                .items_center()
+                .justify_between()
                 .child(div().flex().items_center().gap(px(3.0)).children(
                     (1..=StarRating::MAX).map(|value| {
                         let active = scope_rating.is_some_and(|rating| rating.get() >= value);
                         rating_button(value, active, cx)
                     }),
                 ))
-                .child(div().flex().justify_end().child(
-                    text_button("rating-clear", "Clear").on_click(
-                        cx.listener(|this, _, _, cx| this.apply_rating(StarRating::NONE, cx)),
-                    ),
+                .child(text_button("rating-clear", "Clear").on_click(
+                    cx.listener(|this, _, _, cx| this.apply_rating(StarRating::NONE, cx)),
                 ))
                 .into_any_element(),
+            None,
             cx,
         );
 
-        let label_block = sidebar_section(
-            SidebarSection::Label,
+        let label_block = panel_section(
+            PanelSection::Label,
             "Label",
             if scope_count == 0 {
                 "—".to_string()
             } else {
                 scope_label.map_or_else(|| "Mixed".to_string(), |label| label.label().to_string())
             },
-            label_open,
+            open(PanelSection::Label),
             div()
                 .px(px(16.0))
                 .pb(px(14.0))
@@ -102,14 +130,54 @@ impl ContactSheet {
                         .map(|label| label_button(label, scope_label == Some(label), cx)),
                 )
                 .into_any_element(),
+            None,
             cx,
         );
 
-        let sort_block = sidebar_section(
-            SidebarSection::Sort,
+        let tags_block = panel_section(
+            PanelSection::Tags,
+            "Tags",
+            format!("{}", tag_counts.len()),
+            open(PanelSection::Tags),
+            div()
+                .px(px(16.0))
+                .pb(px(14.0))
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .child(self.tag_field.clone())
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .child(button("tag-add", "Add tag").flex_1().on_click(cx.listener(
+                            |this, _, _, cx| {
+                                let tag = this.tag_field.read(cx).value().to_string();
+                                this.apply_tag(&tag, cx);
+                            },
+                        )))
+                        .child(text_button("tag-remove", "Remove").on_click(cx.listener(
+                            |this, _, _, cx| {
+                                let tag = this.tag_field.read(cx).value().to_string();
+                                this.remove_tag(&tag, cx);
+                            },
+                        )))
+                        .child(
+                            text_button("tag-clear", "Clear all")
+                                .on_click(cx.listener(|this, _, _, cx| this.clear_tags(cx))),
+                        ),
+                )
+                .into_any_element(),
+            None,
+            cx,
+        );
+
+        let sort_block = panel_section(
+            PanelSection::Sort,
             "Sort",
-            format!("{photo_count} photos"),
-            sort_open,
+            self.sort.label().to_string(),
+            open(PanelSection::Sort),
             div()
                 .px(px(16.0))
                 .pb(px(14.0))
@@ -139,10 +207,11 @@ impl ContactSheet {
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_sort_direction(cx)))
                         .child(
                             ui_text(theme::TEXT_LABEL, theme::muted())
+                                .font_weight(gpui::FontWeight::MEDIUM)
                                 .child(self.sort_direction.label()),
                         )
                         .child(icon(
-                            if self.sort_direction == crate::view::SortDirection::Ascending {
+                            if self.sort_direction == SortDirection::Ascending {
                                 assets::CHEVRON_UP
                             } else {
                                 assets::CHEVRON_DOWN
@@ -152,149 +221,115 @@ impl ContactSheet {
                         )),
                 )
                 .into_any_element(),
+            None,
             cx,
         );
 
-        let mut filter_rows: Vec<AnyElement> = Vec::new();
-        let is_all = matches!(self.filter, Filter::All);
-        filter_rows.push(
-            filter_row("filter-all", "All images", photo_count, is_all)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.filter = Filter::All;
-                    this.filter_changed();
-                    this.refresh_preview();
-                    cx.notify();
-                }))
-                .into_any_element(),
+        let mut filters = vec![
+            FilterRow {
+                filter: Filter::All,
+                name: "All images".to_string(),
+                count: photo_count,
+            },
+            FilterRow {
+                filter: Filter::Untagged,
+                name: "Untagged".to_string(),
+                count: self.untagged_count(),
+            },
+            FilterRow {
+                filter: Filter::Unrated,
+                name: "Unrated".to_string(),
+                count: self.unrated_count(),
+            },
+            FilterRow {
+                filter: Filter::Rated,
+                name: "Rated".to_string(),
+                count: self.rated_count(),
+            },
+        ];
+        filters.extend(tag_counts.iter().map(|(tag, count)| FilterRow {
+            filter: Filter::Tag(tag.clone()),
+            name: format!("#{tag}"),
+            count: *count,
+        }));
+        filters.extend(
+            ColorLabel::ALL
+                .into_iter()
+                .enumerate()
+                .skip(1)
+                .map(|(index, label)| FilterRow {
+                    filter: Filter::Label(label),
+                    name: format!("{} label", label.label()),
+                    count: label_counts[index],
+                }),
         );
-        let is_untagged = matches!(self.filter, Filter::Untagged);
-        filter_rows.push(
-            filter_row("filter-untagged", "Untagged", untagged, is_untagged)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.filter = Filter::Untagged;
-                    this.filter_changed();
-                    this.refresh_preview();
-                    cx.notify();
-                }))
-                .into_any_element(),
-        );
-        let is_unrated = matches!(self.filter, Filter::Unrated);
-        filter_rows.push(
-            filter_row("filter-unrated", "Unrated", unrated, is_unrated)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.filter = Filter::Unrated;
-                    this.filter_changed();
-                    this.refresh_preview();
-                    cx.notify();
-                }))
-                .into_any_element(),
-        );
-        let is_rated = matches!(self.filter, Filter::Rated);
-        filter_rows.push(
-            filter_row("filter-rated", "Rated", rated, is_rated)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.filter = Filter::Rated;
-                    this.filter_changed();
-                    this.refresh_preview();
-                    cx.notify();
-                }))
-                .into_any_element(),
-        );
-
-        for (tag, count) in tag_counts.iter() {
-            let active = matches!(&self.filter, Filter::Tag(active) if active == tag);
-            let click_tag = tag.clone();
-            filter_rows.push(
-                filter_row(
-                    ElementId::Name(SharedString::from(format!("filter-tag-{tag}"))),
-                    &format!("#{tag}"),
-                    *count,
-                    active,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.filter = Filter::Tag(click_tag.clone());
-                    this.filter_changed();
-                    this.refresh_preview();
-                    cx.notify();
-                }))
-                .into_any_element(),
-            );
-        }
-
-        for (index, label) in ColorLabel::ALL.into_iter().enumerate().skip(1) {
-            let active = matches!(&self.filter, Filter::Label(active) if *active == label);
-            let count = label_counts[index];
-            filter_rows.push(
-                label_filter_row(label, count, active)
+        filters.push(FilterRow {
+            filter: Filter::Unlabeled,
+            name: "No label".to_string(),
+            count: label_counts[ColorLabel::None as usize],
+        });
+        let active_filter = filters
+            .iter()
+            .find(|row| row.filter == self.filter)
+            .map(|row| row.name.clone())
+            .unwrap_or_default();
+        let filter_rows: Vec<AnyElement> = filters
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let active = row.filter == self.filter;
+                let filter = row.filter.clone();
+                filter_row(index, &row, active)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.filter = Filter::Label(label);
-                        this.filter_changed();
-                        this.refresh_preview();
-                        cx.notify();
+                        this.set_filter(filter.clone(), cx);
                     }))
-                    .into_any_element(),
-            );
-        }
-
-        let no_label_active = matches!(self.filter, Filter::Unlabeled);
-        filter_rows.push(
-            filter_row(
-                "filter-unlabeled",
-                "No label",
-                label_counts[ColorLabel::None as usize],
-                no_label_active,
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.filter = Filter::Unlabeled;
-                this.filter_changed();
-                this.refresh_preview();
-                cx.notify();
-            }))
-            .into_any_element(),
-        );
-
-        let tags_content = div()
-            .flex()
-            .flex_col()
-            .children(filter_rows)
-            .child(
-                div()
-                    .px(px(16.0))
-                    .py(px(12.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .child(self.tag_field.clone())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(4.0))
-                            .child(
-                                button("tag-add", "Add tag").flex_1().on_click(
-                                    cx.listener(|this, _, _, cx| this.apply_tag(cx, true)),
-                                ),
-                            )
-                            .child(
-                                text_button("tag-remove", "Remove")
-                                    .on_click(cx.listener(|this, _, _, cx| this.remove_tag(cx))),
-                            )
-                            .child(
-                                text_button("tag-clear", "Clear")
-                                    .on_click(cx.listener(|this, _, _, cx| this.clear_tags(cx))),
-                            ),
-                    ),
-            )
-            .into_any_element();
-
-        let tags_block = sidebar_section(
-            SidebarSection::Tags,
-            "Tags",
-            format!("{tag_count_total}"),
-            tags_open,
-            tags_content,
+                    .into_any_element()
+            })
+            .collect();
+        let filters_block = panel_section(
+            PanelSection::Filters,
+            "Filters",
+            active_filter,
+            open(PanelSection::Filters),
+            div()
+                .flex()
+                .flex_col()
+                .children(filter_rows)
+                .into_any_element(),
+            None,
             cx,
         );
+
+        let scroll = self.sidebar_scroll.clone();
+        // Paint the scroll edges after layout: GPUI clamps the offset during
+        // prepaint, so reading it in `render` lags a frame behind and leaves a
+        // stale edge after sections collapse.
+        let scroll_edges = canvas(
+            |_, _, _| {},
+            move |bounds, (), window, _| {
+                let offset = scroll.offset().y;
+                let max = scroll.max_offset().height;
+                if offset < px(0.0) {
+                    window.paint_quad(fill(
+                        Bounds::new(bounds.origin, size(bounds.size.width, px(1.0))),
+                        theme::rule(),
+                    ));
+                }
+                if max > px(0.0) && offset > -max {
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(bounds.left(), bounds.bottom() - px(1.0)),
+                            size(bounds.size.width, px(1.0)),
+                        ),
+                        theme::rule(),
+                    ));
+                }
+            },
+        )
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .size_full();
 
         div()
             .w(px(self.panels.left()))
@@ -318,37 +353,7 @@ impl ContactSheet {
                         ),
                     )
             }))
-            .child({
-                let offset = self.sidebar_scroll.offset().y;
-                let max_offset = self.sidebar_scroll.max_offset().height;
-                let show_top_fade = offset < px(0.0);
-                let show_bottom_fade = max_offset > px(0.0) && offset > -max_offset;
-                let top_fade = show_top_fade.then(|| {
-                    div()
-                        .absolute()
-                        .top(px(0.0))
-                        .left(px(0.0))
-                        .right(px(0.0))
-                        .h(px(22.0))
-                        .bg(linear_gradient(
-                            0.0,
-                            linear_color_stop(theme::panel(), 1.0),
-                            linear_color_stop(theme::panel(), 0.0),
-                        ))
-                });
-                let bottom_fade = show_bottom_fade.then(|| {
-                    div()
-                        .absolute()
-                        .bottom(px(0.0))
-                        .left(px(0.0))
-                        .right(px(0.0))
-                        .h(px(22.0))
-                        .bg(linear_gradient(
-                            0.0,
-                            linear_color_stop(theme::panel(), 0.0),
-                            linear_color_stop(theme::panel(), 1.0),
-                        ))
-                });
+            .child(
                 div()
                     .relative()
                     .flex_1()
@@ -363,32 +368,106 @@ impl ContactSheet {
                             .child(folders_block)
                             .child(rating_block)
                             .child(label_block)
+                            .child(tags_block)
                             .child(sort_block)
-                            .child(tags_block),
+                            .child(filters_block),
                     )
-                    .children(top_fade)
-                    .children(bottom_fade)
-            })
+                    .child(scroll_edges),
+            )
             .into_any_element()
     }
 
+    /// Every added folder set, then the local mirror of imported Google Drive
+    /// folders, which browses exactly like a local root.
     fn render_folder_tree(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let Some(root) = self.library_root.clone() else {
-            return div()
-                .px(px(16.0))
-                .pb(px(12.0))
-                .child(
-                    button("folders-open", "Open folder…")
-                        .w_full()
-                        .on_click(cx.listener(|this, _, _, cx| this.open_project_prompt(cx))),
-                )
-                .into_any_element();
-        };
+        let mount = drive::mount_directory();
         let selected = self.selected_folder.clone();
         let expanded = self.expanded_folders.clone();
         let mut rows = Vec::new();
-        push_folder_rows(&root, 0, selected.as_deref(), &expanded, &mut rows, cx);
-        div().py(px(6.0)).children(rows).into_any_element()
+        for root in self.library_roots.clone() {
+            let remove_root = root.clone();
+            let remove = div()
+                .id(ElementId::Name(SharedString::from(format!(
+                    "folder-remove-{}",
+                    root.display()
+                ))))
+                .size(px(18.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .opacity(0.0)
+                .group_hover("folder-row", |style| style.opacity(1.0))
+                .cursor_pointer()
+                .hover(|style| style.bg(theme::rule()))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.remove_library_root(&remove_root, cx);
+                }))
+                .child(icon(assets::X, 10.0, theme::faint()))
+                .into_any_element();
+            push_folder_rows(
+                &root,
+                0,
+                selected.as_deref(),
+                &expanded,
+                Some(remove),
+                &mut rows,
+                cx,
+            );
+        }
+        let mirrored = folder_children(&mount);
+        if !mirrored.is_empty() {
+            let mount_open = expanded.contains(&mount);
+            let toggle = mount.clone();
+            rows.push(
+                div()
+                    .id("folders-drive")
+                    .h(px(28.0))
+                    .w_full()
+                    .pl(px(12.0))
+                    .pr(px(16.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(theme::accent_soft()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_folder(toggle.clone(), cx);
+                    }))
+                    .child(folder_chevron(&mount, true, mount_open, cx))
+                    .child(icon(assets::CLOUD, 14.0, theme::faint()))
+                    .child(
+                        ui_text(theme::TEXT_BODY, theme::muted())
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .truncate()
+                            .child("Google Drive"),
+                    )
+                    .into_any_element(),
+            );
+            if mount_open {
+                for folder in mirrored {
+                    push_folder_rows(
+                        &folder,
+                        1,
+                        selected.as_deref(),
+                        &expanded,
+                        None,
+                        &mut rows,
+                        cx,
+                    );
+                }
+            }
+        }
+        div()
+            .pb(px(if rows.is_empty() { 0.0 } else { 8.0 }))
+            .children(rows)
+            .into_any_element()
     }
 
     pub(crate) fn toggle_folder(&mut self, path: PathBuf, cx: &mut Context<Self>) {
@@ -398,28 +477,21 @@ impl ContactSheet {
         cx.notify();
     }
 
-    pub(crate) fn select_folder(&mut self, path: &Path, cx: &mut Context<Self>) {
-        self.open_folder(path, cx);
-    }
-
-    pub(crate) fn toggle_sidebar_section(
-        &mut self,
-        section: SidebarSection,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.sidebar_collapsed.remove(&section) {
-            self.sidebar_collapsed.insert(section);
+    pub(crate) fn toggle_section(&mut self, section: PanelSection, cx: &mut Context<Self>) {
+        if !self.collapsed_sections.remove(&section) {
+            self.collapsed_sections.insert(section);
         }
         cx.notify();
     }
 }
 
-fn sidebar_section(
-    section: SidebarSection,
+pub fn panel_section(
+    section: PanelSection,
     title: &'static str,
     meta: String,
     open: bool,
     content: AnyElement,
+    action: Option<AnyElement>,
     cx: &mut Context<ContactSheet>,
 ) -> AnyElement {
     div()
@@ -430,7 +502,7 @@ fn sidebar_section(
         .child(
             div()
                 .id(ElementId::Name(SharedString::from(format!(
-                    "sidebar-section-{}",
+                    "section-{}",
                     section.key()
                 ))))
                 .w_full()
@@ -442,9 +514,9 @@ fn sidebar_section(
                 .gap(px(8.0))
                 .cursor_pointer()
                 .hover(|style| style.bg(theme::accent_soft()))
-                .debug_selector(move || format!("sidebar-section-{}", section.key()))
+                .debug_selector(move || format!("section-{}", section.key()))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.toggle_sidebar_section(section, cx);
+                    this.toggle_section(section, cx);
                 }))
                 .child(group_label(title))
                 .child(
@@ -453,6 +525,7 @@ fn sidebar_section(
                         .items_center()
                         .gap(px(6.0))
                         .child(micro(meta))
+                        .children(action)
                         .child(icon(
                             if open {
                                 assets::CHEVRON_UP
@@ -503,6 +576,7 @@ fn push_folder_rows(
     depth: usize,
     selected: Option<&Path>,
     expanded: &HashSet<PathBuf>,
+    trailing: Option<AnyElement>,
     rows: &mut Vec<AnyElement>,
     cx: &mut Context<ContactSheet>,
 ) {
@@ -510,42 +584,14 @@ fn push_folder_rows(
     let is_expanded = expanded.contains(path);
     let is_selected = selected == Some(path);
     let row_path = path.to_path_buf();
-    let chevron = if children.is_empty() {
-        div().size(px(18.0)).into_any_element()
-    } else {
-        let toggle_path = path.to_path_buf();
-        let icon_path = if is_expanded {
-            assets::CHEVRON_DOWN
-        } else {
-            assets::CHEVRON_RIGHT
-        };
-        div()
-            .id(ElementId::Name(SharedString::from(format!(
-                "folder-toggle-{}",
-                path.display()
-            ))))
-            .size(px(18.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .hover(|style| style.bg(theme::accent_soft()))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| cx.stop_propagation()),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.toggle_folder(toggle_path.clone(), cx);
-            }))
-            .child(icon(icon_path, 10.0, theme::faint()))
-            .into_any_element()
-    };
+    let chevron = folder_chevron(path, !children.is_empty(), is_expanded, cx);
     rows.push(
         div()
             .id(ElementId::Name(SharedString::from(format!(
                 "folder-row-{}",
                 path.display()
             ))))
+            .group("folder-row")
             .h(px(28.0))
             .w_full()
             .pl(px((depth as f32).mul_add(14.0, 12.0)))
@@ -561,29 +607,76 @@ fn push_folder_rows(
             })
             .hover(|style| style.bg(theme::accent_soft()))
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.select_folder(&row_path, cx);
+                this.open_folder(&row_path, cx);
             }))
             .child(chevron)
             .child(icon(assets::FOLDER, 14.0, theme::faint()))
             .child(
                 ui_text(
-                    theme::TEXT_LABEL,
+                    theme::TEXT_BODY,
                     if is_selected {
                         theme::ink()
                     } else {
                         theme::muted()
                     },
                 )
+                .flex_1()
+                .min_w(px(0.0))
                 .truncate()
                 .child(folder_name(path)),
             )
+            .children(trailing)
             .into_any_element(),
     );
     if is_expanded {
         for child in children {
-            push_folder_rows(&child, depth + 1, selected, expanded, rows, cx);
+            push_folder_rows(&child, depth + 1, selected, expanded, None, rows, cx);
         }
     }
+}
+
+/// The tree's first column: an expand toggle, or an empty cell that keeps
+/// childless folders aligned.
+fn folder_chevron(
+    path: &Path,
+    has_children: bool,
+    is_expanded: bool,
+    cx: &mut Context<ContactSheet>,
+) -> AnyElement {
+    if !has_children {
+        return div().size(px(18.0)).flex_shrink_0().into_any_element();
+    }
+    let toggle_path = path.to_path_buf();
+    div()
+        .id(ElementId::Name(SharedString::from(format!(
+            "folder-toggle-{}",
+            path.display()
+        ))))
+        .size(px(18.0))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .hover(|style| style.bg(theme::accent_soft()))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_, _, _, cx| cx.stop_propagation()),
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            this.toggle_folder(toggle_path.clone(), cx);
+        }))
+        .child(icon(
+            if is_expanded {
+                assets::CHEVRON_DOWN
+            } else {
+                assets::CHEVRON_RIGHT
+            },
+            10.0,
+            theme::faint(),
+        ))
+        .into_any_element()
 }
 
 fn rating_button(value: u8, active: bool, cx: &mut Context<ContactSheet>) -> AnyElement {
@@ -693,51 +786,22 @@ fn sort_button(key: SortKey, active: bool, cx: &mut Context<ContactSheet>) -> An
         .into_any_element()
 }
 
-fn label_filter_row(label: ColorLabel, count: usize, active: bool) -> gpui::Stateful<gpui::Div> {
-    let color = theme::label_color(label);
-    div()
-        .id(ElementId::Name(SharedString::from(format!(
-            "filter-label-{}",
-            label.label().to_lowercase()
-        ))))
-        .h(px(theme::ROW_H))
-        .px(px(16.0))
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(px(8.0))
-        .cursor_pointer()
-        .border_b_1()
-        .border_color(theme::rule())
-        .bg(if active {
-            theme::accent_soft()
-        } else {
-            rgba(0x00000000)
-        })
-        .active(|style| style.opacity(0.8))
-        .hover(|style| style.bg(theme::accent_soft()))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .child(div().size(px(9.0)).bg(color))
-                .child(
-                    ui_text(theme::TEXT_BODY - 1.0, theme::muted())
-                        .child(format!("{} label", label.label())),
-                ),
-        )
-        .child(mono_text(theme::TEXT_META, theme::faint()).child(count.to_string()))
-}
-
-fn filter_row(
-    id: impl Into<ElementId>,
-    name: &str,
-    count: usize,
-    active: bool,
-) -> gpui::Stateful<gpui::Div> {
+fn filter_row(index: usize, row: &FilterRow, active: bool) -> gpui::Stateful<gpui::Div> {
+    let marker = match row.filter {
+        Filter::Label(label) => div().size(px(9.0)).bg(theme::label_color(label)),
+        _ => div()
+            .size(px(9.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(div().size(px(3.0)).bg(if active {
+                theme::accent()
+            } else {
+                rgba(0x00000000)
+            })),
+    };
     let base = div()
-        .id(id)
+        .id(("filter-row", index))
         .h(px(theme::ROW_H))
         .px(px(16.0))
         .flex()
@@ -761,19 +825,18 @@ fn filter_row(
     base.child(
         div()
             .flex()
+            .flex_1()
+            .min_w(px(0.0))
             .items_center()
             .gap(px(8.0))
-            .child(div().w(px(3.0)).h(px(3.0)).bg(if active {
-                theme::accent()
-            } else {
-                rgba(0x00000000)
-            }))
+            .child(marker)
             .child(
                 ui_text(
                     theme::TEXT_BODY,
                     if active { theme::ink() } else { theme::muted() },
                 )
-                .child(name.to_string()),
+                .truncate()
+                .child(row.name.clone()),
             ),
     )
     .child(
@@ -785,6 +848,6 @@ fn filter_row(
                 theme::faint()
             },
         )
-        .child(format!("{count}")),
+        .child(row.count.to_string()),
     )
 }

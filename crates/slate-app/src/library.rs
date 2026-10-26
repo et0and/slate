@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, Context, ElementId, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point,
-    SharedString, Window, div, img, prelude::*, px, uniform_list,
+    AnyElement, Bounds, Context, ElementId, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
+    Point, SharedString, Window, canvas, div, fill, img, point, prelude::*, px, size, uniform_list,
 };
 use slate_core::model::PhotoId;
 
@@ -12,7 +12,10 @@ use crate::app::{ContactSheet, Marquee};
 use crate::assets;
 
 use crate::theme;
-use crate::widgets::{button_with_icon, icon, mono_text, ui_text};
+use crate::widgets::{
+    button_with_icon, format_bytes, heading, icon, mono_text, shift_shortcut_label, shortcut_hint,
+    shortcut_label, ui_text,
+};
 
 const CELL_MIN: f32 = 190.0;
 const GAP: f32 = 16.0;
@@ -51,7 +54,10 @@ impl ContactSheet {
     ) -> AnyElement {
         let visible = self.visible_indices();
         let body: AnyElement = if self.project.photos.is_empty() {
-            self.render_empty_state(cx)
+            let pane = f32::from(window.viewport_size().width)
+                - self.panels.left_edge()
+                - self.panels.right_edge();
+            self.render_empty_state(pane, cx)
         } else if visible.is_empty() {
             self.render_no_matches(cx)
         } else {
@@ -159,6 +165,7 @@ impl ContactSheet {
             )
         };
         let selected = self.selected.contains(id);
+        let inspected = self.inspected_photo == Some(id);
         let index_label = format!("{:03}", index + 1);
         let image = self.thumb_image(id, rotation);
         let failure = self.thumb_failed(id).map(str::to_string);
@@ -192,77 +199,54 @@ impl ContactSheet {
             },
         );
 
-        let eye = div()
-            .id(ElementId::Name(SharedString::from(format!(
-                "preview-{}",
-                id.0
-            ))))
-            .absolute()
-            .top(px(10.0))
-            .left(px(10.0))
-            .size(px(22.0))
-            .bg(theme::surface())
-            .border_1()
-            .border_color(theme::rule())
-            .shadow_sm()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .hover(|style| style.bg(theme::accent_soft()))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| cx.stop_propagation()),
-            )
-            .debug_selector(move || format!("preview-{}", id.0))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
-                this.open_photo_preview(id, window, cx);
-            }))
-            .child(icon(assets::EYE, 13.0, theme::muted()));
+        let eye = cell_tool(
+            ElementId::Name(SharedString::from(format!("preview-{}", id.0))),
+            cx,
+        )
+        .left(px(10.0))
+        .hover(|style| style.bg(theme::accent_soft()))
+        .child(icon(assets::EYE, 13.0, theme::muted()))
+        .debug_selector(move || format!("preview-{}", id.0))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            this.open_photo_preview(id, cx);
+        }));
 
-        let rotate = div()
-            .id(ElementId::Name(SharedString::from(format!(
-                "rotate-{}",
-                id.0
-            ))))
-            .absolute()
-            .top(px(10.0))
-            .right(px(38.0))
-            .size(px(22.0))
-            .bg(theme::surface())
-            .border_1()
-            .border_color(theme::rule())
-            .shadow_sm()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .hover(|style| style.bg(theme::accent_soft()))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| cx.stop_propagation()),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.rotate_photo(id, cx);
-            }))
-            .child(icon(assets::ROTATE, 13.0, theme::muted()));
+        let rotate = cell_tool(
+            ElementId::Name(SharedString::from(format!("rotate-{}", id.0))),
+            cx,
+        )
+        .right(px(38.0))
+        .hover(|style| style.bg(theme::accent_soft()))
+        .child(icon(assets::ROTATE, 13.0, theme::muted()))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            this.rotate_photo(id, cx);
+        }));
 
-        let badge = selected.then(|| {
-            div()
-                .absolute()
-                .top(px(10.0))
-                .right(px(10.0))
-                .size(px(22.0))
-                .bg(theme::accent())
-                .shadow_sm()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(icon(assets::CHECK, 13.0, theme::accent_text()))
-        });
-
+        // The checkbox is the only click that changes selection; a press on
+        // the photo itself just inspects it.
+        let select = cell_tool(
+            ElementId::Name(SharedString::from(format!("select-{}", id.0))),
+            cx,
+        )
+        .right(px(10.0))
+        .debug_selector(move || format!("select-{}", id.0))
+        .map(|check| {
+            if selected {
+                check
+                    .bg(theme::accent())
+                    .border_color(theme::accent())
+                    .hover(|style| style.opacity(0.88))
+                    .child(icon(assets::CHECK, 13.0, theme::accent_text()))
+            } else {
+                check.hover(|style| style.bg(theme::accent_soft()))
+            }
+        })
+        .on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            this.toggle_photo_selection(id, cx);
+        }));
         div()
             .id(ElementId::Name(SharedString::from(format!(
                 "cell-{}",
@@ -271,6 +255,7 @@ impl ContactSheet {
             .w(px(metrics.cell_w))
             .p(px(5.0))
             .cursor_pointer()
+            .when(selected, |cell| cell.bg(theme::accent_soft()))
             .hover(|style| style.bg(theme::accent_soft()))
             .active(|style| style.opacity(0.82))
             .debug_selector(move || format!("cell-{}", id.0))
@@ -278,6 +263,10 @@ impl ContactSheet {
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
+                    if event.click_count >= 2 {
+                        this.open_photo_preview(id, cx);
+                        return;
+                    }
                     this.begin_marquee(Some(id), event.position, cx);
                     this.inspect_photo(id, cx);
                 }),
@@ -297,7 +286,11 @@ impl ContactSheet {
                     .overflow_hidden()
                     .bg(theme::photo_bg())
                     .border_1()
-                    .border_color(theme::rule())
+                    .border_color(if inspected {
+                        theme::ink()
+                    } else {
+                        theme::rule()
+                    })
                     .shadow_sm()
                     .flex()
                     .items_center()
@@ -305,7 +298,7 @@ impl ContactSheet {
                     .child(preview)
                     .child(eye)
                     .child(rotate)
-                    .children(badge),
+                    .child(select),
             )
             .child(
                 div()
@@ -316,11 +309,6 @@ impl ContactSheet {
                     .gap(px(4.0))
                     .child(
                         ui_text(theme::TEXT_BODY, theme::ink())
-                            .font_weight(if selected {
-                                gpui::FontWeight::MEDIUM
-                            } else {
-                                gpui::FontWeight::NORMAL
-                            })
                             .line_height(px(19.0))
                             .truncate()
                             .child(name),
@@ -332,11 +320,11 @@ impl ContactSheet {
                             .justify_between()
                             .gap(px(6.0))
                             .child(
-                                mono_text(theme::TEXT_MICRO, theme::faint())
+                                mono_text(theme::TEXT_META, theme::faint())
                                     .truncate()
                                     .child(format!("{index_label}  {dimensions}")),
                             )
-                            .child(mono_text(theme::TEXT_MICRO, theme::faint()).child(bytes)),
+                            .child(mono_text(theme::TEXT_META, theme::faint()).child(bytes)),
                     )
                     .child(
                         div()
@@ -377,7 +365,7 @@ impl ContactSheet {
                             ),
                     )
                     .children(tags.map(|tags| {
-                        ui_text(theme::TEXT_MICRO, theme::muted())
+                        ui_text(theme::TEXT_META, theme::muted())
                             .line_height(px(14.0))
                             .truncate()
                             .child(tags)
@@ -386,6 +374,8 @@ impl ContactSheet {
             .into_any_element()
     }
 
+    /// A press only anchors the marquee: selection changes once it drags.
+    /// Dragging from a selected photo deselects the rectangle instead.
     pub(crate) fn begin_marquee(
         &mut self,
         photo_id: Option<PhotoId>,
@@ -393,26 +383,22 @@ impl ContactSheet {
         cx: &mut Context<Self>,
     ) {
         let target = photo_id.is_none_or(|id| !self.selected.contains(id));
-        let changed = if let Some(photo_id) = photo_id {
-            let selected = Arc::make_mut(&mut self.selected);
-            if target {
-                selected.insert(photo_id)
-            } else {
-                selected.remove(photo_id)
-            }
-        } else {
-            false
-        };
         self.marquee = Some(Marquee {
             start: position,
             current: position,
             target,
             moved: false,
         });
-        if changed {
-            self.selection_changed();
-            self.refresh_preview();
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_photo_selection(&mut self, id: PhotoId, cx: &mut Context<Self>) {
+        let selected = Arc::make_mut(&mut self.selected);
+        if !selected.remove(id) {
+            selected.insert(id);
         }
+        self.selection_changed();
+        self.refresh_preview();
         cx.notify();
     }
 
@@ -470,8 +456,10 @@ impl ContactSheet {
         let right = f32::from(start.x).max(f32::from(current.x));
         let top = f32::from(start.y).min(f32::from(current.y));
         let bottom = f32::from(start.y).max(f32::from(current.y));
+        // macOS draws the grid below the transparent titlebar strip; other
+        // platforms draw it below the in-window menu bar.
         let content_top = if cfg!(target_os = "macos") {
-            0.0
+            theme::WINDOW_CHROME_TOP
         } else {
             theme::TOPBAR_H
         };
@@ -534,8 +522,75 @@ impl ContactSheet {
         )
     }
 
-    fn render_empty_state(&mut self, _cx: &mut Context<Self>) -> AnyElement {
-        div().flex_1().into_any_element()
+    fn render_empty_state(&mut self, pane_width: f32, cx: &mut Context<Self>) -> AnyElement {
+        let command = |id: &'static str, label: &'static str, shortcut: String| {
+            div()
+                .id(id)
+                .h(px(40.0))
+                .px(px(10.0))
+                .flex()
+                .items_center()
+                .justify_between()
+                .border_b_1()
+                .border_color(theme::rule())
+                .cursor_pointer()
+                .hover(|style| style.bg(theme::accent_soft()))
+                .active(|style| style.opacity(0.8))
+                .child(ui_text(theme::TEXT_BODY, theme::muted()).child(label))
+                .child(shortcut_hint(shortcut))
+        };
+        let logo_width = 2.0f32.mul_add(-LOGO_MARGIN, pane_width).max(1.0);
+        div()
+            .flex_1()
+            .min_h(px(0.0))
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .p(px(48.0))
+                    .child(
+                        div()
+                            .w(px(320.0))
+                            .flex()
+                            .flex_col()
+                            .border_t_1()
+                            .border_color(theme::rule())
+                            .child(
+                                command("empty-open-folder", "Open folder", shortcut_label("O"))
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.open_project_prompt(cx)),
+                                    ),
+                            )
+                            .child(
+                                command("empty-import-files", "Import files", shortcut_label("I"))
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.import_prompt(false, cx)),
+                                    ),
+                            )
+                            .child(
+                                command(
+                                    "empty-import-folder",
+                                    "Import folder",
+                                    shift_shortcut_label("I"),
+                                )
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.import_prompt(true, cx)),
+                                ),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .px(px(LOGO_MARGIN))
+                    .child(pixel_logo(logo_width)),
+            )
+            .into_any_element()
     }
 
     fn render_no_matches(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -551,28 +606,8 @@ impl ContactSheet {
                     .flex()
                     .flex_col()
                     .gap(px(14.0))
-                    .child(
-                        div()
-                            .size(px(36.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .border_1()
-                            .border_color(theme::rule())
-                            .bg(theme::surface())
-                            .child(icon(assets::SEARCH_X, 18.0, theme::muted())),
-                    )
-                    .child(
-                        ui_text(24.0, theme::ink())
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .line_height(px(30.0))
-                            .child("No matches."),
-                    )
-                    .child(
-                        ui_text(theme::TEXT_BODY, theme::muted())
-                            .line_height(px(19.0))
-                            .child("Try another file name or tag."),
-                    )
+                    .child(empty_mark(assets::SEARCH_X))
+                    .child(heading("No matches"))
                     .child(
                         button_with_icon("clear-filters-empty", assets::X, "Clear filters")
                             .on_click(cx.listener(|this, _, _, cx| this.clear_filters(cx))),
@@ -582,19 +617,113 @@ impl ContactSheet {
     }
 }
 
-fn format_bytes(bytes: u64) -> String {
-    if bytes == 0 {
-        "—".to_string()
-    } else if bytes >= 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{} KB", (bytes / 1024).max(1))
-    }
+/// The SLATE wordmark on a 29 × 7 cell grid, drawn at the foot of the empty
+/// library.
+const LOGO: [&str; 7] = [
+    ".###..#.......#...#####.#####",
+    "#...#.#......#.#....#...#....",
+    "#.....#.....#...#...#...#....",
+    ".###..#.....#...#...#...####.",
+    "....#.#.....#####...#...#....",
+    "#...#.#.....#...#...#...#....",
+    ".###..#####.#...#...#...#####",
+];
+/// The gap between cells as a fraction of a cell.
+const LOGO_GAP: f32 = 0.25;
+const LOGO_MARGIN: f32 = 20.0;
+
+fn logo_cell(width: f32) -> f32 {
+    let columns = LOGO[0].len() as f32;
+    width / (columns - 1.0).mul_add(LOGO_GAP, columns)
+}
+
+/// Painted as squares rather than a bitmap so it stays crisp at any width
+/// and takes the theme's surface colour.
+fn pixel_logo(width: f32) -> AnyElement {
+    let rows = LOGO.len() as f32;
+    let cell = logo_cell(width);
+    let height = cell * (rows - 1.0).mul_add(LOGO_GAP, rows);
+    let colour = theme::surface();
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let cell = logo_cell(f32::from(bounds.size.width));
+            let pitch = cell * (1.0 + LOGO_GAP);
+            // Snap each cell's edges to whole pixels so the squares stay sharp.
+            let span = |index: usize| {
+                let start = (index as f32 * pitch).round();
+                (start, (index as f32).mul_add(pitch, cell).round() - start)
+            };
+            for (row, line) in LOGO.iter().enumerate() {
+                let (top, cell_h) = span(row);
+                for (column, mark) in line.bytes().enumerate() {
+                    if mark != b'#' {
+                        continue;
+                    }
+                    let (left, cell_w) = span(column);
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(bounds.left() + px(left), bounds.top() + px(top)),
+                            size(px(cell_w), px(cell_h)),
+                        ),
+                        colour,
+                    ));
+                }
+            }
+        },
+    )
+    .w(px(width))
+    .h(px(height.round()))
+    .into_any_element()
+}
+
+fn empty_mark(icon_path: &'static str) -> gpui::Div {
+    div()
+        .size(px(36.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .border_1()
+        .border_color(theme::rule())
+        .bg(theme::surface())
+        .child(icon(icon_path, 18.0, theme::muted()))
+}
+
+/// A square button floating on a thumbnail. It swallows the press so the
+/// cell underneath neither inspects the photo nor starts a marquee.
+fn cell_tool(id: ElementId, cx: &mut Context<ContactSheet>) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .absolute()
+        .top(px(10.0))
+        .size(px(22.0))
+        .bg(theme::surface())
+        .border_1()
+        .border_color(theme::rule())
+        .shadow_sm()
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_, _, _, cx| cx.stop_propagation()),
+        )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_logo_grid_is_rectangular_and_fills_its_width() {
+        assert!(LOGO.iter().all(|row| row.len() == LOGO[0].len()));
+        let width = 600.0;
+        let columns = LOGO[0].len() as f32;
+        let cell = logo_cell(width);
+        let drawn = (columns - 1.0).mul_add(cell * LOGO_GAP, columns * cell);
+        assert!((drawn - width).abs() < 0.01);
+    }
 
     #[test]
     fn grid_cells_fill_the_available_width() {

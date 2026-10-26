@@ -4,18 +4,30 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use gpui::{Rgba, rgb};
 
-/// Geist is loaded from `assets/fonts` at startup. Geist Mono carries data,
-/// shortcuts and technical metadata; Geist carries names, labels and actions.
-pub const FONT_UI: &str = "Geist";
+/// Names, labels and actions use the platform's own interface font: San
+/// Francisco on macOS, the system UI font (normally Segoe UI) on Windows and
+/// the desktop sans on Linux. Bundled Geist Mono carries data, shortcuts and
+/// technical metadata, so figures line up the same on every platform.
+pub const FONT_UI: &str = ".SystemUIFont";
 pub const FONT_MONO: &str = "Geist Mono";
 
-/// macOS text styles, rounded to the nearest practical size. Body copy is
-/// 13 pt; 11 pt is the small label style and 10 pt is the mini/caption style.
+/// macOS text styles, rounded to the nearest practical size. Use these five
+/// steps only; never offset a token by a fraction.
+///
+/// - Display: one per surface — dialog, window and empty-state headings.
+/// - Title: toolbar headings inside a window.
+/// - Body: names, menu rows, buttons, running copy and shortcut hints.
+/// - Label: section headings, field labels and compact controls.
+/// - Meta: counts, sizes, dates and footnotes.
+///
+/// Weight encodes the role, never the state: headings are semibold,
+/// controls are medium, content is regular. Selection, focus and disabled
+/// states change colour or fill, so text never reflows when it changes.
+pub const TEXT_DISPLAY: f32 = 20.0;
 pub const TEXT_TITLE: f32 = 15.0;
 pub const TEXT_BODY: f32 = 13.0;
 pub const TEXT_LABEL: f32 = 11.0;
 pub const TEXT_META: f32 = 10.0;
-pub const TEXT_MICRO: f32 = 9.0;
 
 pub const CONTROL_H: f32 = 32.0;
 pub const ROW_H: f32 = 36.0;

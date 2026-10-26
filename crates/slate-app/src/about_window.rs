@@ -2,8 +2,12 @@
 
 use gpui::{Context, FocusHandle, Focusable, Render, Window, div, prelude::*, px};
 
+use crate::app::Dismiss;
+use crate::assets;
 use crate::theme;
-use crate::widgets::{button, mono_text, ui_text};
+use crate::widgets::{button, heading, icon, mono_text, ui_text};
+
+const LICENSE_URL: &str = "https://www.gnu.org/licenses/gpl-3.0.html";
 
 pub struct AboutWindow {
     focus: FocusHandle,
@@ -32,6 +36,7 @@ impl Render for AboutWindow {
 
         div()
             .track_focus(&self.focus)
+            .on_action(cx.listener(|_, _: &Dismiss, window, _| window.remove_window()))
             .size_full()
             .flex()
             .flex_col()
@@ -46,11 +51,7 @@ impl Render for AboutWindow {
                     .flex()
                     .flex_col()
                     .gap(px(12.0))
-                    .child(
-                        ui_text(24.0, theme::ink())
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Slate Desktop"),
-                    )
+                    .child(heading("Slate"))
                     .child(
                         mono_text(theme::TEXT_META, theme::faint())
                             .child(format!("Version {version}")),
@@ -58,28 +59,25 @@ impl Render for AboutWindow {
                     .child(
                         ui_text(theme::TEXT_BODY, theme::muted())
                             .line_height(px(20.0))
-                            .child("A monochrome contact-sheet builder for photographers."),
+                            .child("Review, rate and rename photographs, then print them as contact sheets."),
                     )
                     .child(div().h(px(1.0)).w_full().bg(theme::rule()))
+                    .child(ui_text(theme::TEXT_BODY, theme::ink()).child("Tom Hackshaw"))
                     .child(
-                        ui_text(theme::TEXT_LABEL, theme::muted())
-                            .line_height(px(18.0))
-                            .child("Built with GPUI and Rust."),
-                    )
-                    .child(
-                        ui_text(theme::TEXT_LABEL, theme::muted())
-                            .line_height(px(18.0))
-                            .child("Geist and Geist Mono, SIL Open Font License."),
-                    )
-                    .child(
-                        ui_text(theme::TEXT_LABEL, theme::muted())
-                            .line_height(px(18.0))
-                            .child("Sample photographs from Unsplash."),
-                    )
-                    .child(
-                        ui_text(theme::TEXT_LABEL, theme::muted())
-                            .line_height(px(18.0))
-                            .child("GPLv3 License."),
+                        div()
+                            .id("about-license")
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .cursor_pointer()
+                            .hover(|style| style.opacity(0.72))
+                            .on_click(|_, _, cx| cx.open_url(LICENSE_URL))
+                            .child(
+                                ui_text(theme::TEXT_BODY, theme::muted())
+                                    .underline()
+                                    .child("GNU General Public License v3.0"),
+                            )
+                            .child(icon(assets::EXTERNAL_LINK, 12.0, theme::faint())),
                     ),
             )
             .child(

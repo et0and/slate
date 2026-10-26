@@ -8,12 +8,12 @@ use gpui::{
 
 use slate_core::batch;
 
-use crate::app::ContactSheet;
+use crate::app::{ContactSheet, Dismiss};
 use crate::assets;
 use crate::theme;
 use crate::widgets::{
-    button, disabled_button, group_label, icon, icon_button, label, mono_text, primary_button,
-    stepper, text_button, ui_text,
+    button, disabled_button, group_label, heading, icon, icon_button, label, mono_text,
+    primary_button, stepper, text_button, ui_text,
 };
 
 const RENAME_ROW_H: f32 = 76.0;
@@ -48,6 +48,9 @@ impl Render for RenameWindow {
         div()
             .size_full()
             .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
+                this.parent.update(cx, ContactSheet::cancel_rename);
+            }))
             .bg(theme::paper())
             .text_color(theme::ink())
             .font_family(theme::FONT_UI)
@@ -89,11 +92,7 @@ impl ContactSheet {
                             .flex()
                             .flex_col()
                             .gap(px(3.0))
-                            .child(
-                                ui_text(20.0, theme::ink())
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("Rename photos"),
-                            )
+                            .child(heading("Rename photos"))
                             .child(
                                 mono_text(theme::TEXT_META, theme::faint())
                                     .child(format!("{target_count} in scope")),
@@ -212,18 +211,7 @@ impl ContactSheet {
             );
 
         let plan_panel: AnyElement = plan.map_or_else(
-            || {
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        ui_text(theme::TEXT_BODY, theme::muted())
-                            .child("Review to preview the file-name changes."),
-                    )
-                    .into_any_element()
-            },
+            || div().flex_1().into_any_element(),
             |plan| {
                 let entries = plan.entries.len();
                 let conflicts = plan.conflicts;
@@ -273,7 +261,7 @@ impl ContactSheet {
                                                 .items_center()
                                                 .gap(px(10.0))
                                                 .child(
-                                                    mono_text(theme::TEXT_MICRO, theme::faint())
+                                                    mono_text(theme::TEXT_META, theme::faint())
                                                         .w(px(26.0))
                                                         .child(format!("{:03}", index + 1)),
                                                 )
@@ -293,11 +281,6 @@ impl ContactSheet {
                                                     mono_text(theme::TEXT_META, theme::ink())
                                                         .flex_1()
                                                         .min_w(px(0.0))
-                                                        .font_weight(if entry.conflict.is_some() {
-                                                            gpui::FontWeight::SEMIBOLD
-                                                        } else {
-                                                            gpui::FontWeight::NORMAL
-                                                        })
                                                         .truncate()
                                                         .child(to),
                                                 ),
@@ -310,8 +293,7 @@ impl ContactSheet {
                                                 .gap(px(6.0))
                                                 .child(icon(assets::ALERT, 11.0, theme::muted()))
                                                 .child(
-                                                    ui_text(theme::TEXT_META, theme::muted())
-                                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                                    ui_text(theme::TEXT_META, theme::ink())
                                                         .child(conflict.clone()),
                                                 )
                                         }))

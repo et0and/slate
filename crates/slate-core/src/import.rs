@@ -45,6 +45,11 @@ impl PreviewImage {
         self.image.height()
     }
 
+    /// Apply a photo's non-destructive adjustments to these pixels.
+    pub fn adjust(&mut self, adjustments: &crate::adjust::Adjustments) {
+        adjustments.apply_rgba(&mut self.image);
+    }
+
     /// GPUI expects BGRA pixels.
     #[must_use]
     pub fn into_bgra(self) -> Vec<u8> {

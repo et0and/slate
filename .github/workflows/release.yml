@@ -218,17 +218,51 @@ jobs:
           codesign --force --sign - "$APP"
           echo "::warning title=macOS build is not notarized::Add the Developer ID secrets in docs/release.md to sign and notarize release builds."
 
-      - name: Package macOS zip
+      - name: Build disk image
         shell: bash
         run: |
           set -euo pipefail
-          ditto -c -k --keepParent "dist/Slate.app" "dist/slate-desktop-macos-universal.zip"
+          staging="$RUNNER_TEMP/dmg"
+          mkdir -p "$staging"
+          ditto "dist/Slate.app" "$staging/Slate.app"
+          ln -s /Applications "$staging/Applications"
+          # hdiutil intermittently reports "Resource busy" on hosted runners.
+          for attempt in 1 2 3; do
+            if hdiutil create -volname "Slate" -srcfolder "$staging" -ov -format UDZO \
+              "dist/Slate-macos-universal.dmg"; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Sign and notarize disk image
+        if: env.MACOS_SIGNING_IDENTITY != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG="dist/Slate-macos-universal.dmg"
+          codesign --force --timestamp --sign "$MACOS_SIGNING_IDENTITY" "$DMG"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: slate-desktop-macos-universal
-          path: dist/*.zip
+          name: slate-macos-universal
+          path: dist/*.dmg
           if-no-files-found: error
 
       - name: Remove signing keychain
@@ -275,26 +309,45 @@ jobs:
             libxcb-render0-dev \
             libxcb-xinput-dev \
             libxcb-composite0-dev \
-            libxcb-damage0-dev
+            libxcb-damage0-dev \
+            squashfs-tools
 
       - name: Build
         run: cargo build --release --locked -p slate-app
 
-      - name: Package
+      - name: Package AppImage
+        env:
+          # Pinned release of the official AppImage runtime, verified below.
+          # Bump both together from https://github.com/AppImage/type2-runtime/releases.
+          APPIMAGE_RUNTIME_URL: https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          APPIMAGE_RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
         run: |
           set -euo pipefail
           strip target/release/slate-desktop
-          mkdir -p dist/package
-          cp target/release/slate-desktop README.md LICENSE dist/package/
-          tar -czf dist/slate-desktop-linux-x86_64.tar.gz \
-            -C dist/package slate-desktop README.md LICENSE
-          rm -rf dist/package
+          appdir="$RUNNER_TEMP/Slate.AppDir"
+          mkdir -p "$appdir/usr/bin" dist
+          cp target/release/slate-desktop "$appdir/usr/bin/slate-desktop"
+          cp packaging/linux/slate.desktop "$appdir/slate.desktop"
+          cp assets/icon.png "$appdir/slate.png"
+          ln -s slate.png "$appdir/.DirIcon"
+          ln -s usr/bin/slate-desktop "$appdir/AppRun"
+
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/runtime-x86_64" "$APPIMAGE_RUNTIME_URL"
+          echo "$APPIMAGE_RUNTIME_SHA256  $RUNNER_TEMP/runtime-x86_64" | sha256sum --check -
+
+          # An AppImage is the runtime followed by a squashfs of the AppDir.
+          mksquashfs "$appdir" "$RUNNER_TEMP/slate.squashfs" \
+            -root-owned -noappend -comp zstd -quiet
+          cat "$RUNNER_TEMP/runtime-x86_64" "$RUNNER_TEMP/slate.squashfs" \
+            > dist/Slate-linux-x86_64.AppImage
+          chmod +x dist/Slate-linux-x86_64.AppImage
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: slate-desktop-linux-x86_64
-          path: dist/*.tar.gz
+          name: slate-linux-x86_64
+          path: dist/*.AppImage
           if-no-files-found: error
 
   windows:
@@ -329,18 +382,15 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist\package | Out-Null
-          Copy-Item target\release\slate-desktop.exe dist\package\
-          Copy-Item README.md, LICENSE dist\package\
-          Compress-Archive -Path dist\package\* `
-            -DestinationPath dist\slate-desktop-windows-x86_64.zip -Force
-          Remove-Item -Recurse -Force dist\package
+          # The executable is self-contained: fonts and interface icons are compiled in.
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target\release\slate-desktop.exe dist\Slate-windows-x86_64.exe
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: slate-desktop-windows-x86_64
-          path: dist/*.zip
+          name: slate-windows-x86_64
+          path: dist/*.exe
           if-no-files-found: error
 
   release:
@@ -373,4 +423,8 @@ jobs:
               --title "Slate $TAG" \
               --generate-notes
           fi
-          gh release upload "$TAG" dist/*.zip dist/*.tar.gz --clobber
+          gh release upload "$TAG" \
+            dist/Slate-macos-universal.dmg \
+            dist/Slate-windows-x86_64.exe \
+            dist/Slate-linux-x86_64.AppImage \
+            --clobber

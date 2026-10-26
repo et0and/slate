@@ -157,15 +157,7 @@ impl ContactSheet {
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_left_pane(window, cx);
                     }))
-                    .child(icon(
-                        if self.panels.left_collapsed() {
-                            assets::PANEL_RIGHT
-                        } else {
-                            assets::PANEL_LEFT
-                        },
-                        15.0,
-                        theme::muted(),
-                    )),
+                    .child(icon(assets::PANEL_LEFT, 16.0, theme::muted())),
             )
             .child(drag_region(cx, "titlebar-drag-left").flex_1().h_full());
         let mut right = div()
@@ -237,7 +229,7 @@ impl ContactSheet {
             .child(self.render_menubar(cx))
             .child(div().flex_1())
             .children(self.panels.left_collapsed().then(|| {
-                icon_button("topbar-expand-left", assets::PANEL_RIGHT)
+                icon_button("topbar-expand-left", assets::PANEL_LEFT)
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_left_pane(window, cx)))
             }))
             .into_any_element()

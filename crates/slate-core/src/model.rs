@@ -3,6 +3,7 @@
 //! Everything in this module serializes to the on-disk `.slate` file,
 //! so a project can always be reopened and exported later.
 
+use crate::adjust::AdjustmentMap;
 use std::collections::{BTreeMap, HashSet};
 use std::io::{BufReader, BufWriter, Write};
 use std::num::NonZeroU32;
@@ -944,6 +945,9 @@ pub struct Collection {
     pub photos: PhotoSet,
     pub sheet: SheetSettings,
     pub saved_sheets: Vec<SavedSheet>,
+    /// Non-destructive tone and colour adjustments, only for adjusted photos.
+    #[serde(skip_serializing_if = "AdjustmentMap::is_empty")]
+    pub adjustments: AdjustmentMap,
     pub next_photo_id: u64,
     pub next_sheet_id: u64,
 }
@@ -965,6 +969,7 @@ impl Collection {
             photos: PhotoSet::new(),
             sheet: SheetSettings::default(),
             saved_sheets: Vec::new(),
+            adjustments: AdjustmentMap::default(),
             next_photo_id: 1,
             next_sheet_id: 1,
         }
@@ -1005,6 +1010,7 @@ impl Collection {
         self.saved_sheets
             .iter_mut()
             .for_each(|sheet| sheet.photo_ids.retain(|id| !ids.contains(id)));
+        self.adjustments.retain(|id| !ids.contains(&id));
         removed
     }
 
@@ -1082,6 +1088,8 @@ impl Collection {
         for sheet in &mut self.saved_sheets {
             sheet.settings.normalize();
         }
+        let photos = &self.photos;
+        self.adjustments.retain(|id| photos.photo(id).is_some());
         self.next_photo_id = self.next_photo_id.max(
             self.photos
                 .iter()
@@ -1476,6 +1484,36 @@ mod tests {
     }
 
     #[test]
+    fn adjustments_roundtrip_and_follow_their_photos() {
+        use crate::adjust::Adjustments;
+
+        let mut project = project_with_photos();
+        let warm = Adjustments {
+            temperature: 30.0,
+            monochrome: true,
+            ..Adjustments::default()
+        };
+        project.adjustments.set(PhotoId(1), warm);
+        project.adjustments.set(PhotoId(2), warm);
+
+        let json = serde_json::to_string(&project).unwrap();
+        let mut back: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.adjustments.for_photo(PhotoId(1)), warm);
+
+        back.remove_photos(&[PhotoId(2)]);
+        assert!(back.adjustments.get(PhotoId(2)).is_none());
+
+        back.adjustments.set(PhotoId(99), warm);
+        back.normalize();
+        assert!(back.adjustments.get(PhotoId(99)).is_none());
+        assert_eq!(back.adjustments.len(), 1);
+
+        // Unadjusted collections keep writing the same file as before.
+        let plain = serde_json::to_string(&project_with_photos()).unwrap();
+        assert!(!plain.contains("adjustments"));
+    }
+
+    #[test]
     fn older_project_json_uses_defaults_for_missing_fields() {
         let json = r#"{
             "name": "Legacy",
@@ -1489,6 +1527,7 @@ mod tests {
         assert_eq!(project.sheet.paper, Paper::A4);
         assert_eq!(project.sheet.custom_paper_width_mm, 210.0);
         assert_eq!(project.sheet.custom_paper_height_mm, 297.0);
+        assert!(project.adjustments.is_empty());
         assert!(project.sheet.captions);
         assert_eq!(project.photo_ids().len(), 0);
     }

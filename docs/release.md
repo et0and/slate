@@ -3,8 +3,11 @@
 Slate uses [semantic-release](https://semantic-release.gitbook.io/semantic-release/)
 on `main`, the same commit-driven model as the wwwtom monorepo. The workflow
 turns Conventional Commits into versions, tags, changelogs and GitHub Releases;
-the macOS, Linux and Windows artifacts are built from the tag and attached to
-that release.
+the macOS, Windows and Linux downloads are built from the tag and attached to
+that release as `Slate-macos-universal.dmg`, `Slate-windows-x86_64.exe` and
+`Slate-linux-x86_64.AppImage`. They are direct downloads, not archives, and keep
+the same names every release so `releases/latest/download/<name>` links stay
+valid.
 
 ## How a release runs
 
@@ -20,7 +23,7 @@ Every push to `main`:
    `CHANGELOG.md`.
 4. Commits `chore(release): <version> [skip ci]`, tags `v<version>` and creates
    the GitHub Release with generated notes.
-5. Builds the universal macOS `Slate.app`, the Linux tarball and the Windows zip
+5. Builds the macOS disk image, the Windows executable and the Linux AppImage
    from the tag, then uploads all three assets to the release.
 
 ### First release
@@ -66,8 +69,8 @@ manual run with an empty tag analyses `main` as usual.
 A release is ad-hoc signed and **not notarized** until the six repository
 secrets below exist. The workflow prints a warning in that state. Once the
 secrets are present it signs with a Developer ID Application certificate,
-notarizes the app, staples the ticket and verifies it with Gatekeeper before
-zipping.
+notarizes the app, staples the ticket and verifies it with Gatekeeper, then
+wraps it in a disk image that is signed, notarized and stapled in turn.
 
 ### What you need
 
@@ -146,7 +149,27 @@ the keychain after the build.
 4. Zips the app with `ditto` and submits it to `xcrun notarytool submit --wait`.
 5. Staples the accepted ticket with `xcrun stapler staple`, validates it, and
    checks the result with `spctl --assess`.
-6. Zips the stapled app with `ditto` and uploads it to the GitHub Release.
+6. Copies the stapled app and an `/Applications` link into
+   `Slate-macos-universal.dmg` with `hdiutil`.
+7. Signs the disk image, notarizes and staples it, and checks it with
+   `spctl --assess --type open`.
+8. Uploads the disk image to the GitHub Release.
+
+Without the signing secrets the app is ad-hoc signed and the disk image is
+unsigned.
+
+## Windows and Linux packages
+
+- Windows ships the release `slate-desktop.exe` itself as
+  `Slate-windows-x86_64.exe`. It is self-contained (fonts and interface icons are
+  compiled in) and is not code-signed, so SmartScreen warns on first launch.
+- Linux ships `Slate-linux-x86_64.AppImage`: an AppDir with the binary,
+  `packaging/linux/slate.desktop` and the icon, compressed with `mksquashfs`
+  and appended to the official AppImage type2 runtime. The runtime is
+  downloaded from a pinned `AppImage/type2-runtime` release and checked against
+  its SHA-256 before use. The AppImage still uses the host's graphics, font and
+  input libraries, and it needs FUSE to mount itself (or run it with
+  `--appimage-extract-and-run`).
 
 Slate does not use the App Sandbox, so the Developer ID build needs no sandbox
 entitlements. If a future feature needs an entitlement, add a

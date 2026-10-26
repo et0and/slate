@@ -104,8 +104,10 @@ The Worker holds `SLATE_GOOGLE_CLIENT_ID` and
 `SLATE_GOOGLE_CLIENT_SECRET`, adds the secret to the Google token request, and
 never logs codes, tokens, or the secret. It must reject GET and invalid input.
 
-Save the file, then choose **Drive → Link Google Drive**. The browser opens, and
-the callback returns to the app. Drive → Unlink removes the stored refresh token;
+Save the file, then press **+** in the Folders pane and choose **Google Drive**
+(or **File → Import from Google Drive**). The first use links the account: the
+browser opens, the callback returns to the app, and the Drive browser opens.
+**File → Unlink Google Drive** removes the stored refresh token;
 revoke the grant at
 [myaccount.google.com/permissions](https://myaccount.google.com/permissions) to
 remove Slate from the account entirely.
@@ -114,10 +116,13 @@ remove Slate from the account entirely.
 
 - `google-drive.json` holds the refresh token and account label. On Unix it is
   written with mode `0600`.
-- Imported originals are downloaded to `Drive imports/<folder>/<file-id>/` next
-  to the `.slate` project, or to Slate's application-data folder for an unsaved
-  project. The project references those paths; no copies are embedded in the
-  `.slate` file.
+- Imported originals are mirrored into `Google Drive/` in Slate's
+  application-data folder, following Drive's own folder names (for example
+  `Google Drive/My Drive/Shoots/Walk/`). The mirrored folder opens as an
+  ordinary folder collection with its own `collection.slate`, and the Folders
+  pane shows the mirror under Google Drive. Importing a folder again only
+  downloads files that are not already there; a different file with the same
+  name gets a numeric suffix instead of overwriting.
 - PDF exports go through a temporary file and stream to the Drive folder you
   choose. Slate never overwrites an existing Drive file; duplicate names get a
   numeric suffix.

@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use slate_core::adjust::Adjustments;
 use slate_core::model::{ColorLabel, PhotoId, Project, QuarterTurns, StarRating};
 
 use crate::selection::Selection;
@@ -47,6 +48,11 @@ pub enum PhotoFieldChange {
         id: PhotoId,
         before: ColorLabel,
         after: ColorLabel,
+    },
+    Adjustments {
+        id: PhotoId,
+        before: Adjustments,
+        after: Adjustments,
     },
 }
 

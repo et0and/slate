@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod about_window;
+mod adjust_ui;
 mod app;
 mod assets;
 mod chrome;
@@ -34,8 +35,8 @@ use gpui::{
 
 use app::{
     ContactSheet, ConvertSelected, CreateContactSheet, DeselectPhotos, Dismiss, ExportSheet,
-    ImportFiles, ImportFolder, NewProject, OpenPreview, OpenProject, Quit, Redo, RenamePhotos,
-    SaveAs, SaveProject, SelectAllPhotos, Undo,
+    FocusSearch, ImportFiles, ImportFolder, NewProject, OpenPreview, OpenProject, Quit, Redo,
+    RenamePhotos, SaveAs, SaveProject, SelectAllPhotos, ToggleLeftPane, ToggleRightPane, Undo,
 };
 
 #[cfg(target_os = "macos")]
@@ -81,8 +82,14 @@ fn main() {
             KeyBinding::new(&primary("shift-e"), ConvertSelected, None),
             KeyBinding::new(&primary("i"), ImportFiles, None),
             KeyBinding::new(&primary("shift-i"), ImportFolder, None),
-            KeyBinding::new(&primary("shift-a"), SelectAllPhotos, None),
+            // Text fields bind the same keys in their own, deeper context, so
+            // Cmd/Ctrl+A still selects text while a field is focused.
+            KeyBinding::new(&primary("a"), SelectAllPhotos, None),
             KeyBinding::new(&primary("shift-d"), DeselectPhotos, None),
+            KeyBinding::new(&primary("k"), FocusSearch, None),
+            KeyBinding::new(&primary("f"), FocusSearch, None),
+            KeyBinding::new(&primary("b"), ToggleLeftPane, None),
+            KeyBinding::new(&primary("alt-b"), ToggleRightPane, None),
             KeyBinding::new("escape", Dismiss, None),
             KeyBinding::new("left", PreviousPage, Some("PreviewWindow")),
             KeyBinding::new("right", NextPage, Some("PreviewWindow")),

@@ -12,22 +12,25 @@ use crate::app::ContactSheet;
 #[cfg(target_os = "macos")]
 use crate::app::{
     About, ConvertSelected, CreateContactSheet, DeselectPhotos, ExportDrive, ExportSheet,
-    HideOthers, HideSlate, ImportDrive, ImportFiles, ImportFolder, InvertSelection, LinkDrive,
-    NewProject, OpenPreview, OpenProject, OpenRecent, OpenWebsite, Quit, Redo, RemoveSelected,
-    RenamePhotos, ReportIssue, ResetPanels, SaveAs, SaveProject, SaveSheet, SelectAllPhotos,
-    SetTheme, Undo, UnlinkDrive,
+    FocusSearch, HideOthers, HideSlate, ImportDrive, ImportFiles, ImportFolder, InvertSelection,
+    NewProject, OpenPreview, OpenProject, OpenRecent, Quit, Redo, RemoveSelected, RenamePhotos,
+    ResetPanels, SaveAs, SaveProject, SaveSheet, SelectAllPhotos, SetTheme, ToggleLeftPane,
+    ToggleRightPane, Undo, UnlinkDrive,
 };
+use crate::app::{OpenWebsite, ReportIssue};
 use crate::assets;
 use crate::drive_ui::DriveMode;
 use crate::theme;
-use crate::widgets::{icon, mono_text, shift_shortcut_label, shortcut_label, ui_text};
+use crate::widgets::{
+    alt_shortcut_label, icon, mono_text, shift_shortcut_label, shortcut_hint, shortcut_label,
+    ui_text,
+};
 
 const MENU_START: f32 = 8.0;
 const MENU_TEXT_INSET: f32 = 8.0;
 const MENU_FILE_W: f32 = 36.0;
 const MENU_EDIT_W: f32 = 36.0;
 const MENU_VIEW_W: f32 = 40.0;
-const MENU_DRIVE_W: f32 = 42.0;
 const MENU_HISTORY_W: f32 = 56.0;
 const MENU_HELP_W: f32 = 38.0;
 const PANEL_W: f32 = 280.0;
@@ -38,7 +41,6 @@ pub enum MenuId {
     File,
     Edit,
     View,
-    Drive,
     History,
     Help,
 }
@@ -49,9 +51,8 @@ impl MenuId {
             Self::File => 0,
             Self::Edit => 1,
             Self::View => 2,
-            Self::Drive => 3,
-            Self::History => 4,
-            Self::Help => 5,
+            Self::History => 3,
+            Self::Help => 4,
         }
     }
 
@@ -60,7 +61,6 @@ impl MenuId {
             Self::File => MENU_FILE_W,
             Self::Edit => MENU_EDIT_W,
             Self::View => MENU_VIEW_W,
-            Self::Drive => MENU_DRIVE_W,
             Self::History => MENU_HISTORY_W,
             Self::Help => MENU_HELP_W,
         }
@@ -72,11 +72,8 @@ impl MenuId {
                 Self::File => 0.0,
                 Self::Edit => MENU_FILE_W,
                 Self::View => MENU_FILE_W + MENU_EDIT_W,
-                Self::Drive => MENU_FILE_W + MENU_EDIT_W + MENU_VIEW_W,
-                Self::History => MENU_FILE_W + MENU_EDIT_W + MENU_VIEW_W + MENU_DRIVE_W,
-                Self::Help => {
-                    MENU_FILE_W + MENU_EDIT_W + MENU_VIEW_W + MENU_DRIVE_W + MENU_HISTORY_W
-                }
+                Self::History => MENU_FILE_W + MENU_EDIT_W + MENU_VIEW_W,
+                Self::Help => MENU_FILE_W + MENU_EDIT_W + MENU_VIEW_W + MENU_HISTORY_W,
             }
     }
 }
@@ -89,7 +86,6 @@ impl ContactSheet {
             .child(self.menu_trigger(MenuId::File, "File", cx))
             .child(self.menu_trigger(MenuId::Edit, "Edit", cx))
             .child(self.menu_trigger(MenuId::View, "View", cx))
-            .child(self.menu_trigger(MenuId::Drive, "Drive", cx))
             .child(self.menu_trigger(MenuId::History, "History", cx))
             .child(self.menu_trigger(MenuId::Help, "Help", cx))
             .into_any_element()
@@ -147,7 +143,6 @@ impl ContactSheet {
             MenuId::File => self.file_menu(cx),
             MenuId::Edit => self.edit_menu(cx),
             MenuId::View => self.view_menu(cx),
-            MenuId::Drive => self.drive_menu(cx),
             MenuId::History => self.history_menu(),
             MenuId::Help => self.help_menu(cx),
         };
@@ -172,11 +167,14 @@ impl ContactSheet {
                         ),
                 )
                 .child(
+                    // Occlude the dismiss layer, or a press on an item closes
+                    // the menu before the item can handle its click.
                     div()
                         .absolute()
                         .top(px(0.0))
                         .left(px(left))
                         .w(px(PANEL_W))
+                        .occlude()
                         .py(px(4.0))
                         .bg(theme::surface())
                         .border_1()
@@ -205,7 +203,7 @@ impl ContactSheet {
             menu_item(
                 "menu-open",
                 assets::FOLDER,
-                "Open folder…",
+                "Open folder",
                 Some(shortcut_label("O")),
                 true,
             )
@@ -229,7 +227,7 @@ impl ContactSheet {
                         ))))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.close_menu(cx);
-                            this.open_recent(&path, cx);
+                            this.open_project(&path, cx);
                         }))
                         .into_any_element(),
                 );
@@ -255,7 +253,7 @@ impl ContactSheet {
             menu_item(
                 "menu-save-as",
                 assets::SAVE,
-                "Save collection as…",
+                "Save collection as",
                 Some(shift_shortcut_label("S")),
                 true,
             )
@@ -277,7 +275,7 @@ impl ContactSheet {
             menu_item(
                 "menu-create-sheet",
                 assets::LAYOUT,
-                "Create contact sheet…",
+                "Create contact sheet",
                 Some(shift_shortcut_label("C")),
                 true,
             )
@@ -292,7 +290,7 @@ impl ContactSheet {
             menu_item(
                 "menu-import-files",
                 assets::FILE_PLUS,
-                "Import files…",
+                "Import files",
                 Some(shortcut_label("I")),
                 true,
             )
@@ -306,7 +304,7 @@ impl ContactSheet {
             menu_item(
                 "menu-import-folder",
                 assets::FOLDER_PLUS,
-                "Import folder…",
+                "Import folder",
                 Some(shift_shortcut_label("I")),
                 true,
             )
@@ -316,12 +314,13 @@ impl ContactSheet {
             }))
             .into_any_element(),
         );
+        rows.push(self.drive_menu_item(DriveMode::Import, cx));
         rows.push(separator());
         rows.push(
             menu_item(
                 "menu-convert",
                 assets::UPLOAD,
-                "Convert selected…",
+                "Convert selected",
                 Some(shift_shortcut_label("E")),
                 true,
             )
@@ -335,7 +334,7 @@ impl ContactSheet {
             menu_item(
                 "menu-export",
                 assets::DOWNLOAD,
-                "Export PDF…",
+                "Export PDF",
                 Some(shortcut_label("E")),
                 true,
             )
@@ -345,6 +344,24 @@ impl ContactSheet {
             }))
             .into_any_element(),
         );
+        rows.push(self.drive_menu_item(DriveMode::Export, cx));
+        if self.drive_account.is_some() {
+            let can_unlink = self.drive_idle();
+            rows.push(separator());
+            rows.push(
+                menu_item(
+                    "menu-drive-unlink",
+                    assets::X,
+                    "Unlink Google Drive",
+                    None,
+                    can_unlink,
+                )
+                .when(can_unlink, |item| {
+                    item.on_click(cx.listener(|this, _, _, cx| this.unlink_google_drive(cx)))
+                })
+                .into_any_element(),
+            );
+        }
         rows.push(separator());
         rows.push(
             menu_item(
@@ -398,10 +415,22 @@ impl ContactSheet {
             .into_any_element(),
             separator(),
             menu_item(
+                "menu-search",
+                assets::SEARCH,
+                "Search",
+                Some(shortcut_label("K")),
+                true,
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.close_menu(cx);
+                this.focus_search(window, cx);
+            }))
+            .into_any_element(),
+            menu_item(
                 "menu-select-all",
                 assets::CHECK,
                 "Select all visible",
-                Some(shift_shortcut_label("A")),
+                Some(shortcut_label("A")),
                 true,
             )
             .on_click(cx.listener(|this, _, _, cx| {
@@ -431,7 +460,7 @@ impl ContactSheet {
             menu_item(
                 "menu-rename-photos",
                 assets::PENCIL,
-                "Rename…",
+                "Rename",
                 Some(shortcut_label("R")),
                 true,
             )
@@ -467,9 +496,34 @@ impl ContactSheet {
                 Some(shift_shortcut_label("P")),
                 true,
             )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.close_menu(cx);
+                this.open_preview_window(cx);
+            }))
+            .into_any_element(),
+            separator(),
+            menu_item(
+                "menu-toggle-left",
+                assets::PANEL_LEFT,
+                "Toggle left pane",
+                Some(shortcut_label("B")),
+                true,
+            )
             .on_click(cx.listener(|this, _, window, cx| {
                 this.close_menu(cx);
-                this.open_preview_window(window, cx);
+                this.toggle_left_pane(window, cx);
+            }))
+            .into_any_element(),
+            menu_item(
+                "menu-toggle-right",
+                assets::PANEL_RIGHT,
+                "Toggle right pane",
+                Some(alt_shortcut_label("B")),
+                true,
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.close_menu(cx);
+                this.toggle_right_pane(window, cx);
             }))
             .into_any_element(),
             separator(),
@@ -523,110 +577,38 @@ impl ContactSheet {
                 this.set_theme(choice, cx);
             }))
             .child(check)
-            .child(
-                ui_text(theme::TEXT_BODY, theme::ink())
-                    .font_weight(if active {
-                        gpui::FontWeight::MEDIUM
-                    } else {
-                        gpui::FontWeight::NORMAL
-                    })
-                    .child(choice.label()),
-            )
+            .child(ui_text(theme::TEXT_BODY, theme::ink()).child(choice.label()))
             .into_any_element()
     }
 
-    fn drive_menu(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let mut rows = Vec::new();
-        let Some(account) = self.drive_account.clone() else {
-            rows.push(section_label("Google Drive"));
-            rows.push(
-                menu_item(
-                    "drive-link",
-                    assets::EXTERNAL_LINK,
-                    if self.drive_linking {
-                        "Waiting for browser…"
-                    } else {
-                        "Link Google Drive…"
-                    },
-                    None,
-                    !self.drive_linking,
-                )
-                .when(!self.drive_linking, |item| {
-                    item.on_click(cx.listener(|this, _, _, cx| {
-                        this.link_google_drive(cx);
-                    }))
-                })
-                .into_any_element(),
-            );
-            return rows;
-        };
+    /// Drive work runs one transfer at a time.
+    const fn drive_idle(&self) -> bool {
+        !self.drive_linking && self.drive_download.is_none() && self.exporting.is_none()
+    }
 
-        let can_use =
-            !self.drive_linking && self.drive_download.is_none() && self.exporting.is_none();
-        rows.push(section_label("Google Drive"));
-        rows.push(
-            div()
-                .h(px(24.0))
-                .px(px(10.0))
-                .flex()
-                .items_center()
-                .child(
-                    mono_text(theme::TEXT_META, theme::faint())
-                        .truncate()
-                        .child(account.label()),
-                )
-                .into_any_element(),
-        );
-        rows.push(separator());
-        rows.push(
-            menu_item(
-                "drive-import",
-                assets::FOLDER_PLUS,
-                "Import from Drive…",
-                None,
-                can_use,
-            )
-            .when(can_use, |item| {
-                item.on_click(cx.listener(|this, _, _, cx| {
-                    this.open_drive_picker(DriveMode::Import, cx);
-                }))
-            })
-            .into_any_element(),
-        );
-        rows.push(
-            menu_item(
-                "drive-export",
+    /// Import and export open the Drive browser, linking the account first.
+    fn drive_menu_item(&self, mode: DriveMode, cx: &mut Context<Self>) -> AnyElement {
+        let enabled = self.drive_idle();
+        let (id, icon_path, label) = match mode {
+            DriveMode::Import => (
+                "menu-drive-import",
+                assets::CLOUD,
+                "Import from Google Drive",
+            ),
+            DriveMode::Export => (
+                "menu-drive-export",
                 assets::UPLOAD,
-                "Export sheet to Drive…",
-                None,
-                can_use,
-            )
-            .when(can_use, |item| {
-                item.on_click(cx.listener(|this, _, _, cx| {
-                    this.open_drive_picker(DriveMode::Export, cx);
+                "Export PDF to Google Drive",
+            ),
+        };
+        menu_item(id, icon_path, label, None, enabled)
+            .when(enabled, |item| {
+                item.on_click(cx.listener(move |this, _, _, cx| {
+                    this.close_menu(cx);
+                    this.open_drive(mode, cx);
                 }))
             })
-            .into_any_element(),
-        );
-        let can_unlink =
-            !self.drive_linking && self.drive_download.is_none() && self.exporting.is_none();
-        rows.push(separator());
-        rows.push(
-            menu_item(
-                "drive-unlink",
-                assets::X,
-                "Unlink Google Drive",
-                None,
-                can_unlink,
-            )
-            .when(can_unlink, |item| {
-                item.on_click(cx.listener(|this, _, _, cx| {
-                    this.unlink_google_drive(cx);
-                }))
-            })
-            .into_any_element(),
-        );
-        rows
+            .into_any_element()
     }
 
     fn history_menu(&mut self) -> Vec<AnyElement> {
@@ -653,7 +635,7 @@ impl ContactSheet {
                     .gap(px(9.0))
                     .child(icon(assets::CLOCK, 11.0, theme::faint()))
                     .child(
-                        mono_text(theme::TEXT_MICRO, theme::muted())
+                        mono_text(theme::TEXT_META, theme::muted())
                             .flex_1()
                             .min_w(px(0.0))
                             .truncate()
@@ -666,7 +648,24 @@ impl ContactSheet {
 
     fn help_menu(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         vec![
-            menu_item("menu-about", assets::INFO, "About", None, true)
+            menu_item(
+                "menu-website",
+                assets::EXTERNAL_LINK,
+                "Slate website",
+                None,
+                true,
+            )
+            .on_click(cx.listener(|_, _, window, cx| {
+                window.dispatch_action(Box::new(OpenWebsite), cx);
+            }))
+            .into_any_element(),
+            menu_item("menu-report", assets::ALERT, "Report an issue", None, true)
+                .on_click(cx.listener(|_, _, window, cx| {
+                    window.dispatch_action(Box::new(ReportIssue), cx);
+                }))
+                .into_any_element(),
+            separator(),
+            menu_item("menu-about", assets::INFO, "About Slate", None, true)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.menu_open = None;
                     this.open_about_window(cx);
@@ -703,7 +702,7 @@ impl ContactSheet {
 
         let mut file_items = vec![
             MenuItem::action("New collection", NewProject),
-            MenuItem::action("Open folder…", OpenProject),
+            MenuItem::action("Open folder", OpenProject),
         ];
         if !self.recent_collections.is_empty() {
             file_items.push(MenuItem::submenu(Menu {
@@ -726,32 +725,44 @@ impl ContactSheet {
         file_items.extend([
             MenuItem::separator(),
             MenuItem::action("Save collection", SaveProject),
-            MenuItem::action("Save collection as…", SaveAs),
+            MenuItem::action("Save collection as", SaveAs),
             MenuItem::action("Save sheet", SaveSheet),
-            MenuItem::action("Create contact sheet…", CreateContactSheet),
+            MenuItem::action("Create contact sheet", CreateContactSheet),
             MenuItem::separator(),
-            MenuItem::action("Import files…", ImportFiles),
-            MenuItem::action("Import folder…", ImportFolder),
+            MenuItem::action("Import files", ImportFiles),
+            MenuItem::action("Import folder", ImportFolder),
+            MenuItem::action("Import from Google Drive", ImportDrive),
             MenuItem::separator(),
-            MenuItem::action("Convert selected…", ConvertSelected),
-            MenuItem::action("Export PDF…", ExportSheet),
+            MenuItem::action("Convert selected", ConvertSelected),
+            MenuItem::action("Export PDF", ExportSheet),
+            MenuItem::action("Export PDF to Google Drive", ExportDrive),
         ]);
+        if self.drive_account.is_some() {
+            file_items.extend([
+                MenuItem::separator(),
+                MenuItem::action("Unlink Google Drive", UnlinkDrive),
+            ]);
+        }
 
         let edit_items = vec![
             MenuItem::action("Undo", Undo),
             MenuItem::action("Redo", Redo),
             MenuItem::separator(),
+            MenuItem::action("Search", FocusSearch),
             MenuItem::action("Select all visible", SelectAllPhotos),
             MenuItem::action("Deselect all", DeselectPhotos),
             MenuItem::action("Invert selection", InvertSelection),
             MenuItem::separator(),
-            MenuItem::action("Rename…", RenamePhotos),
+            MenuItem::action("Rename", RenamePhotos),
             MenuItem::separator(),
             MenuItem::action("Remove from collection", RemoveSelected),
         ];
 
         let mut view_items = vec![
             MenuItem::action("Open sheet preview", OpenPreview),
+            MenuItem::separator(),
+            MenuItem::action("Toggle left pane", ToggleLeftPane),
+            MenuItem::action("Toggle right pane", ToggleRightPane),
             MenuItem::separator(),
         ];
         view_items.extend(theme::Theme::ALL.into_iter().map(|choice| {
@@ -764,17 +775,6 @@ impl ContactSheet {
         }));
         view_items.push(MenuItem::separator());
         view_items.push(MenuItem::action("Reset panel widths", ResetPanels));
-
-        let drive_items = if self.drive_account.is_some() {
-            vec![
-                MenuItem::action("Import from Drive…", ImportDrive),
-                MenuItem::action("Export sheet to Drive…", ExportDrive),
-                MenuItem::separator(),
-                MenuItem::action("Unlink Google Drive", UnlinkDrive),
-            ]
-        } else {
-            vec![MenuItem::action("Link Google Drive…", LinkDrive)]
-        };
 
         let help_items = vec![
             MenuItem::action("Slate website", OpenWebsite),
@@ -794,10 +794,6 @@ impl ContactSheet {
             Menu {
                 name: "View".into(),
                 items: view_items,
-            },
-            Menu {
-                name: "Drive".into(),
-                items: drive_items,
             },
             Menu {
                 name: "Help".into(),
@@ -848,11 +844,6 @@ fn menu_item(
                 .min_w(px(0.0))
                 .truncate()
                 .font_family(theme::FONT_UI)
-                .font_weight(if enabled {
-                    gpui::FontWeight::MEDIUM
-                } else {
-                    gpui::FontWeight::NORMAL
-                })
                 .text_size(px(theme::TEXT_BODY))
                 .text_color(if enabled {
                     theme::ink()
@@ -861,7 +852,7 @@ fn menu_item(
                 })
                 .child(label),
         )
-        .children(hint.map(|hint| mono_text(theme::TEXT_META, theme::faint()).child(hint)));
+        .children(hint.map(shortcut_hint));
     if enabled {
         item.cursor_pointer()
             .hover(|style| style.bg(theme::accent_soft()))

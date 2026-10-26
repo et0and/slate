@@ -3120,11 +3120,9 @@ impl Render for ContactSheet {
                     .flex()
                     .flex_1()
                     .min_h(px(0.0))
-                    .children(if self.panels.left_collapsed() {
-                        Some(self.render_collapsed_rail(ResizeTarget::Left, cx))
-                    } else {
-                        Some(self.render_sidebar(window, cx))
-                    })
+                    .children(
+                        (!self.panels.left_collapsed()).then(|| self.render_sidebar(window, cx)),
+                    )
                     .children(
                         (!self.panels.left_collapsed())
                             .then(|| divider("resize-left", ResizeTarget::Left, cx)),
@@ -3155,7 +3153,6 @@ fn divider(id: &'static str, target: ResizeTarget, cx: &mut Context<ContactSheet
         .h_full()
         .flex_shrink_0()
         .cursor(CursorStyle::ResizeColumn)
-        .hover(|style| style.bg(theme::accent_soft()))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| this.begin_resize(target, cx)),

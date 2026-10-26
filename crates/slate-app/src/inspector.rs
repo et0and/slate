@@ -541,6 +541,27 @@ impl ContactSheet {
     }
 
     fn render_photo_inspector_empty(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let stars = div()
+            .flex()
+            .items_center()
+            .gap(px(2.0))
+            .children((1..=StarRating::MAX).map(|_| icon(assets::STAR, 12.0, theme::faint())));
+        let label_swatch = div()
+            .size(px(16.0))
+            .border_1()
+            .border_color(theme::rule())
+            .bg(theme::surface());
+        let disabled_field = div()
+            .h(px(theme::FIELD))
+            .px(px(12.0))
+            .flex()
+            .items_center()
+            .border_1()
+            .border_color(theme::rule())
+            .bg(theme::surface())
+            .opacity(0.5)
+            .child(mono_text(theme::TEXT_BODY, theme::faint()).child("—"));
+
         div()
             .w(px(self.panels.right()))
             .flex_shrink_0()
@@ -550,37 +571,153 @@ impl ContactSheet {
             .bg(theme::panel())
             .child(
                 div()
+                    .flex_shrink_0()
                     .px(px(20.0))
                     .pt(px(10.0))
                     .pb(px(10.0))
                     .flex()
-                    .justify_end()
-                    .child(
-                        icon_button("inspector-collapse", assets::PANEL_LEFT).on_click(
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(div().w_full().flex().justify_start().child(
+                        icon_button("inspector-collapse", assets::PANEL_RIGHT).on_click(
                             cx.listener(|this, _, window, cx| this.toggle_right_pane(window, cx)),
                         ),
-                    ),
+                    ))
+                    .child(ui_text(theme::TEXT_BODY, theme::faint()).child("—")),
             )
             .child(
                 div()
-                    .px(px(20.0))
-                    .py(px(24.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(10.0))
+                    .id("photo-inspector-scroll")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
                     .child(
-                        icon(assets::IMAGE, 22.0, theme::faint()),
+                        div()
+                            .mx(px(20.0))
+                            .h(px(196.0))
+                            .bg(theme::photo_bg())
+                            .border_1()
+                            .border_color(theme::rule())
+                            .shadow_sm()
+                            .opacity(0.6),
                     )
                     .child(
-                        ui_text(theme::TEXT_BODY, theme::ink())
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child("Select a photo"),
+                        div()
+                            .px(px(20.0))
+                            .py(px(12.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .opacity(0.6)
+                            .child(photo_info_row("Dimensions", "—"))
+                            .child(photo_info_row("File size", "—"))
+                            .child(photo_info_row("Type", "—"))
+                            .child(photo_info_row("Folder", "—"))
+                            .child(photo_info_row("Tags", "—")),
                     )
                     .child(
-                        ui_text(theme::TEXT_META, theme::muted())
-                            .line_height(px(16.0))
+                        div()
+                            .border_t_1()
+                            .border_color(theme::rule())
+                            .px(px(20.0))
+                            .py(px(10.0))
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .opacity(0.55)
+                            .child(group_label("Rating and label"))
                             .child(
-                                "Metadata and controls appear here. Use File > Create contact sheet… to build a sheet.",
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(12.0))
+                                    .child(stars)
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(6.0))
+                                            .child(label_swatch)
+                                            .child(
+                                                ui_text(theme::TEXT_META, theme::muted())
+                                                    .child("None"),
+                                            ),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .border_t_1()
+                            .border_color(theme::rule())
+                            .px(px(20.0))
+                            .pt(px(10.0))
+                            .pb(px(4.0))
+                            .child(group_label("Capture date")),
+                    )
+                    .child(
+                        div()
+                            .px(px(20.0))
+                            .pb(px(12.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(7.0))
+                            .opacity(0.55)
+                            .child(disabled_field)
+                            .child(
+                                div()
+                                    .flex()
+                                    .justify_between()
+                                    .gap(px(8.0))
+                                    .child(
+                                        button("photo-inspector-file-date", "Use file date")
+                                            .flex_1(),
+                                    )
+                                    .child(
+                                        primary_button("photo-inspector-save-date", "Save date")
+                                            .flex_1(),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .border_t_1()
+                            .border_color(theme::rule())
+                            .px(px(20.0))
+                            .pt(px(10.0))
+                            .pb(px(4.0))
+                            .child(group_label("EXIF")),
+                    )
+                    .child(
+                        div()
+                            .px(px(20.0))
+                            .pb(px(12.0))
+                            .opacity(0.55)
+                            .child(ui_text(theme::TEXT_META, theme::faint()).child("—")),
+                    )
+                    .child(
+                        div()
+                            .border_t_1()
+                            .border_color(theme::rule())
+                            .px(px(20.0))
+                            .py(px(12.0))
+                            .flex()
+                            .gap(px(6.0))
+                            .opacity(0.55)
+                            .child(
+                                button_with_icon(
+                                    "photo-inspector-rotate",
+                                    assets::ROTATE,
+                                    "Rotate",
+                                )
+                                .flex_1(),
+                            )
+                            .child(
+                                button_with_icon(
+                                    "photo-inspector-reveal",
+                                    assets::FOLDER,
+                                    "Reveal",
+                                )
+                                .flex_1(),
                             ),
                     ),
             )

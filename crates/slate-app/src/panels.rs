@@ -51,9 +51,9 @@ impl PanelLayout {
         }
     }
 
-    pub fn left_edge(&self) -> f32 {
+    pub const fn left_edge(&self) -> f32 {
         if self.left_collapsed {
-            RAIL_W
+            0.0
         } else {
             self.left + DIVIDER_W
         }
@@ -173,7 +173,7 @@ mod tests {
         panels.toggle_right();
         assert_eq!(panels.left(), 0.0);
         assert_eq!(panels.right(), 0.0);
-        assert_eq!(panels.left_edge(), RAIL_W);
+        assert_eq!(panels.left_edge(), 0.0);
         assert_eq!(panels.right_edge(), RAIL_W);
         panels.reset();
         assert!(!panels.left_collapsed());

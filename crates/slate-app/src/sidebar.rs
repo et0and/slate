@@ -20,7 +20,6 @@ impl ContactSheet {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let photo_count = self.project.photos.len();
-        let selected_count = self.selected.len();
         let tag_counts = self.tag_counts();
         let tag_count_total = tag_counts.len();
         let untagged = self.untagged_count();
@@ -39,16 +38,8 @@ impl ContactSheet {
 
         let search_block = div()
             .px(px(16.0))
-            .pt(px(12.0))
-            .pb(px(12.0))
-            .flex()
-            .flex_col()
-            .gap(px(6.0))
-            .child(self.search_field.clone())
-            .child(
-                mono_text(theme::TEXT_META, theme::muted())
-                    .child(format!("{selected_count} selected")),
-            );
+            .py(px(12.0))
+            .child(self.search_field.clone());
 
         let rating_block = sidebar_section(
             SidebarSection::Rating,

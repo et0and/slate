@@ -10,9 +10,7 @@ use crate::assets;
 use crate::panels::DIVIDER_W;
 use crate::panels::{RAIL_W, ResizeTarget};
 use crate::theme;
-#[cfg(target_os = "macos")]
-use crate::widgets::icon_button;
-use crate::widgets::{icon, ui_text};
+use crate::widgets::{icon, icon_button, mono_text, ui_text};
 
 impl ContactSheet {
     pub(crate) fn render_statusbar(&self) -> AnyElement {
@@ -58,7 +56,21 @@ impl ContactSheet {
                     .child(left),
                 ),
             )
-            .child(ui_text(theme::TEXT_META, theme::faint()).child(saved))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .child(
+                        mono_text(theme::TEXT_META, theme::faint())
+                            .child(format!("{} selected", self.selected.len())),
+                    )
+                    .child(
+                        mono_text(theme::TEXT_META, theme::faint())
+                            .child(format!("v{}", env!("CARGO_PKG_VERSION"))),
+                    )
+                    .child(ui_text(theme::TEXT_META, theme::faint()).child(saved)),
+            )
             .into_any_element()
     }
 
@@ -85,7 +97,8 @@ impl ContactSheet {
             ResizeTarget::Left => rail.border_r_1().border_color(theme::rule()),
             ResizeTarget::Right => rail.border_l_1().border_color(theme::rule()),
         };
-        rail.child(
+        let show_rail_button = !(side_left && cfg!(target_os = "macos"));
+        rail.children(show_rail_button.then(|| {
             div()
                 .id(id)
                 .w_full()
@@ -103,15 +116,15 @@ impl ContactSheet {
                         this.toggle_right_pane(window, cx);
                     }
                 }))
-                .child(icon(icon_path, 14.0, theme::muted())),
-        )
+                .child(icon(icon_path, 14.0, theme::muted()))
+        }))
         .into_any_element()
     }
 
     #[cfg(target_os = "macos")]
     pub(crate) fn render_window_titlebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let left_width = if self.panels.left_collapsed() {
-            RAIL_W
+            112.0
         } else {
             self.panels.left()
         };
@@ -127,29 +140,30 @@ impl ContactSheet {
             .bg(theme::panel())
             .flex()
             .items_center()
-            .child(drag_region(cx, "titlebar-drag-left").flex_1().h_full())
-            .children((!self.panels.left_collapsed()).then(|| {
-                div()
-                    .w(px(38.0))
-                    .h_full()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        icon_button("titlebar-collapse-left", assets::PANEL_LEFT).on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.toggle_left_pane(window, cx);
-                            }),
-                        ),
-                    )
-            }));
-        let right = div()
+            .child(div().w(px(78.0)).flex_shrink_0())
+            .child(
+                icon_button(
+                    "titlebar-collapse-left",
+                    if self.panels.left_collapsed() {
+                        assets::PANEL_RIGHT
+                    } else {
+                        assets::PANEL_LEFT
+                    },
+                )
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.toggle_left_pane(window, cx);
+                })),
+            )
+            .child(drag_region(cx, "titlebar-drag-left").flex_1().h_full());
+        let mut right = div()
             .w(px(right_width))
             .h_full()
             .flex_shrink_0()
             .bg(theme::panel())
             .child(drag_region(cx, "titlebar-drag-right").w_full().h_full());
+        if self.panels.right_collapsed() {
+            right = right.border_l_1().border_color(theme::rule());
+        }
         let mut row = div()
             .h(px(theme::WINDOW_CHROME_TOP))
             .w_full()
@@ -208,6 +222,11 @@ impl ContactSheet {
             .border_color(theme::rule())
             .shadow_sm()
             .child(self.render_menubar(cx))
+            .child(div().flex_1())
+            .children(self.panels.left_collapsed().then(|| {
+                icon_button("topbar-expand-left", assets::PANEL_RIGHT)
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_left_pane(window, cx)))
+            }))
             .into_any_element()
     }
 }

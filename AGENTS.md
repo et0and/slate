@@ -34,9 +34,10 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   inspector.
 - `panels.rs` owns the drag-resizable rail geometry and the collapsed state.
   Keep the centre at `CENTER_MIN`, clamp the widths on every render, and use
-  `left_edge`/`right_edge` for library/marquee geometry. A collapsed pane
-  becomes a narrow rail with one panel-icon expand button; resetting panel
-  widths expands both panes.
+  `left_edge`/`right_edge` for library/marquee geometry. A collapsed left pane
+  disappears; its only control is the titlebar panel button next to the window
+  controls. A collapsed right pane stays a narrow rail with one panel-icon
+  expand button. Resetting panel widths expands both panes.
 - `menubar.rs` owns every menu. On macOS, build native menus with
   `cx.set_menus` and hide the in-window topbar; on other platforms, keep the
   in-window menus. Do not duplicate a command on the same platform. Sync the

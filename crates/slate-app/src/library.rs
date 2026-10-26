@@ -535,32 +535,7 @@ impl ContactSheet {
     }
 
     fn render_empty_state(&mut self, _cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .flex_1()
-            .flex()
-            .items_center()
-            .justify_center()
-            .p(px(48.0))
-            .child(
-                div()
-                    .w_full()
-                    .max_w(px(460.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .child(
-                        ui_text(26.0, theme::ink())
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .line_height(px(32.0))
-                            .child("Add some photos here"),
-                    )
-                    .child(
-                        ui_text(theme::TEXT_BODY, theme::muted())
-                            .line_height(px(20.0))
-                            .child("Drag and drop or import from a folder"),
-                    ),
-            )
-            .into_any_element()
+        div().flex_1().into_any_element()
     }
 
     fn render_no_matches(&mut self, cx: &mut Context<Self>) -> AnyElement {

@@ -462,7 +462,7 @@ impl ContactSheet {
                 .hover(|style| style.bg(theme::accent_soft()))
                 .on_click(cx.listener(move |this, _, _, cx| this.remove_photo(photo_id, cx)))
                 .child(icon(assets::TRASH, 15.0, theme::muted()))
-                .child(ui_text(theme::TEXT_BODY, theme::ink()).child("Remove from project"))
+                .child(ui_text(theme::TEXT_BODY, theme::ink()).child("Remove from collection"))
                 .into_any_element(),
         );
 

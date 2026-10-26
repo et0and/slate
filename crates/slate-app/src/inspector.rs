@@ -365,9 +365,8 @@ impl ContactSheet {
                             .child(photo.file_name()),
                     )
                     .children((selected_count > 1).then(|| {
-                        mono_text(theme::TEXT_META, theme::faint()).child(format!(
-                            "{selected_count} selected / showing primary"
-                        ))
+                        mono_text(theme::TEXT_META, theme::faint())
+                            .child(format!("{selected_count} selected / showing primary"))
                     })),
             )
             .child(
@@ -479,7 +478,7 @@ impl ContactSheet {
                                 ui_text(theme::TEXT_MICRO, theme::faint())
                                     .line_height(px(14.0))
                                     .child(
-                                        "Stored in the .slate project. Original EXIF is not changed.",
+                                        "Stored in collection.slate. Original EXIF is not changed.",
                                     ),
                             ),
                     )
@@ -509,18 +508,30 @@ impl ContactSheet {
                             .flex()
                             .gap(px(6.0))
                             .child(
-                                button_with_icon("photo-inspector-rotate", assets::ROTATE, "Rotate")
-                                    .flex_1()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                button_with_icon(
+                                    "photo-inspector-rotate",
+                                    assets::ROTATE,
+                                    "Rotate",
+                                )
+                                .flex_1()
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
                                         this.rotate_photo(photo_id, cx);
-                                    })),
+                                    },
+                                )),
                             )
                             .child(
-                                button_with_icon("photo-inspector-reveal", assets::FOLDER, "Reveal")
-                                    .flex_1()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                button_with_icon(
+                                    "photo-inspector-reveal",
+                                    assets::FOLDER,
+                                    "Reveal",
+                                )
+                                .flex_1()
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
                                         this.reveal_photo(photo_id, cx);
-                                    })),
+                                    },
+                                )),
                             ),
                     ),
             )

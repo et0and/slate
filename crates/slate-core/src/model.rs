@@ -938,7 +938,7 @@ pub struct SavedSheet {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Project {
+pub struct Collection {
     pub schema: u32,
     pub name: String,
     pub photos: PhotoSet,
@@ -948,13 +948,16 @@ pub struct Project {
     pub next_sheet_id: u64,
 }
 
-impl Default for Project {
+/// Backwards-compatible alias while callers migrate from the old project model.
+pub type Project = Collection;
+
+impl Default for Collection {
     fn default() -> Self {
         Self::new("Untitled")
     }
 }
 
-impl Project {
+impl Collection {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             schema: SCHEMA_VERSION,
@@ -1132,9 +1135,18 @@ impl Project {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        let base = path.parent().unwrap_or_else(|| Path::new("."));
+        let mut portable = self.clone();
+        for photo in &self.photos {
+            if let Ok(relative) = photo.path.strip_prefix(base)
+                && let Some(target) = portable.photo_mut(photo.id())
+            {
+                target.set_path(relative.to_path_buf());
+            }
+        }
         let file = std::fs::File::create(path)?;
         let mut writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, self)?;
+        serde_json::to_writer_pretty(&mut writer, &portable)?;
         writer.write_all(b"\n")?;
         Ok(())
     }
@@ -1488,6 +1500,25 @@ mod tests {
         project.upsert_saved_sheet("one".into(), SheetSettings::default(), ids.clone());
         project.remove_photos(&[ids[0]]);
         assert_eq!(project.saved_sheets[0].photo_ids, vec![ids[1]]);
+    }
+
+    #[test]
+    fn saving_makes_in_folder_paths_relative() {
+        let directory = tempfile::tempdir().unwrap();
+        let folder = directory.path().join("Shoot");
+        std::fs::create_dir_all(&folder).unwrap();
+        let photo = folder.join("one.jpg");
+        std::fs::write(&photo, "x").unwrap();
+        let collection_path = folder.join("collection.slate");
+        let mut project = Project::new("Shoot");
+        project.add_photo(photo.clone(), 10, 10, 1);
+        project.save(&collection_path).unwrap();
+
+        let json = std::fs::read_to_string(&collection_path).unwrap();
+        assert!(json.contains("\"one.jpg\""));
+        assert!(!json.contains(photo.to_string_lossy().as_ref()));
+        let loaded = Project::load(&collection_path).unwrap();
+        assert_eq!(loaded.photos[0].path.as_ref(), photo.as_path());
     }
 
     #[test]

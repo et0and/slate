@@ -1,8 +1,11 @@
 //! Left rail: import, search, tags, rename and activity.
 
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
 use gpui::{
-    AnyElement, Context, ElementId, SharedString, Window, div, linear_color_stop, linear_gradient,
-    prelude::*, px, rgba,
+    AnyElement, Context, ElementId, MouseButton, SharedString, Window, div, linear_color_stop,
+    linear_gradient, prelude::*, px, rgba,
 };
 
 use slate_core::batch;
@@ -33,11 +36,21 @@ impl ContactSheet {
         let scope_label = self.scope_label();
         let scope_count = self.scope_ids().len();
 
+        let folders_open = !self.sidebar_collapsed.contains(&SidebarSection::Folders);
         let rating_open = !self.sidebar_collapsed.contains(&SidebarSection::Rating);
         let label_open = !self.sidebar_collapsed.contains(&SidebarSection::Label);
         let sort_open = !self.sidebar_collapsed.contains(&SidebarSection::Sort);
         let tags_open = !self.sidebar_collapsed.contains(&SidebarSection::Tags);
         let rename_open = !self.sidebar_collapsed.contains(&SidebarSection::Rename);
+
+        let folders_block = sidebar_section(
+            SidebarSection::Folders,
+            "Folders",
+            String::new(),
+            folders_open,
+            self.render_folder_tree(cx),
+            cx,
+        );
 
         let search_block = div()
             .px(px(16.0))
@@ -473,6 +486,7 @@ impl ContactSheet {
                             .size_full()
                             .overflow_y_scroll()
                             .track_scroll(&self.sidebar_scroll)
+                            .child(folders_block)
                             .child(search_block)
                             .child(rating_block)
                             .child(label_block)
@@ -484,6 +498,36 @@ impl ContactSheet {
                     .children(bottom_fade)
             })
             .into_any_element()
+    }
+
+    fn render_folder_tree(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(root) = self.library_root.clone() else {
+            return div()
+                .px(px(16.0))
+                .pb(px(12.0))
+                .child(
+                    button("folders-open", "Open folder…")
+                        .w_full()
+                        .on_click(cx.listener(|this, _, _, cx| this.open_project_prompt(cx))),
+                )
+                .into_any_element();
+        };
+        let selected = self.selected_folder.clone();
+        let expanded = self.expanded_folders.clone();
+        let mut rows = Vec::new();
+        push_folder_rows(&root, 0, selected.as_deref(), &expanded, &mut rows, cx);
+        div().py(px(6.0)).children(rows).into_any_element()
+    }
+
+    pub(crate) fn toggle_folder(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if !self.expanded_folders.remove(&path) {
+            self.expanded_folders.insert(path);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn select_folder(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.open_folder(path, cx);
     }
 
     pub(crate) fn toggle_sidebar_section(
@@ -550,6 +594,124 @@ fn sidebar_section(
         )
         .children(open.then_some(content))
         .into_any_element()
+}
+
+fn folder_children(path: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return Vec::new();
+    };
+    let mut children: Vec<_> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|child| {
+            child.is_dir()
+                && child
+                    .file_name()
+                    .is_some_and(|name| !name.to_string_lossy().starts_with('.'))
+        })
+        .collect();
+    children.sort_by_cached_key(|child| {
+        child
+            .file_name()
+            .map(|name| name.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default()
+    });
+    children
+}
+
+fn folder_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+fn push_folder_rows(
+    path: &Path,
+    depth: usize,
+    selected: Option<&Path>,
+    expanded: &HashSet<PathBuf>,
+    rows: &mut Vec<AnyElement>,
+    cx: &mut Context<ContactSheet>,
+) {
+    let children = folder_children(path);
+    let is_expanded = expanded.contains(path);
+    let is_selected = selected == Some(path);
+    let row_path = path.to_path_buf();
+    let chevron = if children.is_empty() {
+        div().size(px(18.0)).into_any_element()
+    } else {
+        let toggle_path = path.to_path_buf();
+        let icon_path = if is_expanded {
+            assets::CHEVRON_DOWN
+        } else {
+            assets::CHEVRON_RIGHT
+        };
+        div()
+            .id(ElementId::Name(SharedString::from(format!(
+                "folder-toggle-{}",
+                path.display()
+            ))))
+            .size(px(18.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .hover(|style| style.bg(theme::accent_soft()))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| cx.stop_propagation()),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_folder(toggle_path.clone(), cx);
+            }))
+            .child(icon(icon_path, 10.0, theme::faint()))
+            .into_any_element()
+    };
+    rows.push(
+        div()
+            .id(ElementId::Name(SharedString::from(format!(
+                "folder-row-{}",
+                path.display()
+            ))))
+            .h(px(28.0))
+            .w_full()
+            .pl(px((depth as f32).mul_add(14.0, 12.0)))
+            .pr(px(10.0))
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .cursor_pointer()
+            .bg(if is_selected {
+                theme::accent_soft()
+            } else {
+                theme::panel()
+            })
+            .hover(|style| style.bg(theme::accent_soft()))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.select_folder(&row_path, cx);
+            }))
+            .child(chevron)
+            .child(icon(assets::FOLDER, 14.0, theme::faint()))
+            .child(
+                ui_text(
+                    theme::TEXT_LABEL,
+                    if is_selected {
+                        theme::ink()
+                    } else {
+                        theme::muted()
+                    },
+                )
+                .truncate()
+                .child(folder_name(path)),
+            )
+            .into_any_element(),
+    );
+    if is_expanded {
+        for child in children {
+            push_folder_rows(&child, depth + 1, selected, expanded, rows, cx);
+        }
+    }
 }
 
 fn rating_button(value: u8, active: bool, cx: &mut Context<ContactSheet>) -> AnyElement {

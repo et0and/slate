@@ -1,8 +1,8 @@
-//! Local SQLite catalogue for projects, recent files and settings.
+//! Local SQLite catalogue for collections, recent folders and settings.
 //!
-//! `.slate` files remain portable documents. This catalogue stores only local
-//! metadata: project name, path, photo count, last update time and preferences
-//! such as the selected theme.
+//! `collection.slate` files remain portable documents. This catalogue stores
+//! only local metadata: collection name, folder path, photo count, last update
+//! time and preferences such as the selected theme.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,10 +10,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context as _, Result};
 use rusqlite::{Connection, params};
 
-use crate::model::Project;
+use crate::model::Collection;
 
 #[derive(Debug, Clone)]
-pub struct RecentProject {
+pub struct RecentCollection {
     pub name: String,
     pub path: PathBuf,
 }
@@ -36,12 +36,12 @@ impl LocalStore {
         Self { path }
     }
 
-    pub fn recent_projects(&self, limit: usize) -> Result<Vec<RecentProject>> {
+    pub fn recent_collections(&self, limit: usize) -> Result<Vec<RecentCollection>> {
         let connection = self.connect()?;
         let mut statement = connection
             .prepare("SELECT name, path FROM projects ORDER BY updated_at DESC LIMIT ?1")?;
         let rows = statement.query_map(params![limit as i64], |row| {
-            Ok(RecentProject {
+            Ok(RecentCollection {
                 name: row.get(0)?,
                 path: PathBuf::from(row.get::<_, String>(1)?),
             })
@@ -70,7 +70,7 @@ impl LocalStore {
         Ok(())
     }
 
-    pub fn remember_project(&self, path: &Path, project: &Project) -> Result<()> {
+    pub fn remember_collection(&self, folder: &Path, collection: &Collection) -> Result<()> {
         let connection = self.connect()?;
         let updated_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -84,9 +84,9 @@ impl LocalStore {
                photo_count = excluded.photo_count,
                updated_at = excluded.updated_at",
             params![
-                path.to_string_lossy(),
-                project.name,
-                project.photos.len() as i64,
+                folder.to_string_lossy(),
+                collection.name,
+                collection.photos.len() as i64,
                 updated_at
             ],
         )?;
@@ -160,28 +160,28 @@ mod tests {
     }
 
     #[test]
-    fn recent_projects_are_ordered_and_deduplicated() {
+    fn recent_collections_are_ordered_and_deduplicated() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalStore::at(directory.path().join("metadata.sqlite3"));
-        let mut first = Project::new("First");
+        let mut first = Collection::new("First");
         first.add_photo(PathBuf::from("/tmp/first.jpg"), 10, 10, 1);
-        let mut second = Project::new("Second");
+        let mut second = Collection::new("Second");
         second.add_photo(PathBuf::from("/tmp/second.jpg"), 10, 10, 1);
 
         store
-            .remember_project(Path::new("/tmp/first.slate"), &first)
+            .remember_collection(Path::new("/tmp/first"), &first)
             .unwrap();
         store
-            .remember_project(Path::new("/tmp/second.slate"), &second)
+            .remember_collection(Path::new("/tmp/second"), &second)
             .unwrap();
         store
-            .remember_project(Path::new("/tmp/first.slate"), &first)
+            .remember_collection(Path::new("/tmp/first"), &first)
             .unwrap();
 
-        let recent = store.recent_projects(4).unwrap();
+        let recent = store.recent_collections(4).unwrap();
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].name, "First");
-        assert_eq!(recent[0].path, Path::new("/tmp/first.slate"));
+        assert_eq!(recent[0].path, Path::new("/tmp/first"));
         assert_eq!(recent[1].name, "Second");
     }
 }

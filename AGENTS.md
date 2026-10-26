@@ -5,7 +5,8 @@ Slate Desktop: a cross-platform desktop contact-sheet builder in Rust + GPUI 0.2
 ## Commands
 
 - `cargo run --release` — launch
-- `cargo run --release -- path/to/file.slate` — launch with a project
+- `cargo run --release -- path/to/folder` — launch with a collection folder
+- `cargo run --release -- path/to/file.slate` — open a legacy collection file
 - `cargo test --workspace` — core + app tests
 - `cargo lint` — Clippy, all targets, strict all/pedantic/nursery, warnings denied
 - `cargo lint-fix` — apply Clippy's safe fixes
@@ -41,15 +42,17 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - `menubar.rs` owns every menu. On macOS, build native menus with
   `cx.set_menus` and hide the in-window topbar; on other platforms, keep the
   in-window menus. Do not duplicate a command on the same platform. Sync the
-  native menus when recent projects, the theme or the Drive account changes.
-- `history.rs` snapshots project and selection before mutating actions.
+  native menus when recent folders, the theme or the Drive account changes.
+- `history.rs` snapshots the collection and selection before mutating actions.
   `PhotoSet` snapshots share chunks and `Selection` is a roaring bitmap, so
   import/remove/sheet boundaries stay structural. A successful file rename
   clears history; a save marks older snapshots dirty. Keep both invariants when
   adding commands.
-- `slate-core/store.rs` is a local SQLite catalogue and settings store; `.slate`
-  files stay portable. Remember a project after open/save, persist the theme
-  there, and keep the recent list bounded. `store::data_directory()` is the one application-data path.
+- `slate-core/store.rs` is a local SQLite catalogue and settings store. The
+  filesystem is the collection hierarchy: a folder is a collection, a parent
+  folder is a set, and `collection.slate` lives visibly beside the photos.
+  Remember folders after open/save, persist the theme there, and keep the recent
+  list bounded. `store::data_directory()` is the one application-data path.
 - `drive.rs` owns Google OAuth, the refresh token, Drive listing and streaming
   transfers. `drive_ui.rs` owns the Drive browser, thumbnails, selected stack,
   setup notice and the import/export workflows. Keep every Drive command in the
@@ -65,13 +68,14 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   `oriented_size` account for it; PDF export applies the same turns. Never
   mutate the stored pixel width/height for rotation. `Photo.rating` is 0–5;
   `Photo.label` is one of the fixed colour labels. Both use serde defaults so
-  older projects open unchanged.
-- New project fields need `#[serde(default)]` and `Project::normalize` coverage
-  so existing project files keep opening. Custom paper stores its free-entry
+  older collections open unchanged.
+- New collection fields need `#[serde(default)]` and `Collection::normalize`
+  coverage so existing collection files keep opening. `Project` is a
+  compatibility alias for `Collection` while call sites migrate. Custom paper stores its free-entry
   width and height on `SheetSettings`; read the final page size through
   `paper_mm()`, never `Paper::mm()` directly. `Photo.captured_at` is
   `YYYY-MM-DD HH:MM:SS`; bulk rename expands its date tokens from it.
-- Async project replacement increments `generation`; every thumbnail and import
+- Async collection replacement increments `generation`; every thumbnail and import
   task checks it before touching state.
 - Keep background concurrency bounded: 3 import/thumbnail jobs.
 - The library uses `uniform_list`; never build all photo cells. Schedule thumbs
@@ -82,17 +86,22 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   per-photo menu: rename, show in inspector, reveal, copy path and remove. Do not
   add a second click toggle.
 - Empty selection means "all visible"; never materialise a 500k-photo selection
-  just to open a project. Selection is `Selection`, a roaring bitmap. Do not
+  just to open a collection. Selection is `Selection`, a roaring bitmap. Do not
   replace it with `HashSet<PhotoId>`; select-all must stay compact.
+- `collection.slate` is the visible per-folder metadata file. Save photo paths
+  inside the collection folder as relative paths so moving a folder keeps it
+  portable. Opening a folder loads `collection.slate` or starts a new collection
+  and imports immediate image files. The left folder tree mirrors the filesystem;
+  do not add a virtual hierarchy to the catalog.
 - Import probes metadata only. Generate a thumbnail when a cell becomes visible;
   do not decode one preview per imported file just to evict it from the cache.
   Append imported photos to `ViewState` incrementally; full view reconciles
   happen once at import completion, not every 100 ms.
 - Photo edits use `history` field deltas (tags, rotation, capture date). Do not
-  add a full-project snapshot for a single-photo edit. Whole-project snapshots
+  add a full-collection snapshot for a single-photo edit. Whole-collection snapshots
   are for sheet/saved-sheet, import and removal boundaries, and are cheap
   because they share photo chunks and the selection bitmap.
-- Save projects, plan renames and apply rename filesystem work on the background
+- Save collections, plan renames and apply rename filesystem work on the background
   executor. Never block the UI with a 500k-photo JSON write or file operation.
 - PDF export writes one page at a time. Do not create a `SheetPlan` or hold all
   page pixels for a 500k-photo export; the output is already tens of thousands
@@ -117,8 +126,8 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - JPEG thumbnails and fallback PDF images go through `jpeg-decoder`'s reduced
   IDCT. The direct DCT export path bypasses decode entirely. Do not decode a
   full-resolution JPEG just to make a preview. Call
-  `memory::release_free_pages` after a project open or import drains.
-- `Project.photos` is a chunked copy-on-write `PhotoSet` with a persistent
+  `memory::release_free_pages` after a collection open or import drains.
+- `Collection.photos` is a chunked copy-on-write `PhotoSet` with a persistent
   position index and O(1) `photo(id)`. Mutating one photo clones at most one
   1024-photo chunk. Use `Photo::new` and `photo.id()`; never add a linear id
   lookup or replace the set with a bare `Vec`. Keep `Photo` at 80 bytes:
@@ -126,7 +135,7 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   it.
 - `ViewState` owns sorted visible indices, tag/rating/label counts and scope ids.
   Call `project_changed`, `filter_changed` or `selection_changed` after edits;
-  panels must read the cache instead of scanning the project. Sorting is applied
+  panels must read the cache instead of scanning the collection. Sorting is applied
   after filtering; missing capture dates stay last in both directions.
 - `QuarterTurns` and `PhotoSize` carry the rotation and pixel invariants. Do not
   reintroduce `% 4`, zero-width or zero-height checks.
@@ -135,7 +144,7 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   callback instead.
 - The photo inspector reads EXIF on demand in a background task and caches the
   result; never decode an image just for metadata. Editing the capture date
-  updates `Photo.captured_at` in the `.slate` project only. Do not claim to write
+  updates `Photo.captured_at` in `collection.slate` only. Do not claim to write
   EXIF to the original file without a separate, backed-up file-writing path.
 - Rename targets are checked against existing files and duplicate targets before
   enabling Apply rename. Never add a clobbering rename path.
@@ -157,7 +166,7 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
 - Use `google-drive` for OAuth and folder listing. Transfers stream through
   `reqwest`; never buffer a complete photo or PDF in memory. Avoid
   `FileOps::create_or_update` because its update branch drops the patched
-  metadata. Drive downloads check `generation` before they touch the project.
+  metadata. Drive downloads check `generation` before they touch the collection.
 - `vendor/xattr` is a patched 0.2.3 crate: libc 0.2.191 removed `ENOATTR` on
   Linux. Remove the patch when `zed-async-tar` stops pulling xattr 0.2.
 
@@ -217,15 +226,15 @@ CSS `text-transform: uppercase`. Acronyms such as PDF, RGB and DPI are fine.
 Dense, not sparse. Do not add a wordmark, logo or tagline.
 
 Do not repeat a label or action on screen. Each panel has a distinct job:
-project, review and filters on the left, the library in the centre, the photo
-inspector or sheet builder on the right. Do not add Project or Library headings;
+collection, folders, review and filters on the left, the library in the centre, the photo
+inspector or sheet builder on the right. Do not add Collection or Library headings;
 the content is self-evident. The sheet builder may use one compact mode heading.
 If two surfaces need the same concept, give one a different purpose or use an
 icon. Use SVG icons for utility actions; reserve text for primary actions. Put
 every global command in the menu bar; do not duplicate export, save, import,
 selection or theme controls in the panels.
 
-The first panel starts with Search. Do not repeat the project name or path in
+The first panel starts with the folder tree, then Search. Do not repeat the collection name or path in
 the panels. Keep each left-rail section collapsible with a chevron and persist
 the selected theme across launches. Use the panel icons, not chevrons, for pane
 collapse and expand. On Windows and Linux the masthead carries only the
@@ -259,7 +268,7 @@ one-off styles. Load Geist in `main.rs`; never fall back to a system font.
 ## Tests
 
 - Core: layout geometry/pagination/rotation, rename conflicts and apply,
-  tag normalisation, project JSON roundtrip, PDF generation with real images,
+  tag normalisation, collection JSON roundtrip, PDF generation with real images,
   missing-file placeholders.
 - App: GPUI `TestAppContext` flows for rating, labels, sorting, photo
   inspection, sheet builder, conversion and the native preview window, plus pure

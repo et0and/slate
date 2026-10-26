@@ -117,6 +117,25 @@ pub fn discover_images(inputs: &[PathBuf]) -> Vec<PathBuf> {
     found
 }
 
+/// Return supported image files directly inside `directory`, without recursion.
+#[must_use]
+pub fn discover_folder_images(directory: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && is_supported(path))
+        .collect();
+    found.sort_by_cached_key(|path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default()
+    });
+    found
+}
+
 fn walk(directory: &Path, found: &mut Vec<PathBuf>, depth: usize) {
     if depth > 32 {
         return;
@@ -593,6 +612,22 @@ mod tests {
             Rgb([(x % 255) as u8, (y % 255) as u8, 90])
         });
         image.save(path).unwrap();
+    }
+
+    #[test]
+    fn folder_discovery_is_immediate_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let nested = root.join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let direct = root.join("direct.png");
+        let nested_image = nested.join("nested.png");
+        image::RgbImage::new(2, 2).save(&direct).unwrap();
+        image::RgbImage::new(2, 2).save(&nested_image).unwrap();
+        std::fs::write(root.join("notes.txt"), "x").unwrap();
+
+        let found = discover_folder_images(root);
+        assert_eq!(found, vec![direct]);
     }
 
     #[test]

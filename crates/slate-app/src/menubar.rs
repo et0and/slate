@@ -193,7 +193,7 @@ impl ContactSheet {
             menu_item(
                 "menu-new",
                 assets::FILE_PLUS,
-                "New project",
+                "New collection",
                 Some(shortcut_label("N")),
                 true,
             )
@@ -205,7 +205,7 @@ impl ContactSheet {
             menu_item(
                 "menu-open",
                 assets::FOLDER,
-                "Open project…",
+                "Open folder…",
                 Some(shortcut_label("O")),
                 true,
             )
@@ -216,10 +216,10 @@ impl ContactSheet {
             .into_any_element(),
         ];
 
-        if !self.recent_projects.is_empty() {
+        if !self.recent_collections.is_empty() {
             rows.push(separator());
-            rows.push(section_label("Recent"));
-            for (index, recent) in self.recent_projects.iter().take(4).enumerate() {
+            rows.push(section_label("Recent folders"));
+            for (index, recent) in self.recent_collections.iter().take(4).enumerate() {
                 let name = recent.name.clone();
                 let path = recent.path.clone();
                 rows.push(
@@ -229,7 +229,7 @@ impl ContactSheet {
                         ))))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.close_menu(cx);
-                            this.open_project(&path, cx);
+                            this.open_recent(&path, cx);
                         }))
                         .into_any_element(),
                 );
@@ -241,7 +241,7 @@ impl ContactSheet {
             menu_item(
                 "menu-save",
                 assets::SAVE,
-                "Save",
+                "Save collection",
                 Some(shortcut_label("S")),
                 true,
             )
@@ -255,7 +255,7 @@ impl ContactSheet {
             menu_item(
                 "menu-save-as",
                 assets::SAVE,
-                "Save as…",
+                "Save collection as…",
                 Some(shift_shortcut_label("S")),
                 true,
             )
@@ -431,7 +431,7 @@ impl ContactSheet {
             menu_item(
                 "menu-remove",
                 assets::TRASH,
-                "Remove from project",
+                "Remove from collection",
                 None,
                 true,
             )
@@ -689,14 +689,14 @@ impl ContactSheet {
         };
 
         let mut file_items = vec![
-            MenuItem::action("New project", NewProject),
-            MenuItem::action("Open project…", OpenProject),
+            MenuItem::action("New collection", NewProject),
+            MenuItem::action("Open folder…", OpenProject),
         ];
-        if !self.recent_projects.is_empty() {
+        if !self.recent_collections.is_empty() {
             file_items.push(MenuItem::submenu(Menu {
-                name: "Recent".into(),
+                name: "Recent folders".into(),
                 items: self
-                    .recent_projects
+                    .recent_collections
                     .iter()
                     .take(4)
                     .map(|recent| {
@@ -712,8 +712,8 @@ impl ContactSheet {
         }
         file_items.extend([
             MenuItem::separator(),
-            MenuItem::action("Save", SaveProject),
-            MenuItem::action("Save as…", SaveAs),
+            MenuItem::action("Save collection", SaveProject),
+            MenuItem::action("Save collection as…", SaveAs),
             MenuItem::action("Save sheet", SaveSheet),
             MenuItem::action("Create contact sheet…", CreateContactSheet),
             MenuItem::separator(),
@@ -732,7 +732,7 @@ impl ContactSheet {
             MenuItem::action("Deselect all", DeselectPhotos),
             MenuItem::action("Invert selection", InvertSelection),
             MenuItem::separator(),
-            MenuItem::action("Remove from project", RemoveSelected),
+            MenuItem::action("Remove from collection", RemoveSelected),
         ];
 
         let mut view_items = vec![

@@ -24,7 +24,7 @@ use slate_core::model::{
     ColorLabel, Filter, Paper, PhotoId, Project, QuarterTurns, SheetId, SheetSettings, StarRating,
 };
 use slate_core::pdf::{self, ExportSummary};
-use slate_core::store::{LocalStore, RecentProject};
+use slate_core::store::{LocalStore, RecentCollection};
 
 use crate::about_window::AboutWindow;
 use crate::drive::{self, DriveEntry};
@@ -127,6 +127,7 @@ pub enum InspectorMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SidebarSection {
+    Folders,
     Rating,
     Label,
     Sort,
@@ -137,6 +138,7 @@ pub enum SidebarSection {
 impl SidebarSection {
     pub(crate) const fn key(self) -> &'static str {
         match self {
+            Self::Folders => "folders",
             Self::Rating => "rating",
             Self::Label => "label",
             Self::Sort => "sort",
@@ -233,7 +235,10 @@ pub struct ContactSheet {
     pub(crate) drive_download: Option<DriveDownload>,
     pub(crate) history: History,
     pub(crate) store: LocalStore,
-    pub(crate) recent_projects: Vec<RecentProject>,
+    pub(crate) recent_collections: Vec<RecentCollection>,
+    pub(crate) library_root: Option<PathBuf>,
+    pub(crate) selected_folder: Option<PathBuf>,
+    pub(crate) expanded_folders: HashSet<PathBuf>,
 
     pub(crate) search_field: gpui::Entity<TextField>,
     pub(crate) title_field: gpui::Entity<TextField>,
@@ -327,7 +332,7 @@ impl ContactSheet {
         let mut log = VecDeque::new();
         log.push_back("Session ready".to_string());
         let store = LocalStore::default_location();
-        let recent_projects = store.recent_projects(5).unwrap_or_default();
+        let recent_collections = store.recent_collections(5).unwrap_or_default();
         let theme = store
             .setting("theme")
             .ok()
@@ -410,7 +415,10 @@ impl ContactSheet {
             drive_download: None,
             history: History::default(),
             store,
-            recent_projects,
+            recent_collections,
+            library_root: None,
+            selected_folder: None,
+            expanded_folders: HashSet::new(),
             search_field,
             title_field,
             rename_photo_field,
@@ -767,13 +775,19 @@ impl ContactSheet {
         ));
     }
 
-    fn remember_current_project(&mut self) {
-        let Some(path) = self.project_path.clone() else {
+    fn remember_current_collection(&mut self) {
+        let folder = self.selected_folder.clone().or_else(|| {
+            self.project_path
+                .as_ref()
+                .and_then(|path| path.parent())
+                .map(Path::to_path_buf)
+        });
+        let Some(folder) = folder else {
             return;
         };
-        match self.store.remember_project(&path, &self.project) {
+        match self.store.remember_collection(&folder, &self.project) {
             Ok(()) => {
-                self.recent_projects = self.store.recent_projects(5).unwrap_or_default();
+                self.recent_collections = self.store.recent_collections(5).unwrap_or_default();
             }
             Err(error) => self.log(format!("Catalog / {error}")),
         }
@@ -1003,9 +1017,9 @@ impl ContactSheet {
         }
         self.project_changed();
         self.dirty = true;
-        self.log(format!("Removed {removed} photos from the project"));
+        self.log(format!("Removed {removed} photos from the collection"));
         self.set_status(format!(
-            "Removed {removed} from the project / files untouched"
+            "Removed {removed} from the collection / files untouched"
         ));
         self.refresh_and_notify(cx);
     }
@@ -1656,7 +1670,7 @@ impl ContactSheet {
         self.project_changed();
         self.filter_changed();
         self.photo_date_error = None;
-        self.set_status("Capture date updated / project unsaved");
+        self.set_status("Capture date updated / collection unsaved");
         self.log("Photo date edited");
         cx.notify();
     }
@@ -1743,8 +1757,8 @@ impl ContactSheet {
         self.photo_meta.remove(&photo_id);
         self.project_changed();
         self.dirty = true;
-        self.set_status("Removed photo from the project / file untouched");
-        self.log("Photo removed from project");
+        self.set_status("Removed photo from the collection / file untouched");
+        self.log("Photo removed from collection");
         self.refresh_and_notify(cx);
     }
 
@@ -1933,7 +1947,7 @@ impl ContactSheet {
                     if let Some(path) = this.project_path.clone() {
                         this.write_project(path, cx);
                     } else {
-                        this.log("Rename applied / project unsaved");
+                        this.log("Rename applied / collection unsaved");
                     }
                 }
                 this.set_status(format!(
@@ -2071,7 +2085,7 @@ impl ContactSheet {
         } else {
             self.dirty = true;
             self.log("Sheet deleted");
-            self.set_status("Sheet deleted / project unsaved");
+            self.set_status("Sheet deleted / collection unsaved");
         }
         cx.notify();
     }
@@ -2113,15 +2127,28 @@ impl ContactSheet {
 
     // ----- project files -------------------------------------------------
 
+    pub(crate) fn collection_root(folder: &Path) -> PathBuf {
+        folder
+            .parent()
+            .map_or_else(|| folder.to_path_buf(), Path::to_path_buf)
+    }
+
     fn default_directory(&self) -> PathBuf {
-        self.project_path
-            .as_ref()
-            .and_then(|path| path.parent().map(Path::to_path_buf))
+        self.selected_folder
+            .clone()
+            .or_else(|| {
+                self.project_path
+                    .as_ref()
+                    .and_then(|path| path.parent().map(Path::to_path_buf))
+            })
             .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
     fn suggested_file_name(&self, extension: &str) -> String {
+        if extension == "slate" && self.selected_folder.is_some() {
+            return "collection.slate".to_string();
+        }
         let base = if self.project.name.trim().is_empty() {
             "contact-sheet".to_string()
         } else {
@@ -2140,6 +2167,7 @@ impl ContactSheet {
         self.generation = self.generation.wrapping_add(1);
         self.project = Project::new("Untitled");
         self.project_path = None;
+        self.selected_folder = None;
         self.dirty = false;
         self.selected = Arc::new(Selection::new());
         self.filter = Filter::All;
@@ -2194,8 +2222,8 @@ impl ContactSheet {
         self.selection_changed();
         self.filter_changed();
         self.refresh_preview();
-        self.set_status("New project / add photos to begin");
-        self.log("New project");
+        self.set_status("New collection / open a folder or add photos");
+        self.log("New collection");
         memory::release_free_pages();
         cx.notify();
     }
@@ -2250,10 +2278,10 @@ impl ContactSheet {
         cx.spawn(async move |this, cx| {
             let Ok(receiver) = cx.update(|app| {
                 app.prompt_for_paths(PathPromptOptions {
-                    files: true,
-                    directories: false,
+                    files: false,
+                    directories: true,
                     multiple: false,
-                    prompt: Some("Open .slate project".into()),
+                    prompt: Some("Open folder".into()),
                 })
             }) else {
                 return;
@@ -2264,77 +2292,204 @@ impl ContactSheet {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
-            let _ = this.update(cx, |this, cx| this.open_project(&path, cx));
+            let _ = this.update(cx, |this, cx| {
+                let root = Self::collection_root(&path);
+                this.library_root = Some(root.clone());
+                this.expanded_folders.insert(root);
+                this.expanded_folders.insert(path.clone());
+                this.open_folder(&path, cx);
+            });
         })
         .detach();
     }
 
+    fn persist_current_collection(&mut self) -> bool {
+        if !self.dirty {
+            return true;
+        }
+        let Some(path) = self.project_path.clone() else {
+            self.set_status("Save the current collection before switching folders");
+            return false;
+        };
+        match self.project.save(&path) {
+            Ok(()) => {
+                self.dirty = false;
+                self.history.mark_saved();
+                self.remember_current_collection();
+                self.log("Collection saved before switch");
+                true
+            }
+            Err(error) => {
+                self.log(format!("Save before switch failed: {error}"));
+                self.set_status(format!("Save failed / {error}"));
+                false
+            }
+        }
+    }
+
     pub(crate) fn open_project(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if !self.persist_current_collection() {
+            return;
+        }
+        if path.is_dir() {
+            let root = Self::collection_root(path);
+            self.library_root = Some(root.clone());
+            self.expanded_folders.insert(root);
+            self.expanded_folders.insert(path.to_path_buf());
+            self.open_folder(path, cx);
+            return;
+        }
         match Project::load(path) {
             Ok(project) => {
-                self.generation += 1;
-                self.import_queue.clear();
-                self.importing_paths.clear();
-                self.imports_in_flight = 0;
-                self.import_selects = false;
-                self.import_state = None;
-                self.drive_picker = None;
-                self.drive_notice = None;
-                self.thumbs.clear();
-                self.thumbs_queued.clear();
-                self.thumb_order.clear();
-                self.rotated_thumbs.clear();
-                self.thumb_queue.clear();
-                self.thumbs_in_flight = 0;
-                self.clear_inspector_image();
-                self.grid_scroll = UniformListScrollHandle::default();
-                // Empty means "all visible"; do not materialise a 500k-entry
-                // selection set just to open a large project.
-                self.selected = Arc::new(Selection::new());
-                self.filter = Filter::All;
-                self.search.clear();
-                self.search_field
-                    .update(cx, |field, cx| field.set_value("", cx));
-                self.title_field.update(cx, |field, cx| {
-                    field.set_value(project.sheet.title.clone(), cx);
-                });
-                self.project = project;
-                self.sync_paper_fields(cx);
-                self.backfill_capture_dates(cx);
-                self.project_path = Some(path.to_path_buf());
-                self.dirty = false;
-                self.history.clear();
-                self.preview_page = 0;
-                self.inspector_mode = InspectorMode::Photo;
-                self.inspected_photo = None;
-                self.convert_dialog_open = false;
-                self.convert_format = OutputFormat::Jpeg;
-                self.close_photo_preview_window(cx);
-                self.marquee = None;
-                self.paper_menu_open = false;
-                self.rename_pending = None;
-                self.rename_applying = false;
-                self.rename_photo_target = None;
-                self.rename_photo_error = None;
-                self.photo_context = None;
-                self.photo_meta.clear();
-                self.photo_date_error = None;
-                self.project_changed();
-                self.selection_changed();
-                self.filter_changed();
-                self.remember_current_project();
-                self.sync_native_menus(cx);
-                self.log("File loaded");
-                self.set_status(format!("Opened {} photos", self.project.photos.len()));
-                self.refresh_preview();
-                memory::release_free_pages();
-                cx.notify();
+                let folder = path
+                    .parent()
+                    .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+                let root = Self::collection_root(&folder);
+                self.library_root = Some(root.clone());
+                self.expanded_folders.insert(root);
+                self.expanded_folders.insert(folder.clone());
+                self.apply_loaded_collection(project, path.to_path_buf(), folder, false, cx);
+                self.sync_folder_photos(cx);
             }
             Err(error) => {
                 self.log(format!("Open failed: {error}"));
                 self.set_status(format!("Open failed / {error}"));
                 cx.notify();
             }
+        }
+    }
+
+    pub(crate) fn open_folder(&mut self, folder: &Path, cx: &mut Context<Self>) {
+        if !self.persist_current_collection() {
+            return;
+        }
+        if self.exporting.is_some() {
+            self.set_status("Finish the export first");
+            cx.notify();
+            return;
+        }
+        if self.library_root.is_none() {
+            let root = Self::collection_root(folder);
+            self.library_root = Some(root.clone());
+            self.expanded_folders.insert(root);
+        }
+        let collection_path = folder.join("collection.slate");
+        let (collection, dirty) = if collection_path.exists() {
+            match Project::load(&collection_path) {
+                Ok(collection) => (collection, false),
+                Err(error) => {
+                    self.log(format!("Open failed: {error}"));
+                    self.set_status(format!("Open failed / {error}"));
+                    cx.notify();
+                    return;
+                }
+            }
+        } else {
+            let name = folder.file_name().map_or_else(
+                || "Collection".to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            (Project::new(name), true)
+        };
+        self.expanded_folders.insert(folder.to_path_buf());
+        self.apply_loaded_collection(collection, collection_path, folder.to_path_buf(), dirty, cx);
+        self.sync_folder_photos(cx);
+    }
+
+    pub(crate) fn open_recent(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if path.is_dir() {
+            let root = Self::collection_root(path);
+            self.library_root = Some(root.clone());
+            self.expanded_folders.insert(root);
+            self.expanded_folders.insert(path.to_path_buf());
+            self.open_folder(path, cx);
+        } else {
+            self.open_project(path, cx);
+        }
+    }
+
+    fn apply_loaded_collection(
+        &mut self,
+        collection: Project,
+        collection_path: PathBuf,
+        folder: PathBuf,
+        dirty: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.generation += 1;
+        self.import_queue.clear();
+        self.importing_paths.clear();
+        self.imports_in_flight = 0;
+        self.import_selects = false;
+        self.import_state = None;
+        self.drive_picker = None;
+        self.drive_notice = None;
+        self.thumbs.clear();
+        self.thumbs_queued.clear();
+        self.thumb_order.clear();
+        self.rotated_thumbs.clear();
+        self.thumb_queue.clear();
+        self.thumbs_in_flight = 0;
+        self.clear_inspector_image();
+        self.grid_scroll = UniformListScrollHandle::default();
+        self.selected = Arc::new(Selection::new());
+        self.filter = Filter::All;
+        self.search.clear();
+        self.search_field
+            .update(cx, |field, cx| field.set_value("", cx));
+        self.title_field.update(cx, |field, cx| {
+            field.set_value(collection.sheet.title.clone(), cx);
+        });
+        self.project = collection;
+        self.sync_paper_fields(cx);
+        self.backfill_capture_dates(cx);
+        self.project_path = Some(collection_path);
+        self.selected_folder = Some(folder);
+        self.dirty = dirty;
+        self.history.clear();
+        self.preview_page = 0;
+        self.inspector_mode = InspectorMode::Photo;
+        self.inspected_photo = None;
+        self.convert_dialog_open = false;
+        self.convert_format = OutputFormat::Jpeg;
+        self.close_photo_preview_window(cx);
+        self.marquee = None;
+        self.paper_menu_open = false;
+        self.rename_pending = None;
+        self.rename_applying = false;
+        self.rename_photo_target = None;
+        self.rename_photo_error = None;
+        self.photo_context = None;
+        self.photo_meta.clear();
+        self.photo_date_error = None;
+        self.project_changed();
+        self.selection_changed();
+        self.filter_changed();
+        self.remember_current_collection();
+        self.sync_native_menus(cx);
+        self.log("Collection loaded");
+        self.set_status(format!("Opened {} photos", self.project.photos.len()));
+        self.refresh_preview();
+        memory::release_free_pages();
+        cx.notify();
+    }
+
+    fn sync_folder_photos(&mut self, cx: &mut Context<Self>) {
+        let Some(folder) = self.selected_folder.clone() else {
+            return;
+        };
+        let existing: HashSet<&Path> = self
+            .project
+            .photos
+            .iter()
+            .map(|photo| photo.path.as_ref())
+            .collect();
+        let missing: Vec<PathBuf> = import::discover_folder_images(&folder)
+            .into_iter()
+            .filter(|path| !existing.contains(path.as_path()))
+            .collect();
+        if !missing.is_empty() {
+            self.begin_import_files(missing, cx);
         }
     }
 
@@ -2389,13 +2544,14 @@ impl ContactSheet {
                 match result {
                     Ok(()) => {
                         this.project_path = Some(path.clone());
+                        this.selected_folder = path.parent().map(Path::to_path_buf);
                         if !this.dirty {
                             this.history.mark_saved();
                         }
-                        this.remember_current_project();
+                        this.remember_current_collection();
                         this.sync_native_menus(cx);
                         this.log("Write complete");
-                        this.set_status(format!("Project written / {}", path.display()));
+                        this.set_status(format!("Collection written / {}", path.display()));
                     }
                     Err(error) => {
                         this.dirty = was_dirty || this.dirty;
@@ -2921,7 +3077,11 @@ impl ContactSheet {
             } else {
                 String::new()
             },
-            if self.dirty { " / project unsaved" } else { "" }
+            if self.dirty {
+                " / collection unsaved"
+            } else {
+                ""
+            }
         ));
         reveal(&summary.path);
     }
@@ -3062,7 +3222,7 @@ impl Render for ContactSheet {
             }))
             .on_action(cx.listener(|this, action: &OpenRecent, _, cx| {
                 this.close_menu(cx);
-                this.open_project(&action.path, cx);
+                this.open_recent(&action.path, cx);
             }))
             .on_action(cx.listener(|this, action: &SetTheme, _, cx| {
                 this.set_theme(action.theme, cx);

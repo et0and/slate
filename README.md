@@ -16,15 +16,15 @@
 
 <img width="1920" height="1080" alt="Screenshot 2026-10-25 at 11 55 04 AM" src="https://github.com/user-attachments/assets/b2caa100-2a02-4e30-9c0f-cbb2acb3ba8e" />
 
-Slate turns a folder of photos into a print-ready contact sheet. Local-first, with Drive optional. Import a shoot, tag selects, rotate frames, and export a flat PDF. The `.slate` project stays portable; the photos stay where they are.
+Slate turns a folder of photos into a print-ready contact sheet. Local-first, with Drive optional. Open a folder as a collection, tag selects, rotate frames, and export a flat PDF. A parent folder is the set; `collection.slate` keeps the collection portable beside the photos.
 
 Use Slate for client proofs, portfolio edits, archive indexes, and the first pass through a shoot.
 
 ## Why Slate
 
 - **Built for the cull.** Import folders or drops, rate with stars, mark colour labels, sort by name or capture date, tag, drag-select, right-click to rename, and rotate each frame from its thumbnail.
-- **Fast on real libraries.** The grid is virtualised and only visible thumbnails load. A 10,000-photo project opens in about 0.2 seconds warm and stays around 78 MB.
-- **Your files stay yours.** Local photos are read in place; Drive imports download beside the project. `.slate` files hold layout, tags, rotation, and saved sheets — not image data.
+- **Fast on real libraries.** The grid is virtualised and only visible thumbnails load. A 10,000-photo collection opens in about 0.2 seconds warm and stays around 78 MB.
+- **Your files stay yours.** Local photos are read in place; Drive imports download beside the collection. `collection.slate` holds layout, tags, ratings, labels, rotation, and saved sheets — not image data.
 - **One sheet, no noise.** A native macOS menu bar, eleven themes, zero toolbars, and collapsible side panes. Commands live in File, Edit, View, Drive, and Help. Selecting a photo fills the right rail with its metadata; `File > Create contact sheet…` opens the sheet builder.
 - **Dates in names.** Use `{date}`, `{time}`, `{datetime}` or `{year}` tokens in the rename prefix and suffix. Right-click any frame for properties, EXIF, reveal and path actions.
 - **Contact sheet automation is not good enough.** On low-powered machines, the Photoshop batch workflow is [buggy and resource intensive](https://www.reddit.com/r/photoshop/comments/vpwwn7/attempting_to_create_a_contact_sheet_that_uses/).
@@ -39,9 +39,9 @@ On the latest build for macOS 26.5, Apple M5, 24 GB.
 
 | Metric | Result |
 | --- | ---: |
-| Project file size | 2.2 MB |
-| Launch with a 10k project | 0.2 s warm / 0.8 s cold |
-| Memory, project open | ~78 MB footprint |
+| Collection file size | 2.2 MB |
+| Launch with a 10k collection | 0.2 s warm / 0.8 s cold |
+| Memory, collection open | ~78 MB footprint |
 | Metadata load | 5 ms |
 | Plan an 834-page sheet | 3 ms |
 | Rename plan, 10k files | 20 ms |
@@ -55,7 +55,7 @@ Slate supports popular colour themes, with support for custom themes coming soon
 
 GPUI draws the interface on the GPU (Metal on macOS). Only visible thumbnails are uploaded as textures; image decoding, Drive transfers, PDF export and EXIF reads run on bounded background workers.
 
-Large imports read file and EXIF metadata first. Thumbnails decode only when a cell becomes visible. PDF pages stream to disk one at a time. JPEGs, CMYK JPEGs and ordinary RGB/gray PNGs are embedded from their original compressed streams; HEIC/RAW use in-process ImageIO on macOS. Mirrored EXIF, user rotation and layout rotation are expressed as PDF matrices. Remaining alpha/palette/16-bit PNGs and other formats decode in parallel. Photo edits use field-level undo deltas instead of copying the whole library. The photo store is chunked copy-on-write: a 500k-project mutation touches one chunk, snapshots share the rest, and selection is a compact bitmap. A 500k synthetic library is about 71 MB before thumbnails and view caches; `Photo` is 80 bytes. Ratings, labels and capture dates stay in the portable `.slate` project. Conversion writes new files and never overwrites an existing target.
+Large imports read file and EXIF metadata first. Thumbnails decode only when a cell becomes visible. PDF pages stream to disk one at a time. JPEGs, CMYK JPEGs and ordinary RGB/gray PNGs are embedded from their original compressed streams; HEIC/RAW use in-process ImageIO on macOS. Mirrored EXIF, user rotation and layout rotation are expressed as PDF matrices. Remaining alpha/palette/16-bit PNGs and other formats decode in parallel. Photo edits use field-level undo deltas instead of copying the whole library. The photo store is chunked copy-on-write: a 500k-photo collection mutation touches one chunk, snapshots share the rest, and selection is a compact bitmap. A 500k synthetic library is about 71 MB before thumbnails and view caches; `Photo` is 80 bytes. Ratings, labels and capture dates stay in the portable `collection.slate` file. Conversion writes new files and never overwrites an existing target.
 
 Reproduce the core numbers with:
 
@@ -64,7 +64,7 @@ cargo run --release -p slate-core --example stress
 cargo run --release -p slate-core --example stress -- --photos 500000 --gate
 ```
 
-CI runs the 500k gate on Linux. It enforces the project file size, load time,
+CI runs the 500k gate on Linux. It enforces the collection file size, load time,
 page planning, rename planning and base resident set.
 
 ## Output
@@ -83,7 +83,7 @@ Axiom OTLP tracing is optional. Set `AXIOM_TOKEN` and `AXIOM_DATASET` before lau
 
 ## Google Drive
 
-Link a Drive account from the Drive menu to browse folders, import images next to the `.slate` project, and export a PDF to a folder you choose. Setup takes one Desktop OAuth client: [Google Drive setup](docs/google-drive.md).
+Link a Drive account from the Drive menu to browse folders, import images into the collection folder, and export a PDF to a folder you choose. Setup takes one Desktop OAuth client: [Google Drive setup](docs/google-drive.md).
 
 ## Get started
 
@@ -91,14 +91,14 @@ Download the latest build from [Releases](https://github.com/et0and/slate/releas
 
 ```sh
 cargo run --release
-cargo run --release -- ~/Pictures/project.slate
+cargo run --release -- ~/Pictures/Shoot
 ```
 
 Then:
 
-1. Drop in a folder of photos.
+1. Open or drop a folder of photos. The folder is the collection; its parent folder is the set.
 2. Tag selects, rotate frames, and tune the sheet.
-3. Save the `.slate` project.
+3. Save the collection; Slate writes `collection.slate` in the folder.
 4. Export the PDF.
 
 Verify:

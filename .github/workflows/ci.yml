@@ -61,7 +61,36 @@ jobs:
             libxcb-render0-dev \
             libxcb-xinput-dev \
             libxcb-composite0-dev \
-            libxcb-damage0-dev
+            libxcb-damage0-dev \
+            libavcodec-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libswscale-dev
+
+      # Development and CI link the system FFmpeg; releases compile their own.
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg pkgconf
+
+      - name: Restore the vcpkg FFmpeg build
+        if: runner.os == 'Windows'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-ffmpeg-x64-windows-static-md-v1
+
+      - name: Build FFmpeg with vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-cache
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "ffmpeg[core,avcodec,avformat,swscale]:x64-windows-static-md"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg could not build FFmpeg" }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKGRS_TRIPLET=x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Check for committed OAuth credentials
         if: runner.os == 'Linux'
@@ -81,10 +110,23 @@ jobs:
         run: cargo fmt-check
 
       - name: Clippy
+        if: runner.os != 'Windows'
         run: cargo lint
 
       - name: Test
+        if: runner.os != 'Windows'
         run: cargo test --workspace
+
+      # Windows links vcpkg's static FFmpeg, which needs the static feature.
+      - name: Clippy (Windows)
+        if: runner.os == 'Windows'
+        run: >-
+          cargo clippy --workspace --all-targets --features slate-core/static-ffmpeg
+          -- -D warnings
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test --workspace --features slate-core/static-ffmpeg
 
   stress-500k:
     name: 500k stress gate
@@ -96,6 +138,12 @@ jobs:
 
       - name: Install Rust 1.99.1
         run: rustup toolchain install 1.99.1 --profile minimal
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
 
       - name: Build and run the 500k gate
         run: >-

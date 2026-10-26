@@ -158,6 +158,25 @@ the keychain after the build.
 Without the signing secrets the app is ad-hoc signed and the disk image is
 unsigned.
 
+## FFmpeg
+
+Video import needs FFmpeg's demuxers, decoders and scaler. Every release
+links them statically, so no download depends on an FFmpeg on the user's
+machine:
+
+- macOS and Linux build with `--features bundled-ffmpeg`. `ffmpeg-sys-next`
+  clones FFmpeg's release branch and compiles it during `cargo build`, once per
+  architecture (the macOS job builds arm64 and x86_64). `nasm` assembles the x86
+  code. The feature enables `build-portable`, so FFmpeg is not tuned with
+  `-march=native` for the CI machine. The x86_64 half is a cross build, which
+  needs the `macos` → `darwin` fix in `vendor/ffmpeg-sys-next`.
+- Windows installs `ffmpeg[core,avcodec,avformat,swscale]:x64-windows-static-md`
+  with the runner's vcpkg, caches vcpkg's binary output with `actions/cache`, and
+  builds with `--features static-ffmpeg`.
+
+FFmpeg is LGPL 2.1 or later in this configuration (no `--enable-gpl` parts),
+which Slate's GPLv3 licence can include.
+
 ## Windows and Linux packages
 
 - Windows ships the release `slate-desktop.exe` itself as

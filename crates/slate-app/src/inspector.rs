@@ -10,9 +10,8 @@ use crate::assets;
 use crate::sidebar::panel_section;
 use crate::theme;
 use crate::widgets::{
-    button, button_with_icon, checkbox, disabled_button, format_bytes, group_label, icon,
-    icon_button, label, micro, mini_button, mono_text, primary_button, setting_row, stepper,
-    ui_text,
+    button, checkbox, disabled_button, format_bytes, group_label, icon, icon_button, label, micro,
+    mini_button, mono_text, primary_button, setting_row, stepper, ui_text,
 };
 
 const PREVIEW_WIDTH: f32 = 300.0;
@@ -339,7 +338,7 @@ impl ContactSheet {
             }));
 
         let label_swatch = div()
-            .size(px(16.0))
+            .size(px(11.0))
             .border_1()
             .border_color(theme::rule())
             .bg(if label == slate_core::model::ColorLabel::None {
@@ -407,7 +406,20 @@ impl ContactSheet {
                                 &photo.extension().to_ascii_uppercase(),
                             ))
                             .child(photo_info_row("Folder", &folder))
-                            .child(photo_info_row("Tags", &tags)),
+                            .child(photo_info_row("Tags", &tags))
+                            .child(info_row("Rating", stars))
+                            .child(info_row(
+                                "Label",
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.0))
+                                    .child(label_swatch)
+                                    .child(
+                                        mono_text(theme::TEXT_META, theme::ink())
+                                            .child(label.label()),
+                                    ),
+                            )),
                     ),
             )
             .child(
@@ -416,34 +428,6 @@ impl ContactSheet {
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_y_scroll()
-                    .child(
-                        div()
-                            .border_color(theme::rule())
-                            .px(px(16.0))
-                            .py(px(10.0))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(group_label("Rating and label"))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(12.0))
-                                    .child(stars)
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(6.0))
-                                            .child(label_swatch)
-                                            .child(
-                                                ui_text(theme::TEXT_META, theme::muted())
-                                                    .child(label.label()),
-                                            ),
-                                    ),
-                            ),
-                    )
                     .child(adjust_block)
                     .child(panel_section(
                         PanelSection::CaptureDate,
@@ -510,57 +494,12 @@ impl ContactSheet {
                             .into_any_element(),
                         None,
                         cx,
-                    ))
-                    .child(
-                        div()
-                            .border_t_1()
-                            .border_color(theme::rule())
-                            .px(px(16.0))
-                            .py(px(12.0))
-                            .flex()
-                            .gap(px(6.0))
-                            .child(
-                                button_with_icon(
-                                    "photo-inspector-rotate",
-                                    assets::ROTATE,
-                                    "Rotate",
-                                )
-                                .flex_1()
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.rotate_photo(photo_id, cx);
-                                    },
-                                )),
-                            )
-                            .child(
-                                button_with_icon(
-                                    "photo-inspector-reveal",
-                                    assets::FOLDER,
-                                    "Reveal",
-                                )
-                                .flex_1()
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.reveal_photo(photo_id, cx);
-                                    },
-                                )),
-                            ),
-                    ),
+                    )),
             )
             .into_any_element()
     }
 
     fn render_photo_inspector_empty(&mut self, _cx: &mut Context<Self>) -> AnyElement {
-        let stars = div()
-            .flex()
-            .items_center()
-            .gap(px(2.0))
-            .children((1..=StarRating::MAX).map(|_| icon(assets::STAR, 12.0, theme::faint())));
-        let label_swatch = div()
-            .size(px(16.0))
-            .border_1()
-            .border_color(theme::rule())
-            .bg(theme::surface());
         let disabled_field = div()
             .h(px(theme::FIELD))
             .px(px(12.0))
@@ -585,9 +524,6 @@ impl ContactSheet {
                     .px(px(16.0))
                     .pt(px(10.0))
                     .pb(px(10.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
                     .child(ui_text(theme::TEXT_BODY, theme::faint()).child("—")),
             )
             .child(
@@ -614,40 +550,17 @@ impl ContactSheet {
                             .flex_col()
                             .gap(px(6.0))
                             .opacity(0.6)
-                            .child(photo_info_row("Dimensions", "—"))
-                            .child(photo_info_row("File size", "—"))
-                            .child(photo_info_row("Type", "—"))
-                            .child(photo_info_row("Folder", "—"))
-                            .child(photo_info_row("Tags", "—")),
-                    )
-                    .child(
-                        div()
-                            .border_t_1()
-                            .border_color(theme::rule())
-                            .px(px(16.0))
-                            .py(px(10.0))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .opacity(0.55)
-                            .child(group_label("Rating and label"))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(12.0))
-                                    .child(stars)
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(6.0))
-                                            .child(label_swatch)
-                                            .child(
-                                                ui_text(theme::TEXT_META, theme::muted())
-                                                    .child("None"),
-                                            ),
-                                    ),
+                            .children(
+                                [
+                                    "Dimensions",
+                                    "File size",
+                                    "Type",
+                                    "Folder",
+                                    "Tags",
+                                    "Rating",
+                                    "Label",
+                                ]
+                                .map(|label| photo_info_row(label, "—")),
                             ),
                     )
                     .child(section_heading("Capture date"))
@@ -676,18 +589,6 @@ impl ContactSheet {
                             .pb(px(12.0))
                             .opacity(0.55)
                             .child(ui_text(theme::TEXT_META, theme::faint()).child("—")),
-                    )
-                    .child(
-                        div()
-                            .border_t_1()
-                            .border_color(theme::rule())
-                            .px(px(16.0))
-                            .py(px(12.0))
-                            .flex()
-                            .gap(px(6.0))
-                            .opacity(0.55)
-                            .child(disabled_button("Rotate").flex_1())
-                            .child(disabled_button("Reveal").flex_1()),
                     ),
             )
             .into_any_element()
@@ -1103,23 +1004,31 @@ fn fit_image(image: &std::sync::Arc<gpui::RenderImage>, max_w: f32, max_h: f32) 
     (width * scale, height * scale)
 }
 
-fn photo_info_row(label: &str, value: &str) -> AnyElement {
+/// The details table's label column. Values all start at the same x, so
+/// rows read as one table.
+const INFO_LABEL_W: f32 = 76.0;
+
+fn info_row(label: &str, value: impl IntoElement) -> AnyElement {
     div()
         .flex()
         .items_center()
-        .justify_between()
         .gap(px(10.0))
         .child(
             ui_text(theme::TEXT_META, theme::muted())
+                .w(px(INFO_LABEL_W))
                 .flex_shrink_0()
+                .truncate()
                 .child(label.to_string()),
         )
-        .child(
-            mono_text(theme::TEXT_META, theme::ink())
-                .flex_1()
-                .min_w(px(0.0))
-                .truncate()
-                .child(value.to_string()),
-        )
+        .child(div().flex_1().min_w(px(0.0)).child(value))
         .into_any_element()
+}
+
+fn photo_info_row(label: &str, value: &str) -> AnyElement {
+    info_row(
+        label,
+        mono_text(theme::TEXT_META, theme::ink())
+            .truncate()
+            .child(value.to_string()),
+    )
 }

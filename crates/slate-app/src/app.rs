@@ -42,6 +42,7 @@ use crate::rename_window::RenameWindow;
 use crate::selection::Selection;
 use crate::text_field::TextField;
 use crate::theme;
+use crate::video_ui::VideoImport;
 use crate::view::{SortDirection, SortKey, ViewState};
 
 actions!(
@@ -79,6 +80,7 @@ actions!(
         FocusSearch,
         ToggleLeftPane,
         ToggleRightPane,
+        ImportVideo,
     ]
 );
 
@@ -302,6 +304,8 @@ pub struct ContactSheet {
     pub(crate) prefix_field: gpui::Entity<TextField>,
     pub(crate) suffix_field: gpui::Entity<TextField>,
     pub(crate) tag_field: gpui::Entity<TextField>,
+    pub(crate) video_frames_field: gpui::Entity<TextField>,
+    pub(crate) video_import: Option<VideoImport>,
 }
 
 impl ContactSheet {
@@ -378,6 +382,14 @@ impl ContactSheet {
             TextField::new(cx, "Tag, e.g. street").on_submit(move |value, app| {
                 let value = value.to_string();
                 let _ = weak.update(app, |this, cx| this.apply_tag(&value, cx));
+            })
+        });
+
+        let video_frames_field = cx.new(|cx| {
+            let weak = weak.clone();
+            TextField::new(cx, "12").on_change(move |value, app| {
+                let value = value.to_string();
+                let _ = weak.update(app, |this, cx| this.set_video_frames_text(&value, cx));
             })
         });
 
@@ -512,6 +524,8 @@ impl ContactSheet {
             prefix_field,
             suffix_field,
             tag_field,
+            video_frames_field,
+            video_import: None,
         };
         this.sync_paper_fields(cx);
         this.sync_native_menus(cx);
@@ -685,7 +699,7 @@ impl ContactSheet {
         cx.notify();
     }
 
-    fn text_fields(&self) -> [gpui::Entity<TextField>; 9] {
+    fn text_fields(&self) -> [gpui::Entity<TextField>; 10] {
         [
             self.search_field.clone(),
             self.title_field.clone(),
@@ -696,6 +710,7 @@ impl ContactSheet {
             self.prefix_field.clone(),
             self.suffix_field.clone(),
             self.tag_field.clone(),
+            self.video_frames_field.clone(),
         ]
     }
 
@@ -3171,6 +3186,8 @@ impl ContactSheet {
             self.cancel_photo_rename(cx);
         } else if self.photo_context.take().is_some() || self.folder_menu.take().is_some() {
             cx.notify();
+        } else if self.video_import.is_some() {
+            self.dismiss_video_import(cx);
         } else if self.convert_dialog_open {
             self.close_convert_dialog(cx);
         } else if self.drive_notice.take().is_some() {
@@ -3311,6 +3328,10 @@ impl Render for ContactSheet {
             .on_action(cx.listener(|this, _: &ExportDrive, _, cx| {
                 this.open_drive(DriveMode::Export, cx);
             }))
+            .on_action(cx.listener(|this, _: &ImportVideo, _, cx| {
+                this.close_menu(cx);
+                this.import_video_prompt(cx);
+            }))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 this.close_menu(cx);
                 this.focus_search(window, cx);
@@ -3351,7 +3372,18 @@ impl Render for ContactSheet {
             }))
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| this.dismiss(window, cx)))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-                this.begin_import(paths.paths().to_vec(), cx);
+                // A dropped video opens the frames dialog; photos import as usual.
+                let (videos, photos): (Vec<PathBuf>, Vec<PathBuf>) = paths
+                    .paths()
+                    .iter()
+                    .cloned()
+                    .partition(|path| slate_core::video::is_video(path));
+                if !photos.is_empty() {
+                    this.begin_import(photos, cx);
+                }
+                if let Some(video) = videos.into_iter().next() {
+                    this.open_video_import(video, cx);
+                }
             }))
             .on_mouse_move(cx.listener(Self::pointer_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::pointer_up))

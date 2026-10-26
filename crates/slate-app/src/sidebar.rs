@@ -700,7 +700,15 @@ fn rating_button(value: u8, active: bool, cx: &mut Context<ContactSheet>) -> Any
             theme::surface()
         })
         .cursor_pointer()
-        .hover(|style| style.bg(theme::accent_soft()))
+        // A filled star keeps its fill on hover: a pale hover fill would hide
+        // its light icon.
+        .hover(move |style| {
+            if active {
+                style.opacity(0.85)
+            } else {
+                style.bg(theme::accent_soft())
+            }
+        })
         .debug_selector(move || format!("rating-{value}"))
         .on_click(
             cx.listener(move |this, _, _, cx| this.apply_rating(StarRating::clamped(value), cx)),

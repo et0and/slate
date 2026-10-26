@@ -31,6 +31,9 @@ impl ContactSheet {
         if self.rename_photo_target.is_some() {
             return Some(self.render_photo_rename(cx));
         }
+        if let Some(dialog) = self.render_video_import(cx) {
+            return Some(dialog);
+        }
         if self.convert_dialog_open {
             return Some(self.render_convert_dialog(cx));
         }

@@ -12,6 +12,7 @@ pub mod layout;
 pub mod model;
 pub mod pdf;
 pub mod store;
+pub mod video;
 
 pub use batch::{RenameOptions, RenamePlan, RenameReport, preview_name};
 pub use import::{PreviewImage, Probe};

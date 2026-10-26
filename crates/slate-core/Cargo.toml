@@ -17,6 +17,18 @@ rusqlite = { version = "0.41", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+ffmpeg-next = { version = "9.0.0", default-features = false, features = ["format", "software-scaling"] }
+# Named only to reach `build-portable`, which `ffmpeg-next` does not forward.
+ffmpeg-sys-next = { version = "9.0.1", default-features = false, optional = true }
+
+[features]
+# Release builds compile FFmpeg from source and link it statically, so the app
+# carries its own decoders. Development builds use the system FFmpeg.
+# `build-portable` drops FFmpeg's default `-march=native`: a release must run
+# on every CPU of its architecture, not only on the machine that built it.
+bundled-ffmpeg = ["ffmpeg-next/build", "dep:ffmpeg-sys-next", "ffmpeg-sys-next/build-portable"]
+# Link a prebuilt static FFmpeg, found by vcpkg on Windows.
+static-ffmpeg = ["ffmpeg-next/static"]
 
 [dev-dependencies]
 lopdf = "0.44"

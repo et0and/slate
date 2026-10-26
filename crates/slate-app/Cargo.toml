@@ -33,6 +33,10 @@ opentelemetry.workspace = true
 opentelemetry_sdk.workspace = true
 opentelemetry-otlp.workspace = true
 
+[features]
+bundled-ffmpeg = ["slate-core/bundled-ffmpeg"]
+static-ffmpeg = ["slate-core/static-ffmpeg"]
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
 

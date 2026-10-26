@@ -22,6 +22,7 @@ mod sidebar;
 mod telemetry;
 mod text_field;
 mod theme;
+mod video_ui;
 mod view;
 mod widgets;
 

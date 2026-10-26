@@ -197,6 +197,20 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   JPEG/PNG/WebP/TIFF only and must not overwrite an existing target.
 - ImageMagick is not a dependency. A MagickWand system library cannot be
   assumed by the release pipeline, so keep conversion on the bundled codecs.
+- Video import (`slate_core::video`, `video_ui.rs`) uses `ffmpeg-next`. A video
+  is divided into N equal parts and the frame at the middle of each is decoded
+  (keyframe seek, then decode forward to the moment). Frames are JPEGs in a
+  `<stem> frames` folder beside the video, named `<stem>-NNN-<timecode>.jpg`,
+  never overwriting; the folder then opens as a folder collection. The display
+  matrix rotates phone video upright. One background job per import reads an
+  `AtomicBool` to cancel and counts frames in an `AtomicUsize`; the dialog only
+  polls them. A cancelled or failed job removes every frame it wrote.
+- Development links the system FFmpeg through pkg-config. Releases must not
+  assume one: macOS and Linux build with `--features bundled-ffmpeg`, which
+  compiles FFmpeg from source, statically and with `build-portable` so no
+  `-march=native` code ships; Windows links vcpkg's
+  `x64-windows-static-md` FFmpeg with `--features static-ffmpeg`. The test clips
+  in `crates/slate-core/tests/fixtures` come from FFmpeg's `testsrc`.
 - Google Drive uses a Desktop OAuth client with PKCE and the fixed loopback
   callback `http://127.0.0.1:53682/oauth2callback`. Google still requires a
   secret for this client at the token endpoint. Official builds use
@@ -208,6 +222,10 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   metadata. Drive downloads check `generation` before they touch the collection.
 - `vendor/xattr` is a patched 0.2.3 crate: libc 0.2.191 removed `ENOATTR` on
   Linux. Remove the patch when `zed-async-tar` stops pulling xattr 0.2.
+- `vendor/ffmpeg-sys-next` is a patched 9.0.1 crate: its cross build passes
+  Rust's `macos` to FFmpeg's `configure`, which only knows `darwin`, so the
+  universal app's x86_64 half fails on Apple silicon. Remove the patch when an
+  upstream release maps `macos` to `darwin`.
 
 - The macOS main-window title stays empty. Use the native app menu and native
   command menus; do not set a visible main-window title. The titlebar is

@@ -101,13 +101,18 @@ jobs:
         shell: bash
         run: rustup toolchain install 1.99.1 --profile minimal
 
+      # FFmpeg is compiled from source into each architecture's binary, so
+      # the app needs no FFmpeg on the user's Mac. nasm assembles x86 code.
+      - name: Install FFmpeg build tools
+        run: brew install nasm
+
       - name: Build universal binary
         shell: bash
         run: |
           set -euo pipefail
           rustup target add --toolchain 1.99.1 aarch64-apple-darwin x86_64-apple-darwin
-          cargo build --release --locked --target aarch64-apple-darwin -p slate-app
-          cargo build --release --locked --target x86_64-apple-darwin -p slate-app
+          cargo build --release --locked --target aarch64-apple-darwin -p slate-app --features bundled-ffmpeg
+          cargo build --release --locked --target x86_64-apple-darwin -p slate-app --features bundled-ffmpeg
           lipo -create \
             target/aarch64-apple-darwin/release/slate-desktop \
             target/x86_64-apple-darwin/release/slate-desktop \
@@ -310,10 +315,12 @@ jobs:
             libxcb-xinput-dev \
             libxcb-composite0-dev \
             libxcb-damage0-dev \
-            squashfs-tools
+            squashfs-tools \
+            nasm
 
+      # FFmpeg is compiled from source and linked statically into the binary.
       - name: Build
-        run: cargo build --release --locked -p slate-app
+        run: cargo build --release --locked -p slate-app --features bundled-ffmpeg
 
       - name: Package AppImage
         env:
@@ -376,8 +383,28 @@ jobs:
           }
           "GPUI_FXC_PATH=$($fxc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      # vcpkg builds a static FFmpeg that links into the executable, so the
+      # .exe stays a single file.
+      - name: Restore the vcpkg FFmpeg build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/vcpkg-cache
+          key: vcpkg-ffmpeg-x64-windows-static-md-v1
+
+      - name: Build FFmpeg with vcpkg
+        shell: pwsh
+        env:
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-cache
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "ffmpeg[core,avcodec,avformat,swscale]:x64-windows-static-md"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg could not build FFmpeg" }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKGRS_TRIPLET=x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Build
-        run: cargo build --release --locked -p slate-app
+        run: cargo build --release --locked -p slate-app --features static-ffmpeg
 
       - name: Package
         shell: pwsh

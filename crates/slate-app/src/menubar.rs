@@ -12,10 +12,10 @@ use crate::app::ContactSheet;
 #[cfg(target_os = "macos")]
 use crate::app::{
     About, ConvertSelected, CreateContactSheet, DeselectPhotos, ExportDrive, ExportSheet,
-    FocusSearch, HideOthers, HideSlate, ImportDrive, ImportFiles, ImportFolder, InvertSelection,
-    NewProject, OpenPreview, OpenProject, OpenRecent, Quit, Redo, RemoveSelected, RenamePhotos,
-    ResetPanels, SaveAs, SaveProject, SaveSheet, SelectAllPhotos, SetTheme, ToggleLeftPane,
-    ToggleRightPane, Undo, UnlinkDrive,
+    FocusSearch, HideOthers, HideSlate, ImportDrive, ImportFiles, ImportFolder, ImportVideo,
+    InvertSelection, NewProject, OpenPreview, OpenProject, OpenRecent, Quit, Redo, RemoveSelected,
+    RenamePhotos, ResetPanels, SaveAs, SaveProject, SaveSheet, SelectAllPhotos, SetTheme,
+    ToggleLeftPane, ToggleRightPane, Undo, UnlinkDrive,
 };
 use crate::app::{OpenWebsite, ReportIssue};
 use crate::assets;
@@ -311,6 +311,20 @@ impl ContactSheet {
             .on_click(cx.listener(|this, _, _, cx| {
                 this.close_menu(cx);
                 this.import_prompt(true, cx);
+            }))
+            .into_any_element(),
+        );
+        rows.push(
+            menu_item(
+                "menu-import-video",
+                assets::FILE_PLUS,
+                "Import video",
+                None,
+                true,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.close_menu(cx);
+                this.import_video_prompt(cx);
             }))
             .into_any_element(),
         );
@@ -731,6 +745,7 @@ impl ContactSheet {
             MenuItem::separator(),
             MenuItem::action("Import files", ImportFiles),
             MenuItem::action("Import folder", ImportFolder),
+            MenuItem::action("Import video", ImportVideo),
             MenuItem::action("Import from Google Drive", ImportDrive),
             MenuItem::separator(),
             MenuItem::action("Convert selected", ConvertSelected),

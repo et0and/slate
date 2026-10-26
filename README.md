@@ -87,6 +87,16 @@ archive indexes.
   [slow and unreliable](https://www.reddit.com/r/photoshop/comments/vpwwn7/attempting_to_create_a_contact_sheet_that_uses/).
   Slate plans an 834-page sheet in 3 ms.
 
+### Storyboard a video
+
+**File > Import video**, or drop a video onto the window, splits a video into
+as many frames as you ask for. Slate divides the video's length into that many
+equal parts and takes the frame at the middle of each. The frames are written
+as JPEGs into a folder beside the video (`Walk frames`), named in time order
+with their timecode (`Walk-007-01m12s345.jpg`), and the folder opens as a
+collection ready for a contact sheet. Portrait phone video comes out upright.
+The job can be cancelled at any point; a cancelled job leaves nothing behind.
+
 ### Google Drive
 
 Link a Drive account to browse folders, import a selection or a whole folder,
@@ -171,6 +181,17 @@ a disk image for macOS, an `.exe` for Windows and an AppImage for Linux. Or
 build Slate with Rust 1.99.1. It runs on macOS 11+, Windows 10/11, and Linux
 with X11/Wayland.
 
+Video import links FFmpeg. Development builds use the system copy:
+
+```sh
+brew install ffmpeg                       # macOS
+sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswscale-dev  # Debian/Ubuntu
+```
+
+On Windows, install a static FFmpeg with vcpkg and build with
+`--features static-ffmpeg`, or anywhere build with `--features bundled-ffmpeg`
+to compile FFmpeg from source as releases do. Then:
+
 ```sh
 cargo run --release
 cargo run --release -- ~/Pictures/Shoot
@@ -207,4 +228,5 @@ Axiom OTLP tracing is optional, and is in place to allow me to debug and improve
 
 Slate is licensed under the
 [GNU General Public License v3.0](LICENSE). The Google Drive client uses the MIT-licensed `google-drive`
-crate.
+crate. Release builds include [FFmpeg](https://ffmpeg.org), under the LGPL 2.1
+or later, compiled from source and linked statically.

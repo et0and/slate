@@ -12,6 +12,39 @@ Slate is a photography workflow tool. Process, rate, label, tag, convert, recolo
 
 I designed Slate to be able to process through masses of old photographs from my art school days. I used to use Adobe Bridge until they took the contact sheet feature away, and then the equivalent automation action in Photoshop would routinely OOM my machine. This uses GPUI with performance and resource consumption in mind, so while it isn't as powerful as those aforementioned tools it is enough for me, and it might be for you too.  
 
+## Screens
+
+<img src="docs/screens/library.jpg" width="100%" alt="Slate library with the photo inspector">
+
+*Library and photo inspector.*
+
+<p>
+  <img src="docs/screens/sheet-builder.jpg" width="49%" alt="Contact sheet builder">
+  <img src="docs/screens/sheet-preview.jpg" width="49%" alt="Contact sheet preview">
+</p>
+
+*Contact sheet builder and preview.*
+
+<p>
+  <img src="docs/screens/photo-preview.jpg" width="49%" alt="Full-screen photo preview">
+  <img src="docs/screens/rename.jpg" width="49%" alt="Rename window">
+</p>
+
+*Full-screen review and batch rename.*
+
+<p>
+  <img src="docs/screens/convert.jpg" width="49%" alt="Convert photos dialog">
+  <img src="docs/screens/video-import.jpg" width="49%" alt="Import video dialog">
+</p>
+
+*Convert copies and extract video frames.*
+
+<p align="center">
+  <img src="docs/screens/about.jpg" width="30%" alt="About Slate window">
+</p>
+
+*About Slate.*
+
 ## Keybindings
 
 | Action | macOS | Windows and Linux |

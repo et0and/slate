@@ -1,3 +1,10 @@
+# [0.4.0](https://github.com/et0and/slate/compare/v0.3.0...v0.4.0) (2026-10-26)
+
+
+### Features
+
+* finish the workflow and Drive UX sweep ([32fde15](https://github.com/et0and/slate/commit/32fde15ab6e0755c20384fb3e848677d008fb347))
+
 # [0.3.0](https://github.com/et0and/slate/compare/v0.2.8...v0.3.0) (2026-10-26)
 
 

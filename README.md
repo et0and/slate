@@ -100,6 +100,11 @@ with their timecode (`Walk-007-01m12s345.jpg`), and the folder opens as a
 collection ready for a contact sheet. Portrait phone video comes out upright.
 The job can be cancelled at any point; a cancelled job leaves nothing behind.
 
+![Frames extracted from a video, shown as a Slate collection](docs/video-storyboard.png)
+
+*Frames extracted from a video and opened as a collection, ready for a contact
+sheet.*
+
 ### Google Drive
 
 Link a Drive account to browse folders, import a selection or a whole folder,

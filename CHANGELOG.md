@@ -1,3 +1,10 @@
+# [0.5.0](https://github.com/et0and/slate/compare/v0.4.0...v0.5.0) (2026-10-26)
+
+
+### Features
+
+* round out the adjustment pipeline ([6b1061b](https://github.com/et0and/slate/commit/6b1061b15fe6b2f51273a253b2b9b071ab1aac54))
+
 # [0.4.0](https://github.com/et0and/slate/compare/v0.3.0...v0.4.0) (2026-10-26)
 
 

@@ -1,3 +1,10 @@
+## [0.2.6](https://github.com/et0and/slate/compare/v0.2.5...v0.2.6) (2026-10-26)
+
+
+### Bug Fixes
+
+* satisfy strict lints on Windows fallbacks ([29b342b](https://github.com/et0and/slate/commit/29b342b514b75e41ab7c946b66d1b9d4dd737cc6))
+
 ## [0.2.5](https://github.com/et0and/slate/compare/v0.2.4...v0.2.5) (2026-10-26)
 
 

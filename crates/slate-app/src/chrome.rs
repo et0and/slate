@@ -146,6 +146,8 @@ impl ContactSheet {
             .child(
                 div()
                     .id("titlebar-collapse-left")
+                    .relative()
+                    .top(px(-1.0))
                     .size(px(26.0))
                     .flex()
                     .items_center()

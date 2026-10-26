@@ -1,14 +1,15 @@
 //! Native full-screen photo preview window.
 
 use gpui::{
-    AnyElement, Context, FocusHandle, Focusable, Render, Window, actions, div, img, prelude::*, px,
-    rgb,
+    AnyElement, Context, FocusHandle, Focusable, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, Render, Window, actions, div, img, point, prelude::*, px, rgb,
 };
+use slate_core::model::PhotoId;
 
 use crate::app::ContactSheet;
 use crate::assets;
 use crate::theme;
-use crate::widgets::{icon, mono_text, ui_text};
+use crate::widgets::icon;
 
 actions!(
     photo_preview_actions,
@@ -18,6 +19,10 @@ actions!(
 pub struct PhotoPreviewWindow {
     parent: gpui::Entity<ContactSheet>,
     focus: FocusHandle,
+    zoom: f32,
+    pan: Point<Pixels>,
+    drag_start: Option<(Point<Pixels>, Point<Pixels>)>,
+    shown_target: Option<PhotoId>,
 }
 
 impl PhotoPreviewWindow {
@@ -26,6 +31,10 @@ impl PhotoPreviewWindow {
         Self {
             parent,
             focus: cx.focus_handle(),
+            zoom: 1.0,
+            pan: point(px(0.0), px(0.0)),
+            drag_start: None,
+            shown_target: None,
         }
     }
 }
@@ -41,30 +50,51 @@ impl Render for PhotoPreviewWindow {
         if !self.focus.is_focused(window) {
             window.focus(&self.focus);
         }
-        let (target, image, error) = {
+        let (target, image) = {
             let parent = self.parent.read(cx);
             (
                 parent.photo_preview_target,
                 parent.photo_preview_image.clone(),
-                parent.photo_preview_error.clone(),
             )
         };
-        let details = target
-            .and_then(|id| self.parent.read(cx).project.photo(id))
-            .map_or_else(
-                || ("No photo".to_string(), String::new()),
-                |photo| {
-                    let size = photo.oriented_size().map_or_else(
-                        || "Unknown size".to_string(),
-                        |(width, height)| format!("{width} × {height}"),
-                    );
-                    let kind = photo.extension().to_ascii_uppercase();
-                    (
-                        photo.file_name(),
-                        format!("{size} / {kind} / {}", format_bytes(photo.bytes)),
-                    )
-                },
-            );
+        if target != self.shown_target {
+            self.zoom = 1.0;
+            self.pan = point(px(0.0), px(0.0));
+            self.drag_start = None;
+            self.shown_target = target;
+        }
+
+        let viewport = window.viewport_size();
+        let (image_width, image_height) = image.as_ref().map_or((1.0, 1.0), |image| {
+            let size = image.size(0);
+            (size.width.0.max(1) as f32, size.height.0.max(1) as f32)
+        });
+        let fit = ((f32::from(viewport.width) - 48.0) / image_width)
+            .min((f32::from(viewport.height) - 48.0) / image_height);
+        let width = image_width * fit * self.zoom;
+        let height = image_height * fit * self.zoom;
+        let max_x = ((width - f32::from(viewport.width)) / 2.0).max(0.0);
+        let max_y = ((height - f32::from(viewport.height)) / 2.0).max(0.0);
+        self.pan = point(
+            px(f32::from(self.pan.x).clamp(-max_x, max_x)),
+            px(f32::from(self.pan.y).clamp(-max_y, max_y)),
+        );
+        let left = (f32::from(viewport.width) - width) / 2.0 + f32::from(self.pan.x);
+        let top = (f32::from(viewport.height) - height) / 2.0 + f32::from(self.pan.y);
+
+        let body: AnyElement = image.map_or_else(
+            || div().size_full().into_any_element(),
+            |image| {
+                div()
+                    .absolute()
+                    .top(px(top))
+                    .left(px(left))
+                    .w(px(width))
+                    .h(px(height))
+                    .child(img(image).object_fit(gpui::ObjectFit::Fill).size_full())
+                    .into_any_element()
+            },
+        );
 
         let close = div()
             .id("photo-preview-close")
@@ -78,8 +108,7 @@ impl Render for PhotoPreviewWindow {
             .cursor_pointer()
             .hover(|style| style.bg(rgba_white(0.14)))
             .on_click(cx.listener(|this, _, window, cx| {
-                this.parent
-                    .update(cx, super::app::ContactSheet::clear_photo_preview);
+                this.parent.update(cx, ContactSheet::clear_photo_preview);
                 window.remove_window();
             }))
             .child(icon(assets::X, 16.0, rgb(0xf3f3f1)));
@@ -97,43 +126,27 @@ impl Render for PhotoPreviewWindow {
             }),
         );
 
-        let body: AnyElement = image.map_or_else(
-            || {
-                div()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(ui_text(theme::TEXT_BODY, rgba_white(0.55)).child(
-                        error.unwrap_or_else(|| "Loading high-resolution preview…".to_string()),
-                    ))
-                    .into_any_element()
-            },
-            |image| {
-                div()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .p(px(24.0))
-                    .child(
-                        img(image)
-                            .object_fit(gpui::ObjectFit::Contain)
-                            .w_full()
-                            .h_full(),
-                    )
-                    .into_any_element()
-            },
-        );
+        let controls = div()
+            .absolute()
+            .top(px(18.0))
+            .right(px(18.0))
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| cx.stop_propagation()),
+            )
+            .child(previous)
+            .child(next)
+            .child(close);
 
         div()
             .key_context("PhotoPreviewWindow")
             .track_focus(&self.focus)
             .size_full()
-            .flex()
-            .flex_col()
+            .relative()
+            .overflow_hidden()
             .bg(rgb(0x050505))
             .text_color(rgb(0xf3f3f1))
             .font_family(theme::FONT_UI)
@@ -146,58 +159,48 @@ impl Render for PhotoPreviewWindow {
                     .update(cx, |parent, cx| parent.step_photo_preview(1, cx));
             }))
             .on_action(cx.listener(|this, _: &ClosePhotoPreview, window, cx| {
-                this.parent
-                    .update(cx, super::app::ContactSheet::clear_photo_preview);
+                this.parent.update(cx, ContactSheet::clear_photo_preview);
                 window.remove_window();
             }))
-            .child(
-                div()
-                    .h(px(64.0))
-                    .flex_shrink_0()
-                    .px(px(22.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .min_w(px(0.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.0))
-                            .child(
-                                ui_text(theme::TEXT_BODY, rgb(0xf3f3f1))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .truncate()
-                                    .child(details.0),
-                            )
-                            .child(
-                                mono_text(theme::TEXT_META, rgba_white(0.55))
-                                    .truncate()
-                                    .child(details.1),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(previous)
-                            .child(next)
-                            .child(close),
-                    ),
+            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                let delta = f32::from(event.delta.pixel_delta(px(24.0)).y);
+                let next = (this.zoom * (delta / 300.0).exp()).clamp(1.0, 8.0);
+                if (next - this.zoom).abs() > f32::EPSILON {
+                    this.zoom = next;
+                    if next <= 1.0 {
+                        this.pan = point(px(0.0), px(0.0));
+                    }
+                    cx.notify();
+                }
+                cx.stop_propagation();
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    if this.zoom > 1.0 {
+                        this.drag_start = Some((event.position, this.pan));
+                        cx.stop_propagation();
+                    }
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                let Some((start, pan)) = this.drag_start else {
+                    return;
+                };
+                if !event.dragging() {
+                    return;
+                }
+                this.pan = pan + (event.position - start);
+                cx.notify();
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, _| {
+                    this.drag_start = None;
+                }),
             )
             .child(body)
-            .child(
-                div()
-                    .h(px(48.0))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(22.0))
-                    .child(mono_text(theme::TEXT_MICRO, rgba_white(0.4)).child("← → to browse"))
-                    .child(mono_text(theme::TEXT_MICRO, rgba_white(0.4)).child("Esc to close")),
-            )
+            .child(controls)
     }
 }
 
@@ -218,14 +221,4 @@ fn preview_button(id: &'static str, path: &'static str) -> gpui::Stateful<gpui::
 
 fn rgba_white(alpha: f32) -> gpui::Rgba {
     gpui::rgba(0xffffff00 | ((alpha.clamp(0.0, 1.0) * 255.0) as u32))
-}
-
-fn format_bytes(bytes: u64) -> String {
-    if bytes == 0 {
-        "Unknown size".to_string()
-    } else if bytes >= 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{} KB", (bytes / 1024).max(1))
-    }
 }

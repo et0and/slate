@@ -8,7 +8,6 @@ use gpui::{
     linear_gradient, prelude::*, px, rgba,
 };
 
-use slate_core::batch;
 use slate_core::model::{ColorLabel, Filter, StarRating};
 
 use crate::app::{ContactSheet, SidebarSection};
@@ -16,7 +15,7 @@ use crate::assets;
 use crate::theme;
 use crate::view::SortKey;
 use crate::widgets::{
-    button, group_label, icon, icon_button, label, micro, mono_text, stepper, text_button, ui_text,
+    button, group_label, icon, icon_button, micro, mono_text, text_button, ui_text,
 };
 
 impl ContactSheet {
@@ -41,7 +40,6 @@ impl ContactSheet {
         let label_open = !self.sidebar_collapsed.contains(&SidebarSection::Label);
         let sort_open = !self.sidebar_collapsed.contains(&SidebarSection::Sort);
         let tags_open = !self.sidebar_collapsed.contains(&SidebarSection::Tags);
-        let rename_open = !self.sidebar_collapsed.contains(&SidebarSection::Rename);
 
         let folders_block = sidebar_section(
             SidebarSection::Folders,
@@ -298,131 +296,6 @@ impl ContactSheet {
             cx,
         );
 
-        let target_ids = self.scope_ids();
-        let target_count = target_ids.len();
-        let sample = target_ids
-            .first()
-            .and_then(|id| self.project.photo(*id))
-            .map_or_else(
-                || "—".to_string(),
-                |photo| batch::preview_name(photo, self.rename_options.start, &self.rename_options),
-            );
-
-        let start = self.rename_options.start;
-        let padding = self.rename_options.padding;
-
-        let rename_content = div()
-            .px(px(16.0))
-            .pb(px(14.0))
-            .flex()
-            .flex_col()
-            .gap(px(10.0))
-            .child(label("Prefix"))
-            .child(self.prefix_field.clone())
-            .child(label("Suffix"))
-            .child(self.suffix_field.clone())
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(label("Start"))
-                    .child(stepper(
-                        "start-minus",
-                        "start-plus",
-                        format!("{start:05}"),
-                        cx.listener(|this, _, _, cx| {
-                            this.rename_options.start = this.rename_options.start.saturating_sub(1);
-                            cx.notify();
-                        }),
-                        cx.listener(|this, _, _, cx| {
-                            this.rename_options.start = this.rename_options.start.saturating_add(1);
-                            cx.notify();
-                        }),
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(label("Digits"))
-                    .child(stepper(
-                        "pad-minus",
-                        "pad-plus",
-                        format!("{padding}"),
-                        cx.listener(|this, _, _, cx| {
-                            this.rename_options.padding =
-                                this.rename_options.padding.saturating_sub(1).max(1);
-                            cx.notify();
-                        }),
-                        cx.listener(|this, _, _, cx| {
-                            this.rename_options.padding = (this.rename_options.padding + 1).min(8);
-                            cx.notify();
-                        }),
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.0))
-                    .child(label("Example"))
-                    .child(
-                        mono_text(theme::TEXT_META, theme::muted())
-                            .truncate()
-                            .child(sample),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(label("Date tokens"))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(4.0))
-                            .child(text_button("rename-date-token", "{date}").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.append_rename_token("{date}", cx);
-                                }),
-                            ))
-                            .child(text_button("rename-time-token", "{time}").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.append_rename_token("{time}", cx);
-                                }),
-                            ))
-                            .child(text_button("rename-datetime-token", "{datetime}").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.append_rename_token("{datetime}", cx);
-                                }),
-                            )),
-                    )
-                    .child(
-                        mono_text(theme::TEXT_MICRO, theme::faint())
-                            .line_height(px(14.0))
-                            .child("Use in prefix or suffix; falls back to the file date."),
-                    ),
-            )
-            .child(
-                button("rename-review", "Review")
-                    .w_full()
-                    .on_click(cx.listener(|this, _, _, cx| this.preview_rename(cx))),
-            )
-            .into_any_element();
-
-        let rename_block = sidebar_section(
-            SidebarSection::Rename,
-            "Rename",
-            format!("{target_count} in scope"),
-            rename_open,
-            rename_content,
-            cx,
-        );
-
         div()
             .w(px(self.panels.left()))
             .flex_shrink_0()
@@ -486,13 +359,12 @@ impl ContactSheet {
                             .size_full()
                             .overflow_y_scroll()
                             .track_scroll(&self.sidebar_scroll)
-                            .child(folders_block)
                             .child(search_block)
+                            .child(folders_block)
                             .child(rating_block)
                             .child(label_block)
                             .child(sort_block)
-                            .child(tags_block)
-                            .child(rename_block),
+                            .child(tags_block),
                     )
                     .children(top_fade)
                     .children(bottom_fade)

@@ -15,6 +15,7 @@ mod overlay;
 mod panels;
 mod photo_preview;
 mod preview_window;
+mod rename_window;
 mod selection;
 mod sidebar;
 mod telemetry;
@@ -33,8 +34,8 @@ use gpui::{
 
 use app::{
     ContactSheet, ConvertSelected, CreateContactSheet, DeselectPhotos, Dismiss, ExportSheet,
-    ImportFiles, ImportFolder, NewProject, OpenPreview, OpenProject, Quit, Redo, SaveAs,
-    SaveProject, SelectAllPhotos, Undo,
+    ImportFiles, ImportFolder, NewProject, OpenPreview, OpenProject, Quit, Redo, RenamePhotos,
+    SaveAs, SaveProject, SelectAllPhotos, Undo,
 };
 
 #[cfg(target_os = "macos")]
@@ -70,6 +71,7 @@ fn main() {
             KeyBinding::new(&primary("n"), NewProject, None),
             KeyBinding::new(&primary("z"), Undo, None),
             KeyBinding::new(&primary("shift-z"), Redo, None),
+            KeyBinding::new(&primary("r"), RenamePhotos, None),
             KeyBinding::new(&primary("shift-p"), OpenPreview, None),
             KeyBinding::new(&primary("o"), OpenProject, None),
             KeyBinding::new(&primary("s"), SaveProject, None),

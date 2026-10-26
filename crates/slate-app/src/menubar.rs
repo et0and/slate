@@ -14,8 +14,8 @@ use crate::app::{
     About, ConvertSelected, CreateContactSheet, DeselectPhotos, ExportDrive, ExportSheet,
     HideOthers, HideSlate, ImportDrive, ImportFiles, ImportFolder, InvertSelection, LinkDrive,
     NewProject, OpenPreview, OpenProject, OpenRecent, OpenWebsite, Quit, Redo, RemoveSelected,
-    ReportIssue, ResetPanels, SaveAs, SaveProject, SaveSheet, SelectAllPhotos, SetTheme, Undo,
-    UnlinkDrive,
+    RenamePhotos, ReportIssue, ResetPanels, SaveAs, SaveProject, SaveSheet, SelectAllPhotos,
+    SetTheme, Undo, UnlinkDrive,
 };
 use crate::assets;
 use crate::drive_ui::DriveMode;
@@ -429,6 +429,19 @@ impl ContactSheet {
                 .into_any_element(),
             separator(),
             menu_item(
+                "menu-rename-photos",
+                assets::PENCIL,
+                "Rename…",
+                Some(shortcut_label("R")),
+                true,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.close_menu(cx);
+                this.open_rename_window(cx);
+            }))
+            .into_any_element(),
+            separator(),
+            menu_item(
                 "menu-remove",
                 assets::TRASH,
                 "Remove from collection",
@@ -731,6 +744,8 @@ impl ContactSheet {
             MenuItem::action("Select all visible", SelectAllPhotos),
             MenuItem::action("Deselect all", DeselectPhotos),
             MenuItem::action("Invert selection", InvertSelection),
+            MenuItem::separator(),
+            MenuItem::action("Rename…", RenamePhotos),
             MenuItem::separator(),
             MenuItem::action("Remove from collection", RemoveSelected),
         ];

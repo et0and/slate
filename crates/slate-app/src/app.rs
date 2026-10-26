@@ -34,6 +34,7 @@ use crate::memory;
 use crate::panels::{DIVIDER_W, PanelLayout, ResizeTarget};
 use crate::photo_preview::PhotoPreviewWindow;
 use crate::preview_window::PreviewWindow;
+use crate::rename_window::RenameWindow;
 use crate::selection::Selection;
 use crate::text_field::TextField;
 use crate::theme;
@@ -61,6 +62,7 @@ actions!(
         ConvertSelected,
         InvertSelection,
         RemoveSelected,
+        RenamePhotos,
         ResetPanels,
         About,
         ImportDrive,
@@ -132,7 +134,6 @@ pub enum SidebarSection {
     Label,
     Sort,
     Tags,
-    Rename,
 }
 
 impl SidebarSection {
@@ -143,7 +144,6 @@ impl SidebarSection {
             Self::Label => "label",
             Self::Sort => "sort",
             Self::Tags => "tags",
-            Self::Rename => "rename",
         }
     }
 }
@@ -196,6 +196,7 @@ pub struct ContactSheet {
     pub(crate) inspector_image_error: Option<(PhotoId, String)>,
     pub(crate) inspector_load_id: u64,
     pub(crate) about_window: Option<WindowHandle<AboutWindow>>,
+    pub(crate) rename_window: Option<WindowHandle<RenameWindow>>,
     pub(crate) inspector_mode: InspectorMode,
     pub(crate) inspected_photo: Option<PhotoId>,
     pub(crate) convert_dialog_open: bool,
@@ -377,6 +378,7 @@ impl ContactSheet {
             inspector_image_error: None,
             inspector_load_id: 0,
             about_window: None,
+            rename_window: None,
             inspector_mode: InspectorMode::Photo,
             inspected_photo: None,
             convert_dialog_open: false,
@@ -676,6 +678,52 @@ impl ContactSheet {
         let handle = cx.open_window(options, |_, cx| cx.new(AboutWindow::new));
         if let Ok(handle) = handle {
             self.about_window = Some(handle);
+        }
+    }
+
+    pub(crate) fn open_rename_window(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.rename_window.as_ref()
+            && handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            return;
+        }
+        self.rename_window = None;
+        self.rename_pending = None;
+        let parent = cx.entity();
+        let bounds = Bounds::centered(None, size(px(820.0), px(640.0)), cx);
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(700.0), px(520.0))),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Rename".into()),
+                appears_transparent: false,
+                ..Default::default()
+            }),
+            focus: true,
+            ..Default::default()
+        };
+        cx.spawn(async move |this, cx| {
+            let handle = cx.update(|app| {
+                app.open_window(options, |_, cx| cx.new(|cx| RenameWindow::new(parent, cx)))
+            });
+            let Ok(handle) = handle else {
+                return;
+            };
+            if let Ok(handle) = handle {
+                let _ = this.update(cx, |this, cx| {
+                    this.rename_window = Some(handle);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    pub(crate) fn close_rename_window(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.rename_window.take() {
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
         }
     }
 
@@ -1422,7 +1470,7 @@ impl ContactSheet {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Fullscreen(bounds)),
             titlebar: Some(TitlebarOptions {
-                title: Some("Photo preview".into()),
+                title: Some("".into()),
                 appears_transparent: true,
                 ..Default::default()
             }),
@@ -1964,6 +2012,7 @@ impl ContactSheet {
                     report.renamed_count(),
                     report.errors.len()
                 ));
+                this.close_rename_window(cx);
                 cx.notify();
             });
         })
@@ -1977,6 +2026,7 @@ impl ContactSheet {
             return;
         }
         self.rename_pending = None;
+        self.close_rename_window(cx);
         self.set_status("Rename cancelled");
         cx.notify();
     }
@@ -3179,6 +3229,10 @@ impl Render for ContactSheet {
                 this.close_menu(cx);
                 this.open_sheet_builder(cx);
             }))
+            .on_action(cx.listener(|this, _: &RenamePhotos, _, cx| {
+                this.close_menu(cx);
+                this.open_rename_window(cx);
+            }))
             .on_action(cx.listener(|this, _: &ConvertSelected, _, cx| {
                 this.close_menu(cx);
                 this.open_convert_dialog(cx);
@@ -3591,6 +3645,27 @@ mod tests {
                 view.project.photo(PhotoId(1)).unwrap().rating(),
                 StarRating::NONE
             );
+        });
+    }
+
+    #[gpui::test]
+    fn rename_action_opens_a_native_window(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| assets::install_fonts(cx));
+        let (view, cx) = cx.add_window_view(|_, cx| ContactSheet::new(cx));
+        view.update(cx, |view, cx| {
+            view.project = ui_project();
+            view.selected = Arc::new(std::iter::once(PhotoId(1)).collect());
+            view.selection_changed();
+            view.project_changed();
+            view.filter_changed();
+            cx.notify();
+        });
+        cx.run_until_parked();
+        draw_root(&view, cx);
+        cx.dispatch_action(RenamePhotos);
+        cx.run_until_parked();
+        view.update(cx, |view, _| {
+            assert!(view.rename_window.is_some());
         });
     }
 

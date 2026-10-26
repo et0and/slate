@@ -394,45 +394,98 @@ const WORDMARK: [&str; 7] = [
 /// The gap between cells as a fraction of a cell.
 const WORDMARK_GAP: f32 = 0.25;
 
-fn wordmark_cell(width: f32) -> f32 {
-    let columns = WORDMARK[0].len() as f32;
-    width / (columns - 1.0).mul_add(WORDMARK_GAP, columns)
+/// A wordmark size in whole device pixels. Every cell and every gap is the
+/// same number of pixels, so the letters stay even at any size; rounding a
+/// fractional grid cell by cell makes some cells merge and others thin out.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WordmarkGrid {
+    /// Cell and gap edges, in device pixels.
+    cell: f32,
+    gap: f32,
+    scale: f32,
 }
 
-/// The wordmark's width at `height`, for callers that size it to a line.
-pub fn wordmark_width(height: f32) -> f32 {
-    let rows = WORDMARK.len() as f32;
-    let columns = WORDMARK[0].len() as f32;
-    height / (rows - 1.0).mul_add(WORDMARK_GAP, rows)
-        * (columns - 1.0).mul_add(WORDMARK_GAP, columns)
+impl WordmarkGrid {
+    const COLUMNS: f32 = WORDMARK[0].len() as f32;
+    const ROWS: f32 = WORDMARK.len() as f32;
+
+    fn with_cell(cell: f32, scale: f32) -> Self {
+        Self {
+            cell,
+            gap: (cell * WORDMARK_GAP).round().max(1.0),
+            scale,
+        }
+    }
+
+    fn extent(self, cells: f32) -> f32 {
+        (cells - 1.0).mul_add(self.gap, cells * self.cell)
+    }
+
+    /// The largest grid whose `cells` span fits `points`.
+    fn fit(points: f32, cells: f32, scale: f32) -> Self {
+        let pixels = (points * scale).floor();
+        let mut cell = (pixels / (cells - 1.0).mul_add(WORDMARK_GAP, cells))
+            .floor()
+            .max(1.0)
+            + 1.0;
+        while cell > 1.0 && Self::with_cell(cell, scale).extent(cells) > pixels {
+            cell -= 1.0;
+        }
+        Self::with_cell(cell, scale)
+    }
+
+    /// The largest grid no wider than `width` points.
+    #[must_use]
+    pub fn fit_width(width: f32, scale: f32) -> Self {
+        Self::fit(width, Self::COLUMNS, scale)
+    }
+
+    /// The largest grid no taller than `height` points.
+    #[must_use]
+    pub fn fit_height(height: f32, scale: f32) -> Self {
+        Self::fit(height, Self::ROWS, scale)
+    }
+
+    #[must_use]
+    pub fn width(self) -> f32 {
+        self.extent(Self::COLUMNS) / self.scale
+    }
+
+    #[must_use]
+    pub fn height(self) -> f32 {
+        self.extent(Self::ROWS) / self.scale
+    }
+
+    /// The gap between cells in points, for marks drawn beside the wordmark.
+    #[must_use]
+    pub fn gap(self) -> f32 {
+        self.gap / self.scale
+    }
 }
 
 /// The SLATE wordmark, painted as squares rather than a bitmap so it stays
 /// crisp at any size and takes any theme colour.
-pub fn pixel_wordmark(width: f32, colour: gpui::Rgba) -> AnyElement {
-    let rows = WORDMARK.len() as f32;
-    let height = wordmark_cell(width) * (rows - 1.0).mul_add(WORDMARK_GAP, rows);
+pub fn pixel_wordmark(grid: WordmarkGrid, colour: gpui::Rgba) -> AnyElement {
     canvas(
         |_, _, _| {},
         move |bounds, (), window, _| {
-            let cell = wordmark_cell(f32::from(bounds.size.width));
-            let pitch = cell * (1.0 + WORDMARK_GAP);
-            // Snap each cell's edges to whole pixels so the squares stay sharp.
-            let span = |index: usize| {
-                let start = (index as f32 * pitch).round();
-                (start, (index as f32).mul_add(pitch, cell).round() - start)
-            };
+            let WordmarkGrid { cell, gap, scale } = grid;
+            let pitch = cell + gap;
+            // Start on a device pixel so every edge lands on one.
+            let left = (f32::from(bounds.left()) * scale).round();
+            let top = (f32::from(bounds.top()) * scale).round();
             for (row, line) in WORDMARK.iter().enumerate() {
-                let (top, cell_h) = span(row);
                 for (column, mark) in line.bytes().enumerate() {
                     if mark != b'#' {
                         continue;
                     }
-                    let (left, cell_w) = span(column);
                     window.paint_quad(fill(
                         Bounds::new(
-                            point(bounds.left() + px(left), bounds.top() + px(top)),
-                            size(px(cell_w), px(cell_h)),
+                            point(
+                                px((column as f32).mul_add(pitch, left) / scale),
+                                px((row as f32).mul_add(pitch, top) / scale),
+                            ),
+                            size(px(cell / scale), px(cell / scale)),
                         ),
                         colour,
                     ));
@@ -440,8 +493,8 @@ pub fn pixel_wordmark(width: f32, colour: gpui::Rgba) -> AnyElement {
             }
         },
     )
-    .w(px(width))
-    .h(px(height.round()))
+    .w(px(grid.width()))
+    .h(px(grid.height()))
     .into_any_element()
 }
 
@@ -462,15 +515,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_wordmark_grid_is_rectangular_and_fills_its_width() {
+    fn the_wordmark_grid_is_even_and_fits() {
         assert!(WORDMARK.iter().all(|row| row.len() == WORDMARK[0].len()));
-        let width = 600.0;
-        let columns = WORDMARK[0].len() as f32;
-        let cell = wordmark_cell(width);
-        let drawn = (columns - 1.0).mul_add(cell * WORDMARK_GAP, columns * cell);
-        assert!((drawn - width).abs() < 0.01);
-        let rows = WORDMARK.len() as f32;
-        let height = cell * (rows - 1.0).mul_add(WORDMARK_GAP, rows);
-        assert!((wordmark_width(height) - width).abs() < 0.01);
+        for scale in [1.0, 2.0, 3.0] {
+            for width in [60.0, 93.0, 437.0, 1200.0] {
+                let grid = WordmarkGrid::fit_width(width, scale);
+                assert!(grid.width() <= width + f32::EPSILON, "{width} at {scale}x");
+                assert_eq!(grid.cell.fract(), 0.0);
+                assert_eq!(grid.gap.fract(), 0.0);
+                assert!(grid.gap >= 1.0);
+                // The next size up would not fit.
+                let larger = WordmarkGrid::with_cell(grid.cell + 1.0, scale);
+                assert!(larger.width() > width);
+            }
+            let grid = WordmarkGrid::fit_height(22.0, scale);
+            assert!(grid.height() <= 22.0 + f32::EPSILON);
+        }
     }
 }

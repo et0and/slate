@@ -12,8 +12,8 @@ use crate::app::{ContactSheet, Marquee};
 use crate::assets;
 use crate::theme;
 use crate::widgets::{
-    button_with_icon, format_bytes, heading, icon, mono_text, pixel_wordmark, shift_shortcut_label,
-    shortcut_hint, shortcut_label, ui_text,
+    WordmarkGrid, button_with_icon, format_bytes, heading, icon, mono_text, pixel_wordmark,
+    shift_shortcut_label, shortcut_hint, shortcut_label, ui_text,
 };
 
 /// Space either side of the empty library's wordmark.
@@ -59,7 +59,7 @@ impl ContactSheet {
             let pane = f32::from(window.viewport_size().width)
                 - self.panels.left_edge()
                 - self.panels.right_edge();
-            self.render_empty_state(pane, cx)
+            self.render_empty_state(pane, window.scale_factor(), cx)
         } else if visible.is_empty() {
             self.render_no_matches(cx)
         } else {
@@ -524,7 +524,12 @@ impl ContactSheet {
         )
     }
 
-    fn render_empty_state(&mut self, pane_width: f32, cx: &mut Context<Self>) -> AnyElement {
+    fn render_empty_state(
+        &mut self,
+        pane_width: f32,
+        scale: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let command = |id: &'static str, label: &'static str, shortcut: String| {
             div()
                 .id(id)
@@ -590,7 +595,12 @@ impl ContactSheet {
                 div()
                     .flex_shrink_0()
                     .px(px(LOGO_MARGIN))
-                    .child(pixel_wordmark(logo_width, theme::surface())),
+                    .flex()
+                    .justify_center()
+                    .child(pixel_wordmark(
+                        WordmarkGrid::fit_width(logo_width, scale),
+                        theme::surface(),
+                    )),
             )
             .into_any_element()
     }

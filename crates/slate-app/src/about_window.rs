@@ -4,14 +4,14 @@ use gpui::{Context, FocusHandle, Focusable, Render, Window, div, prelude::*, px}
 
 use crate::app::Dismiss;
 use crate::theme;
-use crate::widgets::{mono_text, pixel_wordmark, ui_text, wordmark_width};
+use crate::widgets::{WordmarkGrid, mono_text, pixel_wordmark, ui_text};
 
 const LICENSE_URL: &str = "https://www.gnu.org/licenses/gpl-3.0.html";
 
-/// The mark is three columns by two rows of blocks, as tall as the wordmark.
-const MARK_BLOCK_W: f32 = 14.0;
-const MARK_BLOCK_H: f32 = 10.0;
-const MARK_GAP: f32 = 2.0;
+/// The wordmark's height; the mark beside it is sized from the same grid.
+const LOGO_HEIGHT: f32 = 22.0;
+/// The mark's blocks are this much wider than tall.
+const MARK_ASPECT: f32 = 1.4;
 
 pub struct AboutWindow {
     focus: FocusHandle,
@@ -37,17 +37,18 @@ impl Render for AboutWindow {
             window.focus(&self.focus);
         }
         let version = env!("CARGO_PKG_VERSION");
-        let mark_height = MARK_BLOCK_H.mul_add(2.0, MARK_GAP);
-        let block = || {
-            div()
-                .w(px(MARK_BLOCK_W))
-                .h(px(MARK_BLOCK_H))
-                .bg(theme::ink())
-        };
+        // Size both halves of the logo in whole device pixels, from one grid,
+        // so the mark's gaps match the wordmark's and nothing blurs.
+        let scale = window.scale_factor();
+        let grid = WordmarkGrid::fit_height(LOGO_HEIGHT, scale);
+        let gap = grid.gap();
+        let block_h = ((grid.height() - gap) / 2.0 * scale).floor() / scale;
+        let block_w = (block_h * MARK_ASPECT * scale).round() / scale;
+        let block = || div().w(px(block_w)).h(px(block_h)).bg(theme::ink());
         let mark_row = || {
             div()
                 .flex()
-                .gap(px(MARK_GAP))
+                .gap(px(gap))
                 .child(block())
                 .child(block())
                 .child(block())
@@ -77,11 +78,11 @@ impl Render for AboutWindow {
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(MARK_GAP))
+                                    .gap(px(gap))
                                     .child(mark_row())
                                     .child(mark_row()),
                             )
-                            .child(pixel_wordmark(wordmark_width(mark_height), theme::ink())),
+                            .child(pixel_wordmark(grid, theme::ink())),
                     )
                     .child(
                         mono_text(theme::TEXT_META, theme::faint())

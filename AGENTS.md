@@ -137,7 +137,14 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   control's range, step, neutral value and label, so the UI, the normaliser and
   the pipeline cannot disagree. The inspector edits the inspected photo: a drag
   updates live from the cached decode (`inspector_base`, one render in flight)
-  and records one undo step on release.
+  and records one undo step on release. Undo and bulk copies share
+  `Arc<Adjustments>` values. Colour lookup stores only a `LutId` per photo; the
+  collection maps ids to `.cube` paths, and `adjust::load_lut_file` parses into
+  a process-wide cache that previews and exports read. A missing LUT skips that
+  stage rather than failing the photo.
+- Hue-picking sliders paint the hue spectrum on their track, and the gradient
+  map shows its gradient. They are the only colour besides the theme accent
+  and the label colours.
 - Non-interlaced 8-bit RGB/gray PNGs embed their IDAT stream directly with
   `/FlateDecode` and predictor 15. Alpha, palette, 16-bit and interlaced PNGs
   use the fallback path.
@@ -250,10 +257,11 @@ Mono for data and shortcut hints, 1 px rules, square controls, SVG icons,
 no rounded corners and no decorative gradients. Light and Dark are monochrome.
 Palette themes use their accent only for selected badges, checkboxes, focused
 fields and primary controls; do not add other colour uses. Theme choices live
-under View only and iterate `Theme::ALL`. Use the five `TEXT_*` tokens and never
-offset one by a fraction: display 20 pt for the one heading of a dialog, window
-or empty state (`widgets::heading`), title 15 pt for toolbar headings, body
-13 pt, labels 11 pt and metadata 10 pt. Shortcut hints use `widgets::shortcut_hint`
+under View only and iterate `Theme::ALL`. Use the four `TEXT_*` tokens and never
+offset one by a fraction: display 20 pt for the one heading of an in-window
+dialog or empty state (`widgets::heading`), body 13 pt, labels 11 pt and
+metadata 10 pt. A native child window's title bar is its heading: do not repeat
+it, or its close button, inside the window. Shortcut hints use `widgets::shortcut_hint`
 at body size so the modifier glyphs stay legible. Weight encodes the role, never the
 state: headings semibold, controls medium, content and menu rows regular.
 Selection, focus and disabled states change colour or fill, not weight. Use
@@ -270,9 +278,10 @@ to progress text such as "Scanning…".
 
 Sentence case everywhere. Do not add uppercase copy, `to_uppercase()` calls or
 CSS `text-transform: uppercase`. Acronyms such as PDF, RGB and DPI are fine.
-Dense, not sparse. Do not add a tagline. The only wordmark is the pixel SLATE
-logo painted at the foot of the empty library (`library::LOGO`), in the theme's
-surface colour and sized to the pane width.
+Dense, not sparse. Do not add a tagline. The pixel SLATE wordmark
+(`widgets::pixel_wordmark`) appears only at the foot of the empty library, in
+the theme's surface colour and sized to the pane width, and beside the block
+mark in the About window.
 
 Do not repeat a label or action on screen. Each panel has a distinct job:
 collection, folders, review and filters on the left, the library in the centre, the photo

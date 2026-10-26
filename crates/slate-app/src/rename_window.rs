@@ -12,8 +12,8 @@ use crate::app::{ContactSheet, Dismiss};
 use crate::assets;
 use crate::theme;
 use crate::widgets::{
-    button, disabled_button, group_label, heading, icon, icon_button, label, mono_text,
-    primary_button, stepper, text_button, ui_text,
+    button, disabled_button, group_label, icon, label, mono_text, primary_button, stepper,
+    text_button, ui_text,
 };
 
 const RENAME_ROW_H: f32 = 76.0;
@@ -82,27 +82,6 @@ impl ContactSheet {
             .gap(px(12.0))
             .border_b_1()
             .border_color(theme::rule())
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.0))
-                            .child(heading("Rename photos"))
-                            .child(
-                                mono_text(theme::TEXT_META, theme::faint())
-                                    .child(format!("{target_count} in scope")),
-                            ),
-                    )
-                    .child(
-                        icon_button("rename-window-close", assets::X)
-                            .on_click(cx.listener(|this, _, _, cx| this.cancel_rename(cx))),
-                    ),
-            )
             .child(
                 div()
                     .grid()
@@ -203,6 +182,10 @@ impl ContactSheet {
                             .min_w(px(0.0))
                             .truncate()
                             .child(format!("Example: {sample}")),
+                    )
+                    .child(
+                        mono_text(theme::TEXT_META, theme::faint())
+                            .child(format!("{target_count} in scope")),
                     )
                     .child(
                         primary_button("rename-review", "Review")

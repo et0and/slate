@@ -240,7 +240,6 @@ impl ContactSheet {
             .filter(|(id, _)| *id == photo_id)
             .map(|(_, image)| image.clone())
             .or_else(|| self.preview_image(photo.id(), photo.rotation(), false));
-        let selected_count = self.selected.len();
         let dimensions = photo.oriented_size().map_or_else(
             || "—".to_string(),
             |(width, height)| format!("{width} × {height}"),
@@ -371,18 +370,15 @@ impl ContactSheet {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .truncate()
                             .child(photo.file_name()),
-                    )
-                    .children((selected_count > 1).then(|| {
-                        mono_text(theme::TEXT_META, theme::faint())
-                            .child(format!("{selected_count} selected / showing primary"))
-                    })),
+                    ),
             )
+            // The photo and its details stay pinned while the controls below
+            // scroll, so every adjustment is visible as it is made.
             .child(
                 div()
-                    .id("photo-inspector-scroll")
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .overflow_y_scroll()
+                    .flex_shrink_0()
+                    .border_b_1()
+                    .border_color(theme::rule())
                     .child(
                         div()
                             .mx(px(16.0))
@@ -412,10 +408,16 @@ impl ContactSheet {
                             ))
                             .child(photo_info_row("Folder", &folder))
                             .child(photo_info_row("Tags", &tags)),
-                    )
+                    ),
+            )
+            .child(
+                div()
+                    .id("photo-inspector-scroll")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
                     .child(
                         div()
-                            .border_t_1()
                             .border_color(theme::rule())
                             .px(px(16.0))
                             .py(px(10.0))

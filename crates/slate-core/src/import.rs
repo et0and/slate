@@ -50,6 +50,16 @@ impl PreviewImage {
         adjustments.apply_rgba(&mut self.image);
     }
 
+    #[must_use]
+    pub fn histogram(&self) -> [u32; 256] {
+        crate::adjust::luminance_histogram(&self.image, 4)
+    }
+
+    #[must_use]
+    pub fn colour_stats(&self) -> crate::adjust::ColourStats {
+        crate::adjust::colour_stats(&self.image, 4)
+    }
+
     /// GPUI expects BGRA pixels.
     #[must_use]
     pub fn into_bgra(self) -> Vec<u8> {

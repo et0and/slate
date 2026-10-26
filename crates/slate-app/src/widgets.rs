@@ -1,8 +1,8 @@
 //! Shared controls and typed text styles.
 
 use gpui::{
-    AnyElement, App, Div, ElementId, FontWeight, MouseButton, MouseDownEvent, SharedString,
-    Stateful, Styled, Window, div, prelude::*, px, rgba, svg,
+    AnyElement, App, Bounds, Div, ElementId, FontWeight, MouseButton, MouseDownEvent, SharedString,
+    Stateful, Styled, Window, canvas, div, fill, point, prelude::*, px, rgba, size, svg,
 };
 
 use crate::{assets, theme};
@@ -273,6 +273,34 @@ pub fn text_button(id: impl Into<ElementId>, text: impl Into<SharedString>) -> S
         .child(text.into())
 }
 
+/// One choice in a row or grid of mutually exclusive choices.
+pub fn segment_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    active: bool,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .h(px(26.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .border_1()
+        .border_color(if active { theme::ink() } else { theme::rule() })
+        .bg(if active {
+            theme::accent_soft()
+        } else {
+            theme::surface()
+        })
+        .cursor_pointer()
+        .hover(|style| style.bg(theme::accent_soft()))
+        .font_family(theme::FONT_UI)
+        .font_weight(FontWeight::MEDIUM)
+        .text_size(px(theme::TEXT_LABEL))
+        .text_color(if active { theme::ink() } else { theme::muted() })
+        .child(label.into())
+}
+
 pub fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
     div()
         .id(id)
@@ -353,6 +381,70 @@ pub fn alt_shortcut_label(key: &str) -> String {
     }
 }
 
+/// The SLATE wordmark on a 29 × 7 cell grid.
+const WORDMARK: [&str; 7] = [
+    ".###..#.......#...#####.#####",
+    "#...#.#......#.#....#...#....",
+    "#.....#.....#...#...#...#....",
+    ".###..#.....#...#...#...####.",
+    "....#.#.....#####...#...#....",
+    "#...#.#.....#...#...#...#....",
+    ".###..#####.#...#...#...#####",
+];
+/// The gap between cells as a fraction of a cell.
+const WORDMARK_GAP: f32 = 0.25;
+
+fn wordmark_cell(width: f32) -> f32 {
+    let columns = WORDMARK[0].len() as f32;
+    width / (columns - 1.0).mul_add(WORDMARK_GAP, columns)
+}
+
+/// The wordmark's width at `height`, for callers that size it to a line.
+pub fn wordmark_width(height: f32) -> f32 {
+    let rows = WORDMARK.len() as f32;
+    let columns = WORDMARK[0].len() as f32;
+    height / (rows - 1.0).mul_add(WORDMARK_GAP, rows)
+        * (columns - 1.0).mul_add(WORDMARK_GAP, columns)
+}
+
+/// The SLATE wordmark, painted as squares rather than a bitmap so it stays
+/// crisp at any size and takes any theme colour.
+pub fn pixel_wordmark(width: f32, colour: gpui::Rgba) -> AnyElement {
+    let rows = WORDMARK.len() as f32;
+    let height = wordmark_cell(width) * (rows - 1.0).mul_add(WORDMARK_GAP, rows);
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let cell = wordmark_cell(f32::from(bounds.size.width));
+            let pitch = cell * (1.0 + WORDMARK_GAP);
+            // Snap each cell's edges to whole pixels so the squares stay sharp.
+            let span = |index: usize| {
+                let start = (index as f32 * pitch).round();
+                (start, (index as f32).mul_add(pitch, cell).round() - start)
+            };
+            for (row, line) in WORDMARK.iter().enumerate() {
+                let (top, cell_h) = span(row);
+                for (column, mark) in line.bytes().enumerate() {
+                    if mark != b'#' {
+                        continue;
+                    }
+                    let (left, cell_w) = span(column);
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(bounds.left() + px(left), bounds.top() + px(top)),
+                            size(px(cell_w), px(cell_h)),
+                        ),
+                        colour,
+                    ));
+                }
+            }
+        },
+    )
+    .w(px(width))
+    .h(px(height.round()))
+    .into_any_element()
+}
+
 /// File sizes everywhere in the interface: binary units, a dash when the size
 /// is unknown.
 pub fn format_bytes(bytes: u64) -> String {
@@ -362,5 +454,23 @@ pub fn format_bytes(bytes: u64) -> String {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     } else {
         format!("{} KB", (bytes / 1024).max(1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wordmark_grid_is_rectangular_and_fills_its_width() {
+        assert!(WORDMARK.iter().all(|row| row.len() == WORDMARK[0].len()));
+        let width = 600.0;
+        let columns = WORDMARK[0].len() as f32;
+        let cell = wordmark_cell(width);
+        let drawn = (columns - 1.0).mul_add(cell * WORDMARK_GAP, columns * cell);
+        assert!((drawn - width).abs() < 0.01);
+        let rows = WORDMARK.len() as f32;
+        let height = cell * (rows - 1.0).mul_add(WORDMARK_GAP, rows);
+        assert!((wordmark_width(height) - width).abs() < 0.01);
     }
 }

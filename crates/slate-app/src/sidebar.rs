@@ -16,8 +16,8 @@ use crate::drive;
 use crate::theme;
 use crate::view::{SortDirection, SortKey};
 use crate::widgets::{
-    button, group_label, icon, icon_button, micro, mono_text, shortcut_hint, shortcut_label,
-    text_button, ui_text,
+    button, group_label, icon, icon_button, micro, mono_text, segment_button, shortcut_hint,
+    shortcut_label, text_button, ui_text,
 };
 
 /// One row of the Filters list.
@@ -758,31 +758,11 @@ fn label_button(label: ColorLabel, active: bool, cx: &mut Context<ContactSheet>)
 }
 
 fn sort_button(key: SortKey, active: bool, cx: &mut Context<ContactSheet>) -> AnyElement {
-    div()
-        .id(ElementId::Name(SharedString::from(format!(
-            "sort-{}",
-            key.label().to_lowercase()
-        ))))
-        .h(px(26.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .border_1()
-        .border_color(if active { theme::ink() } else { theme::rule() })
-        .bg(if active {
-            theme::accent_soft()
-        } else {
-            theme::surface()
-        })
-        .cursor_pointer()
-        .hover(|style| style.bg(theme::accent_soft()))
-        .font_family(theme::FONT_UI)
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_size(px(theme::TEXT_LABEL))
-        .text_color(if active { theme::ink() } else { theme::muted() })
-        .debug_selector(move || format!("sort-{}", key.label().to_lowercase()))
+    let id = format!("sort-{}", key.label().to_lowercase());
+    let selector = id.clone();
+    segment_button(ElementId::Name(SharedString::from(id)), key.label(), active)
+        .debug_selector(move || selector)
         .on_click(cx.listener(move |this, _, _, cx| this.set_sort_key(key, cx)))
-        .child(key.label())
         .into_any_element()
 }
 

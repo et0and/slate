@@ -1,13 +1,21 @@
-//! Inspector adjustments: the Tone, Colour and Effects sections, slider
-//! drags, live re-rendering and undo.
+//! Inspector adjustments: the collapsible adjustment sections, slider and
+//! curve drags, live re-rendering and undo.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, Context, ElementId, MouseButton, MouseDownEvent, Pixels, SharedString, canvas, div,
-    prelude::*, px, relative,
+    AnyElement, Bounds, Context, ElementId, MouseButton, MouseDownEvent, PathBuilder,
+    PathPromptOptions, Pixels, Point, Rgba, SharedString, canvas, div, fill, point, prelude::*, px,
+    relative, size,
 };
-use slate_core::adjust::{Adjustments, POSTERIZE_DEFAULT, POSTERIZE_MAX, POSTERIZE_MIN, Slider};
+use slate_core::adjust::{
+    AdjustmentMap, Adjustments, CURVE_POINTS, Channel, ColourLookup, Curve, FilterKnob,
+    GradientKnob, GradientMap, HueRange, LevelsKnob, MatchColour, MatchKnob, POSTERIZE_DEFAULT,
+    POSTERIZE_MAX, POSTERIZE_MIN, PhotoFilter, ReplaceColour, ReplaceKnob, Slider, ToneKnob,
+    hue_colour, load_lut_file,
+};
+use slate_core::import;
 use slate_core::model::{PhotoId, QuarterTurns};
 
 use crate::app::{ContactSheet, PanelSection, render_image, rotate_render_image};
@@ -16,7 +24,8 @@ use crate::history::PhotoFieldChange;
 use crate::sidebar::panel_section;
 use crate::theme;
 use crate::widgets::{
-    button, checkbox, disabled_button, icon, mono_text, stepper, text_button, ui_text,
+    button, checkbox, disabled_button, icon, mono_text, segment_button, stepper, text_button,
+    ui_text,
 };
 
 const TONE: [Slider; 5] = [
@@ -26,6 +35,13 @@ const TONE: [Slider; 5] = [
     Slider::Shadows,
     Slider::Highlights,
 ];
+const LEVELS: [Slider; 5] = [
+    Slider::Levels(LevelsKnob::InputBlack),
+    Slider::Levels(LevelsKnob::Gamma),
+    Slider::Levels(LevelsKnob::InputWhite),
+    Slider::Levels(LevelsKnob::OutputBlack),
+    Slider::Levels(LevelsKnob::OutputWhite),
+];
 const COLOUR: [Slider; 5] = [
     Slider::Temperature,
     Slider::Tint,
@@ -33,9 +49,62 @@ const COLOUR: [Slider; 5] = [
     Slider::Saturation,
     Slider::Hue,
 ];
+const FILTER: [Slider; 2] = [
+    Slider::Filter(FilterKnob::Colour),
+    Slider::Filter(FilterKnob::Density),
+];
+const GRADIENT: [Slider; 5] = [
+    Slider::Gradient(GradientKnob::ShadowHue),
+    Slider::Gradient(GradientKnob::ShadowSaturation),
+    Slider::Gradient(GradientKnob::HighlightHue),
+    Slider::Gradient(GradientKnob::HighlightSaturation),
+    Slider::Gradient(GradientKnob::Amount),
+];
+const REPLACE: [Slider; 5] = [
+    Slider::Replace(ReplaceKnob::Colour),
+    Slider::Replace(ReplaceKnob::Range),
+    Slider::Replace(ReplaceKnob::Tone(ToneKnob::Hue)),
+    Slider::Replace(ReplaceKnob::Tone(ToneKnob::Saturation)),
+    Slider::Replace(ReplaceKnob::Tone(ToneKnob::Lightness)),
+];
+const MATCH: [Slider; 3] = [
+    Slider::Match(MatchKnob::Luminance),
+    Slider::Match(MatchKnob::Intensity),
+    Slider::Match(MatchKnob::Fade),
+];
+const TONE_KNOBS: [ToneKnob; 3] = [ToneKnob::Hue, ToneKnob::Saturation, ToneKnob::Lightness];
 
-/// A slider being dragged. The live value goes straight into the collection;
-/// one undo step is recorded on release.
+/// The inspector's adjustment sections, top to bottom.
+pub const ADJUSTMENT_SECTIONS: [PanelSection; 12] = [
+    PanelSection::Tone,
+    PanelSection::Levels,
+    PanelSection::Curves,
+    PanelSection::Colour,
+    PanelSection::PhotoFilter,
+    PanelSection::ChannelMixer,
+    PanelSection::SelectiveColour,
+    PanelSection::ReplaceColour,
+    PanelSection::MatchColour,
+    PanelSection::GradientMap,
+    PanelSection::ColourLookup,
+    PanelSection::Effects,
+];
+
+/// The less common sections start collapsed so the panel opens short.
+pub const COLLAPSED_BY_DEFAULT: [PanelSection; 9] = [
+    PanelSection::Levels,
+    PanelSection::Curves,
+    PanelSection::PhotoFilter,
+    PanelSection::ChannelMixer,
+    PanelSection::SelectiveColour,
+    PanelSection::ReplaceColour,
+    PanelSection::MatchColour,
+    PanelSection::GradientMap,
+    PanelSection::ColourLookup,
+];
+
+/// A control being dragged. The live value goes straight into the
+/// collection; one undo step is recorded on release.
 #[derive(Debug, Clone, Copy)]
 pub struct AdjustDrag {
     slider: Slider,
@@ -52,19 +121,76 @@ pub enum InspectorRender {
     Stale,
 }
 
-fn changed_sliders(adjustments: &Adjustments, sliders: &[Slider]) -> usize {
+/// Which part of a multi-part control the inspector is showing. View state
+/// only; never stored with the photo.
+#[derive(Debug, Clone, Copy)]
+pub struct AdjustFocus {
+    pub mixer_output: Channel,
+    pub selective_range: HueRange,
+}
+
+impl Default for AdjustFocus {
+    fn default() -> Self {
+        Self {
+            mixer_output: Channel::Red,
+            selective_range: HueRange::Reds,
+        }
+    }
+}
+
+const fn section_title(section: PanelSection) -> &'static str {
+    match section {
+        PanelSection::Tone => "Tone",
+        PanelSection::Levels => "Levels",
+        PanelSection::Curves => "Curves",
+        PanelSection::Colour => "Colour",
+        PanelSection::PhotoFilter => "Photo filter",
+        PanelSection::ChannelMixer => "Channel mixer",
+        PanelSection::SelectiveColour => "Selective colour",
+        PanelSection::ReplaceColour => "Replace colour",
+        PanelSection::MatchColour => "Match colour",
+        PanelSection::GradientMap => "Gradient map",
+        PanelSection::ColourLookup => "Colour lookup",
+        _ => "Effects",
+    }
+}
+
+fn changed(adjustments: &Adjustments, sliders: &[Slider]) -> usize {
     sliders
         .iter()
         .filter(|slider| adjustments.slider(**slider) != slider.neutral())
         .count()
 }
 
+fn mixer_sliders() -> impl Iterator<Item = Slider> {
+    Channel::ALL
+        .into_iter()
+        .flat_map(|output| Channel::ALL.map(|input| Slider::Mix { output, input }))
+}
+
+fn selective_sliders() -> impl Iterator<Item = Slider> {
+    HueRange::ALL
+        .into_iter()
+        .flat_map(|range| TONE_KNOBS.map(|knob| Slider::Selective(range, knob)))
+}
+
+/// How many settings in a section differ from the photo as decoded. A
+/// switched-on group counts once even at its starting values.
 fn section_changes(section: PanelSection, adjustments: &Adjustments) -> usize {
     match section {
-        PanelSection::Tone => changed_sliders(adjustments, &TONE),
-        PanelSection::Colour => {
-            changed_sliders(adjustments, &COLOUR) + usize::from(adjustments.monochrome)
+        PanelSection::Tone => changed(adjustments, &TONE),
+        PanelSection::Levels => changed(adjustments, &LEVELS),
+        PanelSection::Curves => usize::from(adjustments.curve != Curve::default()),
+        PanelSection::Colour => changed(adjustments, &COLOUR) + usize::from(adjustments.monochrome),
+        PanelSection::PhotoFilter => usize::from(adjustments.photo_filter.is_some()),
+        PanelSection::ChannelMixer => changed(adjustments, &mixer_sliders().collect::<Vec<_>>()),
+        PanelSection::SelectiveColour => {
+            changed(adjustments, &selective_sliders().collect::<Vec<_>>())
         }
+        PanelSection::ReplaceColour => usize::from(adjustments.replace.is_some()),
+        PanelSection::MatchColour => usize::from(adjustments.match_colour.is_some()),
+        PanelSection::GradientMap => usize::from(adjustments.gradient_map.is_some()),
+        PanelSection::ColourLookup => usize::from(adjustments.lookup.is_some()),
         PanelSection::Effects => {
             usize::from(adjustments.invert)
                 + usize::from(adjustments.posterize.is_some())
@@ -75,18 +201,27 @@ fn section_changes(section: PanelSection, adjustments: &Adjustments) -> usize {
 }
 
 fn reset_section(section: PanelSection, adjustments: &mut Adjustments) {
-    match section {
-        PanelSection::Tone => {
-            for slider in TONE {
-                adjustments.set_slider(slider, slider.neutral());
-            }
+    let defaults = Adjustments::default();
+    let reset = |adjustments: &mut Adjustments, sliders: &[Slider]| {
+        for slider in sliders {
+            adjustments.set_slider(*slider, slider.neutral());
         }
+    };
+    match section {
+        PanelSection::Tone => reset(adjustments, &TONE),
+        PanelSection::Levels => adjustments.levels = defaults.levels,
+        PanelSection::Curves => adjustments.curve = defaults.curve,
         PanelSection::Colour => {
-            for slider in COLOUR {
-                adjustments.set_slider(slider, slider.neutral());
-            }
+            reset(adjustments, &COLOUR);
             adjustments.monochrome = false;
         }
+        PanelSection::PhotoFilter => adjustments.photo_filter = None,
+        PanelSection::ChannelMixer => adjustments.mixer = defaults.mixer,
+        PanelSection::SelectiveColour => adjustments.selective = defaults.selective,
+        PanelSection::ReplaceColour => adjustments.replace = None,
+        PanelSection::MatchColour => adjustments.match_colour = None,
+        PanelSection::GradientMap => adjustments.gradient_map = None,
+        PanelSection::ColourLookup => adjustments.lookup = None,
         PanelSection::Effects => {
             adjustments.invert = false;
             adjustments.posterize = None;
@@ -94,6 +229,56 @@ fn reset_section(section: PanelSection, adjustments: &mut Adjustments) {
         }
         _ => {}
     }
+}
+
+/// Switchable groups have an on/off checkbox in their section header.
+const fn group_toggle(section: PanelSection, adjustments: &Adjustments) -> Option<bool> {
+    match section {
+        PanelSection::PhotoFilter => Some(adjustments.photo_filter.is_some()),
+        PanelSection::ReplaceColour => Some(adjustments.replace.is_some()),
+        PanelSection::GradientMap => Some(adjustments.gradient_map.is_some()),
+        _ => None,
+    }
+}
+
+fn toggle_group(section: PanelSection, adjustments: &mut Adjustments) {
+    match section {
+        PanelSection::PhotoFilter => {
+            adjustments.photo_filter = match adjustments.photo_filter {
+                Some(_) => None,
+                None => Some(PhotoFilter::default()),
+            };
+        }
+        PanelSection::ReplaceColour => {
+            adjustments.replace = match adjustments.replace {
+                Some(_) => None,
+                None => Some(ReplaceColour::default()),
+            };
+        }
+        PanelSection::GradientMap => {
+            adjustments.gradient_map = match adjustments.gradient_map {
+                Some(_) => None,
+                None => Some(GradientMap::default()),
+            };
+        }
+        _ => {}
+    }
+}
+
+/// All curve points share the editor's bounds.
+const fn track_key(slider: Slider) -> Slider {
+    match slider {
+        Slider::Curve(_) => Slider::Curve(0),
+        other => other,
+    }
+}
+
+const fn rgba([r, g, b]: [f32; 3]) -> Rgba {
+    Rgba { r, g, b, a: 1.0 }
+}
+
+const fn with_alpha(colour: Rgba, a: f32) -> Rgba {
+    Rgba { a, ..colour }
 }
 
 impl ContactSheet {
@@ -182,15 +367,26 @@ impl ContactSheet {
         cx.notify();
     }
 
-    fn commit_adjustments(&mut self, id: PhotoId, before: Adjustments, cx: &mut Context<Self>) {
-        let after = self.project.adjustments.for_photo(id);
-        if after == before {
+    fn commit_adjustments(&mut self, id: PhotoId, before: &Adjustments, cx: &mut Context<Self>) {
+        let Some(after) = self
+            .project
+            .adjustments
+            .shared(id)
+            .or_else(|| (!before.is_neutral()).then(Arc::default))
+        else {
+            return;
+        };
+        if *after == *before {
             return;
         }
         let before_dirty = self.dirty;
         self.dirty = true;
         self.push_photo_edit(
-            vec![PhotoFieldChange::Adjustments { id, before, after }],
+            vec![PhotoFieldChange::Adjustments {
+                id,
+                before: Arc::new(*before),
+                after,
+            }],
             Arc::clone(&self.selected),
             before_dirty,
         );
@@ -207,10 +403,10 @@ impl ContactSheet {
         let mut after = before;
         edit(&mut after);
         self.project.adjustments.set(id, after);
-        self.commit_adjustments(id, before, cx);
+        self.commit_adjustments(id, &before, cx);
     }
 
-    fn begin_slider_drag(
+    fn begin_adjust_drag(
         &mut self,
         slider: Slider,
         event: &MouseDownEvent,
@@ -222,8 +418,9 @@ impl ContactSheet {
         if event.click_count >= 2 {
             self.edit_adjustments(
                 photo,
-                |adjustments| {
-                    adjustments.set_slider(slider, slider.neutral());
+                |adjustments| match slider {
+                    Slider::Curve(_) => adjustments.curve = Curve::default(),
+                    _ => adjustments.set_slider(slider, slider.neutral()),
                 },
                 cx,
             );
@@ -235,29 +432,49 @@ impl ContactSheet {
             photo,
             before,
         });
-        self.drag_slider(event.position.x, cx);
+        self.drag_slider(event.position, cx);
     }
 
-    pub(crate) fn drag_slider(&mut self, x: Pixels, cx: &mut Context<Self>) {
+    /// A press on the curve picks the nearest of its five points.
+    fn begin_curve_drag(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        let Some(bounds) = self.track_bounds(Slider::Curve(0)) else {
+            return;
+        };
+        let width = f32::from(bounds.size.width).max(1.0);
+        let input = (f32::from(event.position.x - bounds.left()) / width * 255.0).clamp(0.0, 255.0);
+        let nearest = Curve::INPUTS
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| (*a - input).abs().total_cmp(&(*b - input).abs()))
+            .map_or(0, |(index, _)| index);
+        self.begin_adjust_drag(Slider::Curve(nearest as u8), event, cx);
+    }
+
+    fn track_bounds(&self, slider: Slider) -> Option<Bounds<Pixels>> {
+        self.slider_tracks
+            .get(&track_key(slider))
+            .map(|track| track.get())
+            .filter(|bounds| f32::from(bounds.size.width) > 0.0)
+    }
+
+    pub(crate) fn drag_slider(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(drag) = self.adjust_drag else {
             return;
         };
-        let Some(bounds) = self
-            .slider_tracks
-            .get(&drag.slider)
-            .map(|track| track.get())
-        else {
+        let Some(bounds) = self.track_bounds(drag.slider) else {
             return;
         };
-        let width = f32::from(bounds.size.width);
-        if width <= 0.0 {
-            return;
-        }
-        let at = ((f32::from(x) - f32::from(bounds.left())) / width).clamp(0.0, 1.0);
         let range = drag.slider.range();
+        let value = if matches!(drag.slider, Slider::Curve(_)) {
+            let height = f32::from(bounds.size.height).max(1.0);
+            (1.0 - f32::from(position.y - bounds.top()) / height) * 255.0
+        } else {
+            let width = f32::from(bounds.size.width);
+            range.value_at(f32::from(position.x - bounds.left()) / width)
+        };
         let current = self.project.adjustments.for_photo(drag.photo);
         let mut next = current;
-        next.set_slider(drag.slider, at.mul_add(range.max - range.min, range.min));
+        next.set_slider(drag.slider, value);
         if next != current {
             self.project.adjustments.set(drag.photo, next);
             self.render_inspector_image(cx);
@@ -267,7 +484,7 @@ impl ContactSheet {
 
     pub(crate) fn end_slider_drag(&mut self, cx: &mut Context<Self>) {
         if let Some(drag) = self.adjust_drag.take() {
-            self.commit_adjustments(drag.photo, drag.before, cx);
+            self.commit_adjustments(drag.photo, &drag.before, cx);
             cx.notify();
         }
     }
@@ -276,22 +493,27 @@ impl ContactSheet {
         let Some(source) = self.inspected_photo else {
             return;
         };
-        let adjustments = self.project.adjustments.for_photo(source);
+        let after = self.project.adjustments.shared(source).unwrap_or_default();
+        let neutral = Arc::new(Adjustments::default());
         let mut fields = Vec::new();
         let mut ids = Vec::new();
         for id in self.selected.iter().filter(|id| *id != source) {
-            let before = self.project.adjustments.for_photo(id);
-            if before != adjustments {
+            let before = self
+                .project
+                .adjustments
+                .shared(id)
+                .unwrap_or_else(|| Arc::clone(&neutral));
+            if before != after {
                 fields.push(PhotoFieldChange::Adjustments {
                     id,
                     before,
-                    after: adjustments,
+                    after: Arc::clone(&after),
                 });
                 ids.push(id);
             }
         }
         for id in &ids {
-            self.project.adjustments.set(*id, adjustments);
+            self.project.adjustments.set_shared(*id, Arc::clone(&after));
         }
         if !ids.is_empty() {
             let before_dirty = self.dirty;
@@ -304,53 +526,434 @@ impl ContactSheet {
         cx.notify();
     }
 
-    /// The Tone, Colour and Effects sections for the inspected photo, then
-    /// the actions that reach beyond it.
+    /// Match the inspected photo's colours to the first other selected photo.
+    fn match_selected(&mut self, photo: PhotoId, cx: &mut Context<Self>) {
+        let Some(source) = self.selected.iter().find(|id| *id != photo) else {
+            return;
+        };
+        let Some(path) = self
+            .project
+            .photo(source)
+            .map(|photo| photo.path.to_path_buf())
+        else {
+            return;
+        };
+        let generation = self.generation;
+        self.set_status("Reading the source photo's colours");
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let stats = cx
+                .background_spawn(async move {
+                    import::preview(&path, 512).map(|preview| preview.colour_stats())
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                match stats {
+                    Ok(target) => {
+                        this.edit_adjustments(
+                            photo,
+                            |adjustments| {
+                                adjustments.match_colour = Some(MatchColour::new(source, target));
+                            },
+                            cx,
+                        );
+                        this.set_status("Colours matched");
+                    }
+                    Err(error) => this.set_status(format!("Match colour failed / {error}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn load_lut(&mut self, photo: PhotoId, cx: &mut Context<Self>) {
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            let Ok(receiver) = cx.update(|app| {
+                app.prompt_for_paths(PathPromptOptions {
+                    files: true,
+                    directories: false,
+                    multiple: false,
+                    prompt: Some("Choose a .cube LUT".into()),
+                })
+            }) else {
+                return;
+            };
+            let Ok(Ok(Some(paths))) = receiver.await else {
+                return;
+            };
+            let Some(path): Option<PathBuf> = paths.into_iter().next() else {
+                return;
+            };
+            let task_path = path.clone();
+            let loaded = cx
+                .background_spawn(async move { load_lut_file(&task_path) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                match loaded {
+                    Ok(lut) => {
+                        this.project.adjustments.remember_lut(lut, &path);
+                        this.edit_adjustments(
+                            photo,
+                            |adjustments| {
+                                adjustments.lookup = Some(ColourLookup { lut, amount: 100.0 });
+                            },
+                            cx,
+                        );
+                    }
+                    Err(error) => this.set_status(format!("Could not load the LUT / {error:#}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Every adjustment section for the inspected photo, then the actions
+    /// that reach beyond it.
     pub(crate) fn render_adjustments(
         &mut self,
         photo: PhotoId,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let adjustments = self.project.adjustments.for_photo(photo);
-        let tone_rows: Vec<AnyElement> = TONE
-            .into_iter()
-            .map(|slider| self.slider_row(slider, &adjustments, cx))
-            .collect();
-        let mut colour_rows: Vec<AnyElement> = COLOUR
-            .into_iter()
-            .map(|slider| self.slider_row(slider, &adjustments, cx))
-            .collect();
-        colour_rows.push(toggle_row(
-            "adjust-monochrome",
-            "Black & white",
-            adjustments.monochrome,
-            Some(
-                text_button("adjust-desaturate", "Desaturate")
-                    .on_click(cx.listener(move |this, _, _, cx| {
+        let mut blocks = Vec::new();
+        for section in ADJUSTMENT_SECTIONS {
+            let open = !self.collapsed_sections.contains(&section);
+            let rows = if open {
+                self.section_rows(section, photo, &adjustments, cx)
+            } else {
+                Vec::new()
+            };
+            let changes = section_changes(section, &adjustments);
+            let action = self.section_action(section, photo, &adjustments, changes, cx);
+            blocks.push(panel_section(
+                section,
+                section_title(section),
+                if changes > 0 {
+                    format!("{changes} changed")
+                } else {
+                    String::new()
+                },
+                open,
+                div().pb(px(8.0)).children(rows).into_any_element(),
+                action,
+                cx,
+            ));
+        }
+
+        let selected_others = self.selected.len() - usize::from(self.selected.contains(photo));
+        let copy: AnyElement = if selected_others == 0 || adjustments.is_neutral() {
+            disabled_button("Copy to selected")
+                .flex_1()
+                .into_any_element()
+        } else {
+            button("adjust-copy", format!("Copy to {selected_others} selected"))
+                .flex_1()
+                .on_click(cx.listener(|this, _, _, cx| this.copy_adjustments_to_selection(cx)))
+                .into_any_element()
+        };
+        let reset: AnyElement = if adjustments.is_neutral() {
+            disabled_button("Reset").into_any_element()
+        } else {
+            button("adjust-reset", "Reset")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.edit_adjustments(
+                        photo,
+                        |adjustments| *adjustments = Adjustments::default(),
+                        cx,
+                    );
+                }))
+                .into_any_element()
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .children(blocks)
+            .child(
+                div()
+                    .border_t_1()
+                    .border_color(theme::rule())
+                    .px(px(16.0))
+                    .py(px(12.0))
+                    .flex()
+                    .gap(px(6.0))
+                    .child(copy)
+                    .child(reset),
+            )
+            .into_any_element()
+    }
+
+    /// A section header's reset icon, and the on/off checkbox of a
+    /// switchable group.
+    fn section_action(
+        &self,
+        section: PanelSection,
+        photo: PhotoId,
+        adjustments: &Adjustments,
+        changes: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let reset = (changes > 0).then(|| {
+            div()
+                .id(ElementId::Name(SharedString::from(format!(
+                    "reset-{}",
+                    section.key()
+                ))))
+                .size(px(20.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .hover(|style| style.bg(theme::accent_soft()))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.edit_adjustments(
+                        photo,
+                        |adjustments| reset_section(section, adjustments),
+                        cx,
+                    );
+                }))
+                .child(icon(assets::UNDO, 12.0, theme::muted()))
+        });
+        let toggle = group_toggle(section, adjustments).map(|on| {
+            let selector = format!("toggle-{}", section.key());
+            checkbox(ElementId::Name(SharedString::from(selector.clone())), on)
+                .size(px(18.0))
+                .debug_selector(move || selector)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.edit_adjustments(
+                        photo,
+                        |adjustments| toggle_group(section, adjustments),
+                        cx,
+                    );
+                }))
+        });
+        if reset.is_none() && toggle.is_none() {
+            return None;
+        }
+        Some(
+            div()
+                .my(px(-3.0))
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .children(reset)
+                .children(toggle)
+                .into_any_element(),
+        )
+    }
+
+    fn sliders(
+        &mut self,
+        sliders: &[Slider],
+        adjustments: &Adjustments,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        sliders
+            .iter()
+            .map(|slider| self.slider_row(*slider, adjustments, cx))
+            .collect()
+    }
+
+    fn section_rows(
+        &mut self,
+        section: PanelSection,
+        photo: PhotoId,
+        adjustments: &Adjustments,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        match section {
+            PanelSection::Tone => self.sliders(&TONE, adjustments, cx),
+            PanelSection::Levels => {
+                let mut rows = vec![self.histogram(photo, 56.0)];
+                rows.extend(self.sliders(&LEVELS, adjustments, cx));
+                rows
+            }
+            PanelSection::Curves => vec![self.curve_editor(photo, adjustments, cx)],
+            PanelSection::Colour => {
+                let mut rows = self.sliders(&COLOUR, adjustments, cx);
+                rows.push(toggle_row(
+                    "adjust-monochrome",
+                    "Black & white",
+                    adjustments.monochrome,
+                    Some(
+                        text_button("adjust-desaturate", "Desaturate")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.edit_adjustments(
+                                    photo,
+                                    |adjustments| {
+                                        adjustments.set_slider(
+                                            Slider::Saturation,
+                                            Slider::Saturation.range().min,
+                                        );
+                                    },
+                                    cx,
+                                );
+                            }))
+                            .into_any_element(),
+                    ),
+                    cx.listener(move |this, _, _, cx| {
                         this.edit_adjustments(
                             photo,
-                            |adjustments| {
-                                adjustments
-                                    .set_slider(Slider::Saturation, Slider::Saturation.range().min);
-                            },
+                            |adjustments| adjustments.monochrome = !adjustments.monochrome,
                             cx,
                         );
-                    }))
-                    .into_any_element(),
-            ),
-            cx.listener(move |this, _, _, cx| {
-                this.edit_adjustments(
-                    photo,
-                    |adjustments| {
-                        adjustments.monochrome = !adjustments.monochrome;
-                    },
-                    cx,
-                );
+                    }),
+                ));
+                rows
+            }
+            PanelSection::PhotoFilter if adjustments.photo_filter.is_some() => {
+                self.sliders(&FILTER, adjustments, cx)
+            }
+            PanelSection::ChannelMixer => {
+                let output = self.adjust_focus.mixer_output;
+                let mut rows = vec![segments(
+                    Channel::ALL.map(|channel| {
+                        segment_button(
+                            ElementId::Name(SharedString::from(format!(
+                                "mixer-{}",
+                                channel.label().to_lowercase()
+                            ))),
+                            channel.label(),
+                            channel == output,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.adjust_focus.mixer_output = channel;
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                    }),
+                    3,
+                )];
+                let inputs = Channel::ALL.map(|input| Slider::Mix { output, input });
+                rows.extend(self.sliders(&inputs, adjustments, cx));
+                rows
+            }
+            PanelSection::SelectiveColour => {
+                let range = self.adjust_focus.selective_range;
+                let mut rows = vec![segments(
+                    HueRange::ALL.map(|choice| {
+                        segment_button(
+                            ElementId::Name(SharedString::from(format!(
+                                "selective-{}",
+                                choice.label().to_lowercase()
+                            ))),
+                            choice.label(),
+                            choice == range,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.adjust_focus.selective_range = choice;
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                    }),
+                    3,
+                )];
+                let knobs = TONE_KNOBS.map(|knob| Slider::Selective(range, knob));
+                rows.extend(self.sliders(&knobs, adjustments, cx));
+                rows
+            }
+            PanelSection::ReplaceColour if adjustments.replace.is_some() => {
+                self.sliders(&REPLACE, adjustments, cx)
+            }
+            PanelSection::MatchColour => self.match_rows(photo, adjustments, cx),
+            PanelSection::GradientMap => adjustments.gradient_map.map_or_else(Vec::new, |map| {
+                let mut rows = vec![gradient_bar(map)];
+                rows.extend(self.sliders(&GRADIENT, adjustments, cx));
+                rows
             }),
-        ));
+            PanelSection::ColourLookup => self.lookup_rows(photo, adjustments, cx),
+            PanelSection::Effects => self.effect_rows(photo, adjustments, cx),
+            _ => Vec::new(),
+        }
+    }
 
+    fn match_rows(
+        &mut self,
+        photo: PhotoId,
+        adjustments: &Adjustments,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let Some(matched) = adjustments.match_colour else {
+            let has_source = self.selected.iter().any(|id| id != photo);
+            return vec![action_row(if has_source {
+                button("match-selected", "Match selected photo")
+                    .flex_1()
+                    .on_click(cx.listener(move |this, _, _, cx| this.match_selected(photo, cx)))
+                    .into_any_element()
+            } else {
+                disabled_button("Match selected photo")
+                    .flex_1()
+                    .into_any_element()
+            })];
+        };
+        let source = self
+            .project
+            .photo(matched.source)
+            .map_or_else(|| "Removed photo".to_string(), slate_core::Photo::file_name);
+        let mut rows = vec![source_row(source)];
+        rows.extend(self.sliders(&MATCH, adjustments, cx));
+        rows
+    }
+
+    fn lookup_rows(
+        &mut self,
+        photo: PhotoId,
+        adjustments: &Adjustments,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let load = button(
+            "lookup-load",
+            if adjustments.lookup.is_some() {
+                "Change LUT"
+            } else {
+                "Load LUT"
+            },
+        )
+        .flex_1()
+        .on_click(cx.listener(move |this, _, _, cx| this.load_lut(photo, cx)))
+        .into_any_element();
+        let Some(lookup) = adjustments.lookup else {
+            return vec![action_row(load)];
+        };
+        let name = self
+            .project
+            .adjustments
+            .lut_path(lookup.lut)
+            .and_then(|path| path.file_name())
+            .map_or_else(
+                || "LUT".to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+        let name = if AdjustmentMap::lut_loaded(lookup.lut) {
+            name
+        } else {
+            format!("{name} / missing")
+        };
+        let mut rows = vec![source_row(name)];
+        rows.extend(self.sliders(&[Slider::LookupAmount], adjustments, cx));
+        rows.push(action_row(load));
+        rows
+    }
+
+    fn effect_rows(
+        &mut self,
+        photo: PhotoId,
+        adjustments: &Adjustments,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let levels = adjustments.posterize;
-        let mut effect_rows = vec![
+        let mut rows = vec![
             toggle_row(
                 "adjust-invert",
                 "Invert",
@@ -359,9 +962,7 @@ impl ContactSheet {
                 cx.listener(move |this, _, _, cx| {
                     this.edit_adjustments(
                         photo,
-                        |adjustments| {
-                            adjustments.invert = !adjustments.invert;
-                        },
+                        |adjustments| adjustments.invert = !adjustments.invert,
                         cx,
                     );
                 }),
@@ -429,100 +1030,96 @@ impl ContactSheet {
             ),
         ];
         if adjustments.threshold.is_some() {
-            effect_rows.push(self.slider_row(Slider::Threshold, &adjustments, cx));
+            rows.push(self.slider_row(Slider::Threshold, adjustments, cx));
         }
+        rows
+    }
 
-        let sections = [
-            (PanelSection::Tone, "Tone", tone_rows),
-            (PanelSection::Colour, "Colour", colour_rows),
-            (PanelSection::Effects, "Effects", effect_rows),
-        ];
-        let mut blocks = Vec::new();
-        for (section, title, rows) in sections {
-            let changes = section_changes(section, &adjustments);
-            let reset = (changes > 0).then(|| {
-                div()
-                    .id(ElementId::Name(SharedString::from(format!(
-                        "reset-{}",
-                        section.key()
-                    ))))
-                    .size(px(20.0))
-                    .my(px(-3.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(theme::accent_soft()))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.edit_adjustments(
-                            photo,
-                            |adjustments| {
-                                reset_section(section, adjustments);
-                            },
-                            cx,
-                        );
-                    }))
-                    .child(icon(assets::UNDO, 12.0, theme::muted()))
-                    .into_any_element()
-            });
-            let open = !self.collapsed_sections.contains(&section);
-            blocks.push(panel_section(
-                section,
-                title,
-                if changes > 0 {
-                    format!("{changes} changed")
-                } else {
-                    String::new()
-                },
-                open,
-                div().pb(px(8.0)).children(rows).into_any_element(),
-                reset,
-                cx,
-            ));
-        }
-
-        let selected_others = self.selected.len() - usize::from(self.selected.contains(photo));
-        let copy: AnyElement = if selected_others == 0 || adjustments.is_neutral() {
-            disabled_button("Copy to selected")
-                .flex_1()
-                .into_any_element()
-        } else {
-            button("adjust-copy", format!("Copy to {selected_others} selected"))
-                .flex_1()
-                .on_click(cx.listener(|this, _, _, cx| this.copy_adjustments_to_selection(cx)))
-                .into_any_element()
-        };
-        let reset: AnyElement = if adjustments.is_neutral() {
-            disabled_button("Reset").into_any_element()
-        } else {
-            button("adjust-reset", "Reset")
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.edit_adjustments(
-                        photo,
-                        |adjustments| {
-                            *adjustments = Adjustments::default();
-                        },
-                        cx,
-                    );
-                }))
-                .into_any_element()
-        };
-
+    /// The inspected photo's luminance histogram, as decoded.
+    fn histogram(&self, photo: PhotoId, height: f32) -> AnyElement {
+        let bins = self
+            .inspector_histogram
+            .as_ref()
+            .filter(|(id, _)| *id == photo)
+            .map(|(_, bins)| Arc::clone(bins));
+        let bar = with_alpha(theme::muted(), 0.45);
         div()
-            .flex()
-            .flex_col()
-            .children(blocks)
+            .px(px(16.0))
+            .pt(px(4.0))
+            .pb(px(6.0))
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, (), window, _| {
+                        if let Some(bins) = &bins {
+                            paint_histogram(window, bounds, bins, bar);
+                        }
+                    },
+                )
+                .w_full()
+                .h(px(height)),
+            )
+            .into_any_element()
+    }
+
+    fn curve_editor(
+        &mut self,
+        photo: PhotoId,
+        adjustments: &Adjustments,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let width = (self.panels.right() - 32.0).max(80.0);
+        let height = (width * 0.75).min(220.0);
+        let track = self
+            .slider_tracks
+            .entry(Slider::Curve(0))
+            .or_default()
+            .clone();
+        let bins = self
+            .inspector_histogram
+            .as_ref()
+            .filter(|(id, _)| *id == photo)
+            .map(|(_, bins)| Arc::clone(bins));
+        let curve = adjustments.curve;
+        let (ink, rule, bar) = (theme::ink(), theme::rule(), with_alpha(theme::muted(), 0.3));
+        div()
+            .px(px(16.0))
+            .pt(px(4.0))
+            .pb(px(8.0))
             .child(
                 div()
-                    .border_t_1()
+                    .id("curve-editor")
+                    .debug_selector(|| "curve-editor".into())
+                    .w(px(width))
+                    .h(px(height))
+                    .bg(theme::surface())
+                    .border_1()
                     .border_color(theme::rule())
-                    .px(px(16.0))
-                    .py(px(12.0))
-                    .flex()
-                    .gap(px(6.0))
-                    .child(copy)
-                    .child(reset),
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.begin_curve_drag(event, cx);
+                        }),
+                    )
+                    .child(
+                        canvas(
+                            move |bounds, _, _| track.set(bounds),
+                            move |bounds, (), window, _| {
+                                paint_curve(
+                                    window,
+                                    bounds,
+                                    &curve,
+                                    bins.as_deref(),
+                                    ink,
+                                    rule,
+                                    bar,
+                                );
+                            },
+                        )
+                        .size_full(),
+                    ),
             )
             .into_any_element()
     }
@@ -535,13 +1132,46 @@ impl ContactSheet {
     ) -> AnyElement {
         let value = adjustments.slider(slider);
         let range = slider.range();
-        let span = range.max - range.min;
-        let at = ((value - range.min) / span).clamp(0.0, 1.0);
-        let origin = ((slider.neutral() - range.min) / span).clamp(0.0, 1.0);
+        let at = range.fraction(value);
+        let origin = range.fraction(slider.neutral());
         let changed = value != slider.neutral();
         let track = self.slider_tracks.entry(slider).or_default().clone();
         let id = format!("slider-{slider:?}").to_lowercase();
         let selector = id.clone();
+        let rail: AnyElement = if slider.is_hue_picker() {
+            canvas(
+                |_, _, _| {},
+                |bounds, (), window, _| {
+                    const STEPS: usize = 48;
+                    let width = f32::from(bounds.size.width) / STEPS as f32;
+                    for step in 0..STEPS {
+                        let hue = step as f32 / STEPS as f32 * 360.0;
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                point(bounds.left() + px(step as f32 * width), bounds.top()),
+                                size(px(width + 0.5), bounds.size.height),
+                            ),
+                            rgba(hue_colour(hue, 0.8)),
+                        ));
+                    }
+                },
+            )
+            .absolute()
+            .top(px(5.0))
+            .left(px(0.0))
+            .right(px(0.0))
+            .h(px(4.0))
+            .into_any_element()
+        } else {
+            div()
+                .absolute()
+                .top(px(6.5))
+                .left(px(0.0))
+                .right(px(0.0))
+                .h(px(1.0))
+                .bg(theme::rule())
+                .into_any_element()
+        };
         div()
             .px(px(16.0))
             .py(px(5.0))
@@ -588,7 +1218,7 @@ impl ContactSheet {
                         MouseButton::Left,
                         cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                             cx.stop_propagation();
-                            this.begin_slider_drag(slider, event, cx);
+                            this.begin_adjust_drag(slider, event, cx);
                         }),
                     )
                     // Record where the track was laid out, so a drag maps the
@@ -600,24 +1230,16 @@ impl ContactSheet {
                             .left(px(0.0))
                             .size_full(),
                     )
-                    .child(
-                        div()
-                            .absolute()
-                            .top(px(6.5))
-                            .left(px(0.0))
-                            .right(px(0.0))
-                            .h(px(1.0))
-                            .bg(theme::rule()),
-                    )
-                    .child(
+                    .child(rail)
+                    .children((!slider.is_hue_picker()).then(|| {
                         div()
                             .absolute()
                             .top(px(6.0))
                             .left(relative(at.min(origin)))
                             .w(relative((at - origin).abs()))
                             .h(px(2.0))
-                            .bg(theme::ink()),
-                    )
+                            .bg(theme::ink())
+                    }))
                     .child(
                         div()
                             .absolute()
@@ -632,7 +1254,7 @@ impl ContactSheet {
                             })
                             .border_1()
                             .border_color(if changed {
-                                theme::ink()
+                                theme::surface()
                             } else {
                                 theme::muted()
                             }),
@@ -640,6 +1262,160 @@ impl ContactSheet {
             )
             .into_any_element()
     }
+}
+
+fn paint_histogram(
+    window: &mut gpui::Window,
+    bounds: Bounds<Pixels>,
+    bins: &[u32; 256],
+    colour: Rgba,
+) {
+    let peak = bins.iter().copied().max().unwrap_or(0).max(1) as f32;
+    let width = f32::from(bounds.size.width) / 256.0;
+    let height = f32::from(bounds.size.height);
+    for (index, count) in bins.iter().enumerate() {
+        if *count == 0 {
+            continue;
+        }
+        // A square-root scale keeps thin tails visible beside a tall peak.
+        let bar = (*count as f32 / peak).sqrt() * height;
+        window.paint_quad(fill(
+            Bounds::new(
+                point(
+                    bounds.left() + px(index as f32 * width),
+                    bounds.bottom() - px(bar),
+                ),
+                size(px(width.max(1.0)), px(bar)),
+            ),
+            colour,
+        ));
+    }
+}
+
+fn paint_curve(
+    window: &mut gpui::Window,
+    bounds: Bounds<Pixels>,
+    curve: &Curve,
+    bins: Option<&[u32; 256]>,
+    ink: Rgba,
+    rule: Rgba,
+    bar: Rgba,
+) {
+    let width = f32::from(bounds.size.width);
+    let height = f32::from(bounds.size.height);
+    let at = |input: f32, output: f32| {
+        point(
+            bounds.left() + px(input / 255.0 * width),
+            bounds.top() + px((1.0 - output / 255.0) * height),
+        )
+    };
+    if let Some(bins) = bins {
+        paint_histogram(window, bounds, bins, bar);
+    }
+    for quarter in 1..4 {
+        let offset = quarter as f32 / 4.0;
+        window.paint_quad(fill(
+            Bounds::new(
+                point(bounds.left() + px(offset * width), bounds.top()),
+                size(px(1.0), bounds.size.height),
+            ),
+            rule,
+        ));
+        window.paint_quad(fill(
+            Bounds::new(
+                point(bounds.left(), bounds.top() + px(offset * height)),
+                size(bounds.size.width, px(1.0)),
+            ),
+            rule,
+        ));
+    }
+    let mut identity = PathBuilder::stroke(px(1.0));
+    identity.move_to(at(0.0, 0.0));
+    identity.line_to(at(255.0, 255.0));
+    if let Ok(path) = identity.build() {
+        window.paint_path(path, rule);
+    }
+    let mut line = PathBuilder::stroke(px(1.5));
+    line.move_to(at(0.0, curve.sample(0.0)));
+    for step in 1..=64 {
+        let input = step as f32 / 64.0 * 255.0;
+        line.line_to(at(input, curve.sample(input)));
+    }
+    if let Ok(path) = line.build() {
+        window.paint_path(path, ink);
+    }
+    for index in 0..CURVE_POINTS {
+        let centre = at(Curve::INPUTS[index], curve.points[index]);
+        window.paint_quad(fill(
+            Bounds::new(centre - point(px(3.5), px(3.5)), size(px(7.0), px(7.0))),
+            ink,
+        ));
+    }
+}
+
+/// The gradient map's colours from shadow to highlight.
+fn gradient_bar(map: GradientMap) -> AnyElement {
+    div()
+        .px(px(16.0))
+        .pt(px(4.0))
+        .pb(px(4.0))
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, (), window, _| {
+                    const STEPS: usize = 48;
+                    let width = f32::from(bounds.size.width) / STEPS as f32;
+                    for step in 0..STEPS {
+                        let y = (step as f32 + 0.5) / STEPS as f32;
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                point(bounds.left() + px(step as f32 * width), bounds.top()),
+                                size(px(width + 0.5), bounds.size.height),
+                            ),
+                            rgba(map.colour_at(y)),
+                        ));
+                    }
+                },
+            )
+            .w_full()
+            .h(px(14.0)),
+        )
+        .into_any_element()
+}
+
+/// Lay choices out in rows of `columns`.
+fn segments<const N: usize>(choices: [AnyElement; N], columns: u16) -> AnyElement {
+    div()
+        .px(px(16.0))
+        .pt(px(2.0))
+        .pb(px(6.0))
+        .grid()
+        .grid_cols(columns)
+        .gap(px(4.0))
+        .children(choices)
+        .into_any_element()
+}
+
+fn action_row(control: AnyElement) -> AnyElement {
+    div()
+        .px(px(16.0))
+        .py(px(6.0))
+        .flex()
+        .child(control)
+        .into_any_element()
+}
+
+/// What a match or lookup draws from.
+fn source_row(name: String) -> AnyElement {
+    div()
+        .px(px(16.0))
+        .py(px(6.0))
+        .child(
+            mono_text(theme::TEXT_META, theme::muted())
+                .truncate()
+                .child(name),
+        )
+        .into_any_element()
 }
 
 fn toggle_row(

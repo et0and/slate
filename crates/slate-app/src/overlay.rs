@@ -6,7 +6,6 @@ use slate_core::convert::OutputFormat;
 
 use crate::app::ContactSheet;
 use crate::assets;
-use crate::drive;
 use crate::drive_ui::DriveMode;
 use crate::theme;
 use crate::widgets::{
@@ -191,11 +190,12 @@ impl ContactSheet {
             .min(f32::from(viewport.height) - height - 8.0)
             .max(8.0);
         let drive_meta = if self.drive_linking {
-            "Waiting…".to_string()
+            Some("Waiting…".to_string())
         } else {
-            self.drive_account
-                .as_ref()
-                .map_or_else(|| "Not linked".to_string(), drive::DriveAccount::label)
+            self.drive_account.as_ref().map_or_else(
+                || Some("Not linked".to_string()),
+                |account| account.label().map(str::to_string),
+            )
         };
         let rows = vec![
             context_item("folder-menu-local", assets::FOLDER_PLUS, "Local folder")
@@ -205,7 +205,7 @@ impl ContactSheet {
                 }))
                 .into_any_element(),
             context_item("folder-menu-drive", assets::CLOUD, "Google Drive")
-                .child(micro(drive_meta).min_w(px(0.0)).truncate())
+                .children(drive_meta.map(|meta| micro(meta).min_w(px(0.0)).truncate()))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.folder_menu = None;
                     this.open_drive(DriveMode::Import, cx);

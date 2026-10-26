@@ -30,7 +30,7 @@ use slate_core::pdf::{self, ExportSummary};
 use slate_core::store::{LocalStore, RecentCollection};
 
 use crate::about_window::AboutWindow;
-use crate::adjust_ui::{AdjustDrag, InspectorRender};
+use crate::adjust_ui::{AdjustDrag, AdjustFocus, COLLAPSED_BY_DEFAULT, InspectorRender};
 use crate::drive::{self, DriveEntry};
 use crate::drive_ui::{DriveDownload, DriveMode, DriveNotice, DrivePicker};
 use crate::history::{History, PhotoEdit, PhotoFieldChange, Snapshot, Step};
@@ -144,7 +144,16 @@ pub enum PanelSection {
     Sort,
     Filters,
     Tone,
+    Levels,
+    Curves,
     Colour,
+    PhotoFilter,
+    ChannelMixer,
+    SelectiveColour,
+    ReplaceColour,
+    MatchColour,
+    GradientMap,
+    ColourLookup,
     Effects,
     CaptureDate,
     Exif,
@@ -160,7 +169,16 @@ impl PanelSection {
             Self::Sort => "sort",
             Self::Filters => "filters",
             Self::Tone => "tone",
+            Self::Levels => "levels",
+            Self::Curves => "curves",
             Self::Colour => "colour",
+            Self::PhotoFilter => "photo-filter",
+            Self::ChannelMixer => "channel-mixer",
+            Self::SelectiveColour => "selective-colour",
+            Self::ReplaceColour => "replace-colour",
+            Self::MatchColour => "match-colour",
+            Self::GradientMap => "gradient-map",
+            Self::ColourLookup => "colour-lookup",
             Self::Effects => "effects",
             Self::CaptureDate => "capture-date",
             Self::Exif => "exif",
@@ -220,6 +238,8 @@ pub struct ContactSheet {
     pub(crate) inspector_base: Option<(PhotoId, Arc<PreviewImage>)>,
     pub(crate) inspector_render: InspectorRender,
     pub(crate) adjust_drag: Option<AdjustDrag>,
+    pub(crate) adjust_focus: AdjustFocus,
+    pub(crate) inspector_histogram: Option<(PhotoId, Arc<[u32; 256]>)>,
     pub(crate) slider_tracks: HashMap<Slider, Rc<Cell<Bounds<Pixels>>>>,
     pub(crate) about_window: Option<WindowHandle<AboutWindow>>,
     pub(crate) rename_window: Option<WindowHandle<RenameWindow>>,
@@ -434,6 +454,8 @@ impl ContactSheet {
             inspector_base: None,
             inspector_render: InspectorRender::Idle,
             adjust_drag: None,
+            adjust_focus: AdjustFocus::default(),
+            inspector_histogram: None,
             slider_tracks: HashMap::new(),
             about_window: None,
             rename_window: None,
@@ -459,7 +481,7 @@ impl ContactSheet {
             focused_once: false,
             theme,
             appearance_initialized: false,
-            collapsed_sections: HashSet::new(),
+            collapsed_sections: COLLAPSED_BY_DEFAULT.into_iter().collect(),
             panels: PanelLayout::default(),
             menu_open: None,
             drive_account: drive::load_account(),
@@ -625,7 +647,7 @@ impl ContactSheet {
     ) {
         self.resize_move(event, window, cx);
         self.marquee_move(event, window, cx);
-        self.drag_slider(event.position.x, cx);
+        self.drag_slider(event.position, cx);
     }
 
     pub(crate) fn toggle_left_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -713,8 +735,8 @@ impl ContactSheet {
         }
         let options = child_window_options(
             "About Slate",
-            size(px(480.0), px(340.0)),
-            size(px(420.0), px(300.0)),
+            size(px(480.0), px(370.0)),
+            size(px(420.0), px(320.0)),
             cx,
         );
         if let Ok(handle) = cx.open_window(options, |_, cx| cx.new(AboutWindow::new)) {
@@ -999,7 +1021,7 @@ impl ContactSheet {
                 PhotoFieldChange::Adjustments { id, before, after } => {
                     self.project
                         .adjustments
-                        .set(*id, if forward { *after } else { *before });
+                        .set_shared(*id, Arc::clone(if forward { after } else { before }));
                     adjusted.push(*id);
                 }
             }
@@ -1610,7 +1632,12 @@ impl ContactSheet {
         self.inspector_base = None;
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { import::preview(&path, INSPECTOR_EDGE) })
+                .background_spawn(async move {
+                    import::preview(&path, INSPECTOR_EDGE).map(|preview| {
+                        let histogram = preview.histogram();
+                        (preview, histogram)
+                    })
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.generation != generation
@@ -1620,7 +1647,8 @@ impl ContactSheet {
                     return;
                 }
                 match result {
-                    Ok(preview) => {
+                    Ok((preview, histogram)) => {
+                        this.inspector_histogram = Some((photo_id, Arc::new(histogram)));
                         this.inspector_base = Some((photo_id, Arc::new(preview)));
                         this.render_inspector_image(cx);
                     }
@@ -3833,6 +3861,49 @@ mod tests {
         view.update(cx, super::ContactSheet::undo);
         view.update(cx, |view, _| {
             assert!(view.project.adjustments.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn group_toggles_and_the_curve_edit_the_inspected_photo(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = ready_view(cx);
+        cx.simulate_resize(size(px(1600.0), px(1600.0)));
+        view.update(cx, |view, cx| {
+            view.collapsed_sections = crate::adjust_ui::ADJUSTMENT_SECTIONS
+                .into_iter()
+                .filter(|section| {
+                    !matches!(section, PanelSection::Curves | PanelSection::PhotoFilter)
+                })
+                .collect();
+            view.inspect_photo(PhotoId(1), cx);
+        });
+        cx.run_until_parked();
+
+        ui_click(&view, cx, "toggle-photo-filter");
+        view.update(cx, |view, _| {
+            assert!(
+                view.project
+                    .adjustments
+                    .for_photo(PhotoId(1))
+                    .photo_filter
+                    .is_some()
+            );
+            assert!(
+                !view.collapsed_sections.contains(&PanelSection::PhotoFilter),
+                "the header checkbox must not collapse its section"
+            );
+        });
+
+        draw_root(&view, cx);
+        let editor = cx
+            .debug_bounds("curve-editor")
+            .expect("the curve editor renders");
+        let lifted = Point::new(editor.center().x, editor.top() + editor.size.height * 0.1);
+        cx.simulate_click(lifted, gpui::Modifiers::none());
+        cx.run_until_parked();
+        view.update(cx, |view, _| {
+            let midpoint = view.project.adjustments.for_photo(PhotoId(1)).curve.points[2];
+            assert!(midpoint > 200.0, "the middle point moved to {midpoint}");
         });
     }
 

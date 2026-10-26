@@ -1135,6 +1135,10 @@ impl Collection {
             );
         }
         project.normalize();
+        let missing = project.adjustments.load_luts();
+        if missing > 0 {
+            tracing::warn!(missing, "colour lookup tables could not be loaded");
+        }
         Ok(project)
     }
 

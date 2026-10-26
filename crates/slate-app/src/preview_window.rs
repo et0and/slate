@@ -5,7 +5,7 @@ use gpui::{Context, FocusHandle, Focusable, Render, Window, actions, div, prelud
 use crate::app::ContactSheet;
 use crate::assets;
 use crate::theme;
-use crate::widgets::{button, icon_button, mini_button, mono_text, ui_text};
+use crate::widgets::{button, mini_button, mono_text};
 
 actions!(
     preview_window_actions,
@@ -83,41 +83,12 @@ impl Render for PreviewWindow {
                     .flex_col()
                     .child(
                         div()
-                            .flex_shrink_0()
-                            .px(px(24.0))
-                            .pt(px(18.0))
-                            .pb(px(10.0))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.0))
-                                    .child(
-                                        ui_text(theme::TEXT_TITLE, theme::ink())
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .child("Sheet preview"),
-                                    )
-                                    .child(
-                                        mono_text(theme::TEXT_META, theme::faint())
-                                            .child(format!("Page {} of {page_count}", page + 1)),
-                                    ),
-                            )
-                            .child(
-                                icon_button("preview-native-close", assets::X).on_click(
-                                    cx.listener(|_, _, window, _| window.remove_window()),
-                                ),
-                            ),
-                    )
-                    .child(
-                        div()
                             .id("preview-native-scroll")
                             .flex_1()
                             .min_h(px(0.0))
                             .overflow_y_scroll()
                             .px(px(24.0))
+                            .pt(px(24.0))
                             .flex()
                             .justify_center()
                             .child(div().w(px(width)).h(px(height)).child(preview)),

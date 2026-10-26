@@ -3,19 +3,21 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, Bounds, Context, ElementId, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
-    Point, SharedString, Window, canvas, div, fill, img, point, prelude::*, px, size, uniform_list,
+    AnyElement, Context, ElementId, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point,
+    SharedString, Window, div, img, prelude::*, px, uniform_list,
 };
 use slate_core::model::PhotoId;
 
 use crate::app::{ContactSheet, Marquee};
 use crate::assets;
-
 use crate::theme;
 use crate::widgets::{
-    button_with_icon, format_bytes, heading, icon, mono_text, shift_shortcut_label, shortcut_hint,
-    shortcut_label, ui_text,
+    button_with_icon, format_bytes, heading, icon, mono_text, pixel_wordmark, shift_shortcut_label,
+    shortcut_hint, shortcut_label, ui_text,
 };
+
+/// Space either side of the empty library's wordmark.
+const LOGO_MARGIN: f32 = 20.0;
 
 const CELL_MIN: f32 = 190.0;
 const GAP: f32 = 16.0;
@@ -588,7 +590,7 @@ impl ContactSheet {
                 div()
                     .flex_shrink_0()
                     .px(px(LOGO_MARGIN))
-                    .child(pixel_logo(logo_width)),
+                    .child(pixel_wordmark(logo_width, theme::surface())),
             )
             .into_any_element()
     }
@@ -615,66 +617,6 @@ impl ContactSheet {
             )
             .into_any_element()
     }
-}
-
-/// The SLATE wordmark on a 29 × 7 cell grid, drawn at the foot of the empty
-/// library.
-const LOGO: [&str; 7] = [
-    ".###..#.......#...#####.#####",
-    "#...#.#......#.#....#...#....",
-    "#.....#.....#...#...#...#....",
-    ".###..#.....#...#...#...####.",
-    "....#.#.....#####...#...#....",
-    "#...#.#.....#...#...#...#....",
-    ".###..#####.#...#...#...#####",
-];
-/// The gap between cells as a fraction of a cell.
-const LOGO_GAP: f32 = 0.25;
-const LOGO_MARGIN: f32 = 20.0;
-
-fn logo_cell(width: f32) -> f32 {
-    let columns = LOGO[0].len() as f32;
-    width / (columns - 1.0).mul_add(LOGO_GAP, columns)
-}
-
-/// Painted as squares rather than a bitmap so it stays crisp at any width
-/// and takes the theme's surface colour.
-fn pixel_logo(width: f32) -> AnyElement {
-    let rows = LOGO.len() as f32;
-    let cell = logo_cell(width);
-    let height = cell * (rows - 1.0).mul_add(LOGO_GAP, rows);
-    let colour = theme::surface();
-    canvas(
-        |_, _, _| {},
-        move |bounds, (), window, _| {
-            let cell = logo_cell(f32::from(bounds.size.width));
-            let pitch = cell * (1.0 + LOGO_GAP);
-            // Snap each cell's edges to whole pixels so the squares stay sharp.
-            let span = |index: usize| {
-                let start = (index as f32 * pitch).round();
-                (start, (index as f32).mul_add(pitch, cell).round() - start)
-            };
-            for (row, line) in LOGO.iter().enumerate() {
-                let (top, cell_h) = span(row);
-                for (column, mark) in line.bytes().enumerate() {
-                    if mark != b'#' {
-                        continue;
-                    }
-                    let (left, cell_w) = span(column);
-                    window.paint_quad(fill(
-                        Bounds::new(
-                            point(bounds.left() + px(left), bounds.top() + px(top)),
-                            size(px(cell_w), px(cell_h)),
-                        ),
-                        colour,
-                    ));
-                }
-            }
-        },
-    )
-    .w(px(width))
-    .h(px(height.round()))
-    .into_any_element()
 }
 
 fn empty_mark(icon_path: &'static str) -> gpui::Div {
@@ -714,16 +656,6 @@ fn cell_tool(id: ElementId, cx: &mut Context<ContactSheet>) -> gpui::Stateful<gp
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_logo_grid_is_rectangular_and_fills_its_width() {
-        assert!(LOGO.iter().all(|row| row.len() == LOGO[0].len()));
-        let width = 600.0;
-        let columns = LOGO[0].len() as f32;
-        let cell = logo_cell(width);
-        let drawn = (columns - 1.0).mul_add(cell * LOGO_GAP, columns * cell);
-        assert!((drawn - width).abs() < 0.01);
-    }
 
     #[test]
     fn grid_cells_fill_the_available_width() {

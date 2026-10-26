@@ -49,10 +49,11 @@ pub enum PhotoFieldChange {
         before: ColorLabel,
         after: ColorLabel,
     },
+    /// Shared values, so a copy to a large selection stores one `after`.
     Adjustments {
         id: PhotoId,
-        before: Adjustments,
-        after: Adjustments,
+        before: Arc<Adjustments>,
+        after: Arc<Adjustments>,
     },
 }
 

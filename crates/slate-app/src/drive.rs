@@ -108,14 +108,12 @@ pub struct DriveAccount {
 }
 
 impl DriveAccount {
-    pub fn label(&self) -> String {
-        if !self.email.is_empty() {
-            self.email.clone()
-        } else if !self.name.is_empty() {
-            self.name.clone()
-        } else {
-            "Google Drive".to_string()
-        }
+    /// Who is linked, when Google told us. There is no fallback text: the
+    /// row this annotates already says "Google Drive".
+    pub fn label(&self) -> Option<&str> {
+        [self.email.as_str(), self.name.as_str()]
+            .into_iter()
+            .find(|label| !label.is_empty())
     }
 }
 

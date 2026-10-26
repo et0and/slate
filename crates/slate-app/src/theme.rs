@@ -11,11 +11,11 @@ use gpui::{Rgba, rgb};
 pub const FONT_UI: &str = ".SystemUIFont";
 pub const FONT_MONO: &str = "Geist Mono";
 
-/// macOS text styles, rounded to the nearest practical size. Use these five
+/// macOS text styles, rounded to the nearest practical size. Use these four
 /// steps only; never offset a token by a fraction.
 ///
-/// - Display: one per surface — dialog, window and empty-state headings.
-/// - Title: toolbar headings inside a window.
+/// - Display: one per surface — dialog and empty-state headings. A native
+///   window's title bar is its heading; do not repeat it inside.
 /// - Body: names, menu rows, buttons, running copy and shortcut hints.
 /// - Label: section headings, field labels and compact controls.
 /// - Meta: counts, sizes, dates and footnotes.
@@ -24,7 +24,6 @@ pub const FONT_MONO: &str = "Geist Mono";
 /// controls are medium, content is regular. Selection, focus and disabled
 /// states change colour or fill, so text never reflows when it changes.
 pub const TEXT_DISPLAY: f32 = 20.0;
-pub const TEXT_TITLE: f32 = 15.0;
 pub const TEXT_BODY: f32 = 13.0;
 pub const TEXT_LABEL: f32 = 11.0;
 pub const TEXT_META: f32 = 10.0;

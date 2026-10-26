@@ -142,9 +142,7 @@ On the latest build for macOS 26.5, Apple M5, 24 GB.
 | Rename plan, 10k files | 20 ms |
 | Thumbnail cache | 32 images |
 
-GPUI draws the interface on the GPU (Metal on macOS). Only visible thumbnails
-are uploaded as textures; image decoding, Drive transfers, PDF export and EXIF
-reads run on bounded background workers.
+Slate (using GPUI) draws the interface on the GPU (Metal on macOS, Direct3D 11 on Windows, and Vulkan on Linux). Linux uses Wayland when available and X11 otherwise.
 
 Large imports read file and EXIF metadata first. Thumbnails decode only when a
 cell becomes visible. PDF pages stream to disk one at a time. JPEGs, CMYK JPEGs

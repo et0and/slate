@@ -1,3 +1,10 @@
+# [0.7.0](https://github.com/et0and/slate/compare/v0.6.0...v0.7.0) (2026-10-26)
+
+
+### Features
+
+* add native filtered import pickers ([61757bc](https://github.com/et0and/slate/commit/61757bcb718a4be31903e1d018bdff913faa7197))
+
 # [0.6.0](https://github.com/et0and/slate/compare/v0.5.1...v0.6.0) (2026-10-26)
 
 

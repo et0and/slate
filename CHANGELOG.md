@@ -1,3 +1,11 @@
+## [0.2.5](https://github.com/et0and/slate/compare/v0.2.4...v0.2.5) (2026-10-26)
+
+
+### Bug Fixes
+
+* satisfy strict lint on Windows stress helper ([23e131b](https://github.com/et0and/slate/commit/23e131b87a4493e064de7c3202d4eb36b5cf0908))
+* satisfy strict lints on non-mac targets ([e0156b4](https://github.com/et0and/slate/commit/e0156b4102ff739dc9c961a3531b03969bb1f96d))
+
 ## [0.2.4](https://github.com/et0and/slate/compare/v0.2.3...v0.2.4) (2026-10-25)
 
 

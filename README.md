@@ -1,20 +1,14 @@
 <img width="1090" height="481" alt="slate" src="https://github.com/user-attachments/assets/73da4be4-91fc-4fbe-8e07-505b6420fdfe" />
 
-<p align="center">Photo management for the rest of us</p>
-
 <p align="center">
   <a href="https://tom.so/work/slate">Website</a>
-  ·
-  <a href="https://github.com/et0and/slate">Source</a>
   ·
   <a href="https://github.com/et0and/slate/releases">Releases</a>
   ·
   <a href="https://github.com/et0and/slate/issues">Issues</a>
-  ·
-  <a href="docs/README.md">Docs</a>
 </p>
 
-<img width="1920" height="1080" alt="Screenshot 2026-10-25 at 11 55 04 AM" src="https://github.com/user-attachments/assets/b2caa100-2a02-4e30-9c0f-cbb2acb3ba8e" />
+<img width="1510" height="917" alt="Screenshot 2026-10-26 at 2 33 52 PM" src="https://github.com/user-attachments/assets/df5d9d98-9c48-4aa0-90b0-19af6bd4ec71" />
 
 Slate turns a folder of photos into a print-ready contact sheet. Local-first, with Drive optional. Open a folder as a collection, tag selects, rotate frames, and export a flat PDF. A parent folder is the set; `collection.slate` keeps the collection portable beside the photos.
 

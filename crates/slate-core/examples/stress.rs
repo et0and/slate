@@ -161,6 +161,6 @@ fn current_rss_mb() -> Option<f64> {
 }
 
 #[cfg(not(unix))]
-fn current_rss_mb() -> Option<f64> {
+const fn current_rss_mb() -> Option<f64> {
     None
 }

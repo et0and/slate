@@ -1,3 +1,10 @@
+## [0.5.1](https://github.com/et0and/slate/compare/v0.5.0...v0.5.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* keep the wordmark crisp at every scale ([f4f5878](https://github.com/et0and/slate/commit/f4f5878c208c648fcea52001033754868c203393))
+
 # [0.5.0](https://github.com/et0and/slate/compare/v0.4.0...v0.5.0) (2026-10-26)
 
 

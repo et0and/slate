@@ -12,8 +12,8 @@ use tracing::Instrument as _;
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, CursorStyle, ExternalPaths, FocusHandle,
     Focusable, MouseButton, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, Point, Render,
-    RenderImage, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle,
-    WindowOptions, actions, div, prelude::*, px, size,
+    RenderImage, ScrollHandle, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
+    WindowHandle, WindowOptions, actions, div, prelude::*, px, size,
 };
 use image::{Frame, RgbaImage};
 use slate_core::PreviewImage;
@@ -174,6 +174,7 @@ pub struct ContactSheet {
     pub(crate) rotated_thumbs: HashMap<(PhotoId, QuarterTurns), Arc<RenderImage>>,
     pub(crate) grid_scroll: UniformListScrollHandle,
     pub(crate) rename_scroll: UniformListScrollHandle,
+    pub(crate) sidebar_scroll: ScrollHandle,
 
     pub(crate) import_queue: VecDeque<PathBuf>,
     pub(crate) importing_paths: HashSet<PathBuf>,
@@ -353,6 +354,7 @@ impl ContactSheet {
             rotated_thumbs: HashMap::new(),
             grid_scroll: UniformListScrollHandle::default(),
             rename_scroll: UniformListScrollHandle::default(),
+            sidebar_scroll: ScrollHandle::default(),
             import_queue: VecDeque::new(),
             importing_paths: HashSet::new(),
             imports_in_flight: 0,

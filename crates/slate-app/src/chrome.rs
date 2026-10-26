@@ -10,7 +10,9 @@ use crate::assets;
 use crate::panels::DIVIDER_W;
 use crate::panels::{RAIL_W, ResizeTarget};
 use crate::theme;
-use crate::widgets::{icon, icon_button, mono_text, ui_text};
+#[cfg(not(target_os = "macos"))]
+use crate::widgets::icon_button;
+use crate::widgets::{icon, mono_text, ui_text};
 
 impl ContactSheet {
     pub(crate) fn render_statusbar(&self) -> AnyElement {
@@ -142,17 +144,26 @@ impl ContactSheet {
             .items_center()
             .child(div().w(px(78.0)).flex_shrink_0())
             .child(
-                icon_button(
-                    "titlebar-collapse-left",
-                    if self.panels.left_collapsed() {
-                        assets::PANEL_RIGHT
-                    } else {
-                        assets::PANEL_LEFT
-                    },
-                )
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.toggle_left_pane(window, cx);
-                })),
+                div()
+                    .id("titlebar-collapse-left")
+                    .size(px(26.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|style| style.opacity(0.72))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_left_pane(window, cx);
+                    }))
+                    .child(icon(
+                        if self.panels.left_collapsed() {
+                            assets::PANEL_RIGHT
+                        } else {
+                            assets::PANEL_LEFT
+                        },
+                        15.0,
+                        theme::muted(),
+                    )),
             )
             .child(drag_region(cx, "titlebar-drag-left").flex_1().h_full());
         let mut right = div()

@@ -359,19 +359,6 @@ impl ContactSheet {
                     .flex_col()
                     .gap(px(4.0))
                     .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .justify_end()
-                            .child(
-                                icon_button("inspector-collapse", assets::PANEL_LEFT).on_click(
-                                    cx.listener(|this, _, window, cx| {
-                                        this.toggle_right_pane(window, cx);
-                                    }),
-                                ),
-                            ),
-                    )
-                    .child(
                         ui_text(theme::TEXT_BODY, theme::ink())
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .truncate()
@@ -540,7 +527,7 @@ impl ContactSheet {
             .into_any_element()
     }
 
-    fn render_photo_inspector_empty(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_photo_inspector_empty(&mut self, _cx: &mut Context<Self>) -> AnyElement {
         let stars = div()
             .flex()
             .items_center()
@@ -578,11 +565,6 @@ impl ContactSheet {
                     .flex()
                     .flex_col()
                     .gap(px(4.0))
-                    .child(div().w_full().flex().justify_start().child(
-                        icon_button("inspector-collapse", assets::PANEL_RIGHT).on_click(
-                            cx.listener(|this, _, window, cx| this.toggle_right_pane(window, cx)),
-                        ),
-                    ))
                     .child(ui_text(theme::TEXT_BODY, theme::faint()).child("—")),
             )
             .child(
@@ -773,12 +755,7 @@ impl ContactSheet {
                 div()
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .child(
-                        icon_button("inspector-collapse", assets::PANEL_LEFT).on_click(
-                            cx.listener(|this, _, window, cx| this.toggle_right_pane(window, cx)),
-                        ),
-                    )
+                    .justify_end()
                     .child(page_controls),
             )
             .child(div().w_full().flex().justify_center().child(preview));

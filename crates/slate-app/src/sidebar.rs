@@ -1,6 +1,9 @@
 //! Left rail: import, search, tags, rename and activity.
 
-use gpui::{AnyElement, Context, ElementId, SharedString, Window, div, prelude::*, px, rgba};
+use gpui::{
+    AnyElement, Context, ElementId, SharedString, Window, div, linear_color_stop, linear_gradient,
+    prelude::*, px, rgba,
+};
 
 use slate_core::batch;
 use slate_core::model::{ColorLabel, Filter, StarRating};
@@ -429,19 +432,57 @@ impl ContactSheet {
                         ),
                     )
             }))
-            .child(
+            .child({
+                let offset = self.sidebar_scroll.offset().y;
+                let max_offset = self.sidebar_scroll.max_offset().height;
+                let show_top_fade = offset < px(0.0);
+                let show_bottom_fade = max_offset > px(0.0) && offset > -max_offset;
+                let top_fade = show_top_fade.then(|| {
+                    div()
+                        .absolute()
+                        .top(px(0.0))
+                        .left(px(0.0))
+                        .right(px(0.0))
+                        .h(px(22.0))
+                        .bg(linear_gradient(
+                            0.0,
+                            linear_color_stop(theme::panel(), 1.0),
+                            linear_color_stop(theme::panel(), 0.0),
+                        ))
+                });
+                let bottom_fade = show_bottom_fade.then(|| {
+                    div()
+                        .absolute()
+                        .bottom(px(0.0))
+                        .left(px(0.0))
+                        .right(px(0.0))
+                        .h(px(22.0))
+                        .bg(linear_gradient(
+                            0.0,
+                            linear_color_stop(theme::panel(), 0.0),
+                            linear_color_stop(theme::panel(), 1.0),
+                        ))
+                });
                 div()
-                    .id("sidebar-scroll")
+                    .relative()
                     .flex_1()
                     .min_h(px(0.0))
-                    .overflow_y_scroll()
-                    .child(search_block)
-                    .child(rating_block)
-                    .child(label_block)
-                    .child(sort_block)
-                    .child(tags_block)
-                    .child(rename_block),
-            )
+                    .child(
+                        div()
+                            .id("sidebar-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.sidebar_scroll)
+                            .child(search_block)
+                            .child(rating_block)
+                            .child(label_block)
+                            .child(sort_block)
+                            .child(tags_block)
+                            .child(rename_block),
+                    )
+                    .children(top_fade)
+                    .children(bottom_fade)
+            })
             .into_any_element()
     }
 

@@ -19,7 +19,9 @@ photos. Move, back up or share the folder and it opens just as you left it. The
 folder tree on the left mirrors your disk, and a folder's parent is its set.
 
 Use Slate for the first pass through a shoot, client proofs, portfolio edits and
-archive indexes. 
+archive indexes.
+
+## Workflow
 
 ### Open
 
@@ -36,8 +38,9 @@ archive indexes.
 
 - Browse a virtualised grid that loads only the thumbnails on screen. Click a
   photo to inspect it; tick its checkbox to select it, or drag across several.
-- Open any frame full screen by double-clicking it or with its eye button. Arrow keys step through the
-  sorted library; scroll to zoom up to 8× and drag to pan.
+- Open any frame full screen by double-clicking it or with its eye button.
+  Arrow keys step through the sorted library; scroll to zoom up to 8× and drag
+  to pan.
 - Select a photo to fill the inspector with its dimensions, size, folder, tags
   and EXIF. Correct a wrong capture date there; the fix is stored in the
   collection and the original file is left alone.
@@ -152,7 +155,9 @@ On the latest build for macOS 26.5, Apple M5, 24 GB.
 | Rename plan, 10k files | 20 ms |
 | Thumbnail cache | 32 images |
 
-Slate (using GPUI) draws the interface on the GPU (Metal on macOS, Direct3D 11 on Windows, and Vulkan on Linux). Linux uses Wayland when available and X11 otherwise.
+Slate (using GPUI) draws the interface on the GPU: Metal on macOS, Direct3D 11
+on Windows, and Vulkan on Linux. Linux uses Wayland when available and X11
+otherwise.
 
 Large imports read file and EXIF metadata first. Thumbnails decode only when a
 cell becomes visible. PDF pages stream to disk one at a time. JPEGs, CMYK JPEGs
@@ -190,7 +195,7 @@ sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswscale-dev  # 
 
 On Windows, install a static FFmpeg with vcpkg and build with
 `--features static-ffmpeg`, or anywhere build with `--features bundled-ffmpeg`
-to compile FFmpeg from source as releases do. Then:
+to compile FFmpeg from source as releases do.
 
 ```sh
 cargo run --release
@@ -222,11 +227,13 @@ fixes. CI runs the same commands.
 
 ## Telemetry
 
-Axiom OTLP tracing is optional, and is in place to allow me to debug and improve Slate. See [docs/telemetry.md](docs/telemetry.md) for more information.
+Axiom OTLP tracing is optional, and is in place to allow me to debug and improve
+Slate. See [docs/telemetry.md](docs/telemetry.md) for more information.
 
 ## License and credits
 
 Slate is licensed under the
-[GNU General Public License v3.0](LICENSE). The Google Drive client uses the MIT-licensed `google-drive`
-crate. Release builds include [FFmpeg](https://ffmpeg.org), under the LGPL 2.1
-or later, compiled from source and linked statically.
+[GNU General Public License v3.0](LICENSE). The Google Drive client uses the
+MIT-licensed `google-drive` crate. Release builds include
+[FFmpeg](https://ffmpeg.org), under the LGPL 2.1 or later, compiled from source
+and linked statically.

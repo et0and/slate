@@ -19,9 +19,7 @@ photos. Move, back up or share the folder and it opens just as you left it. The
 folder tree on the left mirrors your disk, and a folder's parent is its set.
 
 Use Slate for the first pass through a shoot, client proofs, portfolio edits and
-archive indexes. It runs locally; Google Drive is optional.
-
-## From shoot to sheet
+archive indexes. 
 
 ### Open
 
@@ -168,24 +166,6 @@ cargo run --release -p slate-core --example stress -- --photos 500000 --gate
 CI runs the 500k gate on Linux. It enforces the collection file size, load time,
 page planning, rename planning and base resident set.
 
-## Themes
-
-Eleven built-in themes, from monochrome Light and Dark to One Dark, Nord,
-Solarized, Tokyo Night, Catppuccin, Rosé Pine, Gruvbox and Monokai. Pick one
-from the View menu; Slate remembers it. Custom themes are coming soon.
-
-<img src="docs/app-preview-dark.jpg" width="49%" alt="Slate in dark mode"> <img src="docs/menu-preview.jpg" width="49%" alt="The View menu in One Dark">
-
-## Output
-
-![Example contact sheet](docs/example-sheet.jpg)
-
-*A4 portrait, 3 × 4, 12 photos.*
-
-![Rotated contact sheet](docs/example-rotated.jpg)
-
-*A4 landscape, 4 × 3, rotate-to-fit.*
-
 ## Get started
 
 Download the latest build from [Releases](https://github.com/et0and/slate/releases):
@@ -223,20 +203,10 @@ fixes. CI runs the same commands.
 
 ## Telemetry
 
-Axiom OTLP tracing is optional. Set `AXIOM_TOKEN` and `AXIOM_DATASET` before
-launch to send traces to Axiom. Slate sends operation names, sizes and timings,
-not file paths or image data. See [docs/telemetry.md](docs/telemetry.md).
-
-## Releases
-
-Every merge to `main` is versioned from Conventional Commits and published as a
-GitHub Release with macOS, Linux and Windows builds. See
-[docs/release.md](docs/release.md) for the version rules and macOS notarization.
+Axiom OTLP tracing is optional, and is in place to allow me to debug and improve Slate. See [docs/telemetry.md](docs/telemetry.md) for more information.
 
 ## License and credits
 
-Slate is by Tom Hackshaw and licensed under the
-[GNU General Public License v3.0](LICENSE). Bundled Geist Mono is under the SIL
-Open Font License. Sample photographs are from Unsplash. SQLite is
-public domain. The Google Drive client uses the MIT-licensed `google-drive`
+Slate is licensed under the
+[GNU General Public License v3.0](LICENSE). The Google Drive client uses the MIT-licensed `google-drive`
 crate.

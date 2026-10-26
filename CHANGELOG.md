@@ -1,3 +1,11 @@
+# [0.3.0](https://github.com/et0and/slate/compare/v0.2.8...v0.3.0) (2026-10-26)
+
+
+### Features
+
+* add native rename window and zoomable preview ([eae70bb](https://github.com/et0and/slate/commit/eae70bb05fce481e32b1c2aa98f4155e360df62b))
+* move to folder collections ([53ce89b](https://github.com/et0and/slate/commit/53ce89bb39bf229ea7cbdae6dfcebf7f4c57e7f9))
+
 ## [0.2.8](https://github.com/et0and/slate/compare/v0.2.7...v0.2.8) (2026-10-26)
 
 

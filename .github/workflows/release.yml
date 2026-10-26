@@ -389,15 +389,17 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/vcpkg-cache
-          key: vcpkg-ffmpeg-x64-windows-static-md-v1
+          key: vcpkg-ffmpeg-x64-windows-static-md-nomf-v1
 
       - name: Build FFmpeg with vcpkg
         shell: pwsh
         env:
           VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-cache
         run: |
+          $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "ffmpeg[core,avcodec,avformat,swscale]:x64-windows-static-md"
+          & "$env:GITHUB_WORKSPACE\packaging\windows\prepare-vcpkg-ffmpeg.ps1"
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "ffmpeg[core,avcodec,avformat,swscale]:x64-windows-static-md" "--overlay-ports=$env:VCPKG_OVERLAY_PORTS"
           if ($LASTEXITCODE -ne 0) { throw "vcpkg could not build FFmpeg" }
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
           "VCPKGRS_TRIPLET=x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Append

@@ -214,8 +214,11 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   assume one: macOS and Linux build with `--features bundled-ffmpeg`, which
   compiles FFmpeg from source, statically and with `build-portable` so no
   `-march=native` code ships; Windows links vcpkg's
-  `x64-windows-static-md` FFmpeg with `--features static-ffmpeg`. The test clips
-  in `crates/slate-core/tests/fixtures` come from FFmpeg's `testsrc`.
+  `x64-windows-static-md` FFmpeg with `--features static-ffmpeg`. The Windows
+  build copies the vcpkg FFmpeg port into a temporary overlay and disables
+  Media Foundation, because its static encoder objects leave Media Foundation
+  GUIDs unresolved at link time and Slate only needs decoding and scaling. The
+  test clips in `crates/slate-core/tests/fixtures` come from FFmpeg's `testsrc`.
 - Google Drive uses a Desktop OAuth client with PKCE and the fixed loopback
   callback `http://127.0.0.1:53682/oauth2callback`. Google still requires a
   secret for this client at the token endpoint. Official builds use

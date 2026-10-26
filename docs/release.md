@@ -172,7 +172,11 @@ machine:
   needs the `macos` → `darwin` fix in `vendor/ffmpeg-sys-next`.
 - Windows installs `ffmpeg[core,avcodec,avformat,swscale]:x64-windows-static-md`
   with the runner's vcpkg, caches vcpkg's binary output with `actions/cache`, and
-  builds with `--features static-ffmpeg`.
+  builds with `--features static-ffmpeg`. vcpkg enables Media Foundation in that
+  port, but Slate only needs FFmpeg's decoders and scaler. The build copies the
+  port into a temporary overlay and replaces `--enable-mediafoundation` with
+  `--disable-mediafoundation`; without that change the static FFmpeg objects
+  leave Media Foundation GUIDs unresolved at link time on Windows.
 
 FFmpeg is LGPL 2.1 or later in this configuration (no `--enable-gpl` parts),
 which Slate's GPLv3 licence can include.

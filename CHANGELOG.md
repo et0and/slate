@@ -1,3 +1,10 @@
+# [0.6.0](https://github.com/et0and/slate/compare/v0.5.1...v0.6.0) (2026-10-26)
+
+
+### Features
+
+* add video storyboards ([5d9f2a9](https://github.com/et0and/slate/commit/5d9f2a9e119f9160bbbdb9fb00c5b9e83a5eec63))
+
 ## [0.5.1](https://github.com/et0and/slate/compare/v0.5.0...v0.5.1) (2026-10-26)
 
 

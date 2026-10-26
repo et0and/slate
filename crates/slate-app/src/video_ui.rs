@@ -9,12 +9,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use gpui::{
-    AnyElement, Context, ElementId, PathPromptOptions, SharedString, div, prelude::*, px, relative,
-};
+use gpui::{AnyElement, Context, ElementId, SharedString, div, prelude::*, px, relative};
 use slate_core::video::{self, ExtractOutcome, ExtractRequest, FrameSize, VideoInfo};
 
-use crate::app::ContactSheet;
+use crate::app::{ContactSheet, FileKinds, Pick, pick_files};
 use crate::assets;
 use crate::theme;
 use crate::widgets::{
@@ -75,23 +73,13 @@ fn format_length(length: Duration) -> String {
 impl ContactSheet {
     pub(crate) fn import_video_prompt(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let Ok(receiver) = cx.update(|app| {
-                app.prompt_for_paths(PathPromptOptions {
-                    files: true,
-                    directories: false,
-                    multiple: false,
-                    prompt: Some("Import video".into()),
-                })
-            }) else {
-                return;
-            };
-            let Ok(Ok(Some(paths))) = receiver.await else {
-                return;
-            };
-            let Some(path) = paths.into_iter().next() else {
-                return;
-            };
-            let _ = this.update(cx, |this, cx| this.open_video_import(path, cx));
+            let video = pick_files(FileKinds::VIDEOS, "Import video", Pick::One)
+                .await
+                .into_iter()
+                .next();
+            if let Some(video) = video {
+                let _ = this.update(cx, |this, cx| this.open_video_import(video, cx));
+            }
         })
         .detach();
     }

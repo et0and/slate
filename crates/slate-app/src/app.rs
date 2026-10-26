@@ -2645,19 +2645,24 @@ impl ContactSheet {
 
     // ----- import --------------------------------------------------------
 
-    pub(crate) fn import_prompt(&mut self, directories: bool, cx: &mut Context<Self>) {
-        let prompt = if directories {
-            "Import folder"
-        } else {
-            "Import photos"
-        };
+    pub(crate) fn import_files_prompt(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let paths = pick_files(FileKinds::PHOTOS, "Import photos", Pick::Many).await;
+            if !paths.is_empty() {
+                let _ = this.update(cx, |this, cx| this.begin_import(paths, cx));
+            }
+        })
+        .detach();
+    }
+
+    pub(crate) fn import_folder_prompt(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let Ok(receiver) = cx.update(|app| {
                 app.prompt_for_paths(PathPromptOptions {
-                    files: !directories,
-                    directories,
+                    files: false,
+                    directories: true,
                     multiple: true,
-                    prompt: Some(prompt.into()),
+                    prompt: Some("Import folder".into()),
                 })
             }) else {
                 return;
@@ -3263,11 +3268,11 @@ impl Render for ContactSheet {
             }))
             .on_action(cx.listener(|this, _: &ImportFiles, _, cx| {
                 this.close_menu(cx);
-                this.import_prompt(false, cx);
+                this.import_files_prompt(cx);
             }))
             .on_action(cx.listener(|this, _: &ImportFolder, _, cx| {
                 this.close_menu(cx);
-                this.import_prompt(true, cx);
+                this.import_folder_prompt(cx);
             }))
             .on_action(cx.listener(|this, _: &SelectAllPhotos, _, cx| {
                 this.close_menu(cx);
@@ -3372,12 +3377,26 @@ impl Render for ContactSheet {
             }))
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| this.dismiss(window, cx)))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-                // A dropped video opens the frames dialog; photos import as usual.
-                let (videos, photos): (Vec<PathBuf>, Vec<PathBuf>) = paths
+                // A dropped video opens the frames dialog; photos and folders
+                // import as usual; anything else is named, not silently lost.
+                let (videos, rest): (Vec<PathBuf>, Vec<PathBuf>) = paths
                     .paths()
                     .iter()
                     .cloned()
                     .partition(|path| slate_core::video::is_video(path));
+                let (photos, unsupported): (Vec<PathBuf>, Vec<PathBuf>) = rest
+                    .into_iter()
+                    .partition(|path| path.is_dir() || import::is_supported(path));
+                if !unsupported.is_empty() {
+                    let skipped = unsupported.len();
+                    this.log(format!("Drop / {skipped} unsupported file(s) skipped"));
+                    this.set_status(if skipped == 1 {
+                        "Not a supported photo or video".to_string()
+                    } else {
+                        format!("Skipped {skipped} unsupported files")
+                    });
+                    cx.notify();
+                }
                 if !photos.is_empty() {
                     this.begin_import(photos, cx);
                 }
@@ -3417,6 +3436,61 @@ impl Render for ContactSheet {
             .children(menu)
             .children(overlay)
     }
+}
+
+/// The files an import picker accepts. The native panel greys out (macOS)
+/// or hides (Windows, Linux) every other file, so an unsupported file cannot
+/// be chosen in the first place.
+#[derive(Debug, Clone, Copy)]
+pub struct FileKinds {
+    name: &'static str,
+    extensions: &'static [&'static str],
+}
+
+impl FileKinds {
+    pub const PHOTOS: Self = Self {
+        name: "Photos",
+        extensions: import::EXTENSIONS,
+    };
+    pub const VIDEOS: Self = Self {
+        name: "Videos",
+        extensions: slate_core::video::EXTENSIONS,
+    };
+    pub const LUTS: Self = Self {
+        name: "Colour lookup tables",
+        extensions: &["cube"],
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pick {
+    One,
+    Many,
+}
+
+/// A native open panel limited to `kinds`. GPUI's own prompt cannot filter by
+/// type, so file imports go through `rfd`; folder pickers stay on GPUI.
+/// Start it from a foreground task: on macOS it opens as a sheet on the main
+/// window.
+pub async fn pick_files(kinds: FileKinds, title: &str, pick: Pick) -> Vec<PathBuf> {
+    // Linux portals match `*.jpg` case-sensitively, so list `*.JPG` too or
+    // camera files named IMG_0001.JPG would be hidden.
+    let extensions: Vec<String> = kinds
+        .extensions
+        .iter()
+        .flat_map(|extension| [(*extension).to_string(), extension.to_ascii_uppercase()])
+        .collect();
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title(title)
+        .add_filter(kinds.name, &extensions);
+    let picked = match pick {
+        Pick::One => dialog.pick_file().await.into_iter().collect(),
+        Pick::Many => dialog.pick_files().await.unwrap_or_default(),
+    };
+    picked
+        .into_iter()
+        .map(|file| file.path().to_path_buf())
+        .collect()
 }
 
 /// Bring an already-open child window forward. Returns false when there is

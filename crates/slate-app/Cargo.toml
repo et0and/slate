@@ -18,6 +18,8 @@ gpui.workspace = true
 image.workspace = true
 open.workspace = true
 reqwest.workspace = true
+# Native open panels with file-type filters, which GPUI's prompt lacks.
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 serde.workspace = true
 serde_json.workspace = true
 slate-core = { path = "../slate-core" }

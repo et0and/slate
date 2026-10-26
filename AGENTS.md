@@ -205,6 +205,11 @@ crates/slate-app    GPUI shell: app state, text field, panels, theme
   matrix rotates phone video upright. One background job per import reads an
   `AtomicBool` to cancel and counts frames in an `AtomicUsize`; the dialog only
   polls them. A cancelled or failed job removes every frame it wrote.
+- Every file import opens through `app::pick_files` with a `FileKinds`
+  (photos, videos, LUTs): GPUI's prompt cannot filter by type, so these use
+  `rfd`'s native panel, where unsupported files are greyed out (macOS) or
+  hidden. Folder pickers stay on GPUI's prompt. A drop that contains only
+  unsupported files says so in the status bar rather than doing nothing.
 - Development links the system FFmpeg through pkg-config. Releases must not
   assume one: macOS and Linux build with `--features bundled-ffmpeg`, which
   compiles FFmpeg from source, statically and with `build-portable` so no

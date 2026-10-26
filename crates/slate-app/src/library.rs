@@ -576,7 +576,7 @@ impl ContactSheet {
                             .child(
                                 command("empty-import-files", "Import files", shortcut_label("I"))
                                     .on_click(
-                                        cx.listener(|this, _, _, cx| this.import_prompt(false, cx)),
+                                        cx.listener(|this, _, _, cx| this.import_files_prompt(cx)),
                                     ),
                             )
                             .child(
@@ -586,7 +586,7 @@ impl ContactSheet {
                                     shift_shortcut_label("I"),
                                 )
                                 .on_click(
-                                    cx.listener(|this, _, _, cx| this.import_prompt(true, cx)),
+                                    cx.listener(|this, _, _, cx| this.import_folder_prompt(cx)),
                                 ),
                             ),
                     ),

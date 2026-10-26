@@ -296,7 +296,7 @@ impl ContactSheet {
             )
             .on_click(cx.listener(|this, _, _, cx| {
                 this.close_menu(cx);
-                this.import_prompt(false, cx);
+                this.import_files_prompt(cx);
             }))
             .into_any_element(),
         );
@@ -310,7 +310,7 @@ impl ContactSheet {
             )
             .on_click(cx.listener(|this, _, _, cx| {
                 this.close_menu(cx);
-                this.import_prompt(true, cx);
+                this.import_folder_prompt(cx);
             }))
             .into_any_element(),
         );

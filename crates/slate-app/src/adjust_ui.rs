@@ -1,13 +1,11 @@
 //! Inspector adjustments: the collapsible adjustment sections, slider and
 //! curve drags, live re-rendering and undo.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, Bounds, Context, ElementId, MouseButton, MouseDownEvent, PathBuilder,
-    PathPromptOptions, Pixels, Point, Rgba, SharedString, canvas, div, fill, point, prelude::*, px,
-    relative, size,
+    AnyElement, Bounds, Context, ElementId, MouseButton, MouseDownEvent, PathBuilder, Pixels,
+    Point, Rgba, SharedString, canvas, div, fill, point, prelude::*, px, relative, size,
 };
 use slate_core::adjust::{
     AdjustmentMap, Adjustments, CURVE_POINTS, Channel, ColourLookup, Curve, FilterKnob,
@@ -18,7 +16,9 @@ use slate_core::adjust::{
 use slate_core::import;
 use slate_core::model::{PhotoId, QuarterTurns};
 
-use crate::app::{ContactSheet, PanelSection, render_image, rotate_render_image};
+use crate::app::{
+    ContactSheet, FileKinds, PanelSection, Pick, pick_files, render_image, rotate_render_image,
+};
 use crate::assets;
 use crate::history::PhotoFieldChange;
 use crate::sidebar::panel_section;
@@ -573,20 +573,11 @@ impl ContactSheet {
     fn load_lut(&mut self, photo: PhotoId, cx: &mut Context<Self>) {
         let generation = self.generation;
         cx.spawn(async move |this, cx| {
-            let Ok(receiver) = cx.update(|app| {
-                app.prompt_for_paths(PathPromptOptions {
-                    files: true,
-                    directories: false,
-                    multiple: false,
-                    prompt: Some("Choose a .cube LUT".into()),
-                })
-            }) else {
-                return;
-            };
-            let Ok(Ok(Some(paths))) = receiver.await else {
-                return;
-            };
-            let Some(path): Option<PathBuf> = paths.into_iter().next() else {
+            let Some(path) = pick_files(FileKinds::LUTS, "Load LUT", Pick::One)
+                .await
+                .into_iter()
+                .next()
+            else {
                 return;
             };
             let task_path = path.clone();

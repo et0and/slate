@@ -253,7 +253,11 @@ fn restrict_permissions(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn restrict_permissions(_path: &Path) -> Result<()> {
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the caller uses ? on every platform"
+)]
+const fn restrict_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 

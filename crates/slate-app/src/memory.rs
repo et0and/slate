@@ -25,4 +25,4 @@ pub fn release_free_pages() {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn release_free_pages() {}
+pub const fn release_free_pages() {}

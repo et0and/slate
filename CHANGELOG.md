@@ -1,3 +1,10 @@
+## [0.7.1](https://github.com/et0and/slate/compare/v0.7.0...v0.7.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **ci:** disable Media Foundation in Windows FFmpeg ([e7ad951](https://github.com/et0and/slate/commit/e7ad95170b2964b88a43ed5046b384bac6fd98b5))
+
 # [0.7.0](https://github.com/et0and/slate/compare/v0.6.0...v0.7.0) (2026-10-26)
 
 
